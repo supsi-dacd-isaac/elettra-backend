@@ -1,0 +1,2 @@
+# elettra-backend
+Backend functionalities
