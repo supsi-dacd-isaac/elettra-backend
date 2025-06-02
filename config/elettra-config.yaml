@@ -1,0 +1,29 @@
+app_name: Elettra Backend
+app_version: 2.0.0
+debug: true
+database_url: postgresql+asyncpg://admin:admin@localhost:5440/elettra
+database_echo: false
+host: 0.0.0.0
+port: 8000
+reload: true
+secret_key: your-super-secret-key-change-this-in-production
+algorithm: HS256
+access_token_expire_minutes: 480
+allowed_origins:
+- http://localhost:3000
+- http://localhost:8080
+- http://127.0.0.1:3000
+- http://127.0.0.1:8080
+max_route_length_km: 150.0
+max_bus_capacity: 200
+battery_efficiency_factor: 0.88
+default_charging_power_kw: 350.0
+max_concurrent_simulations: 10
+simulation_timeout_minutes: 60
+log_level: INFO
+log_format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+temp_dir: /tmp/elettra
+upload_dir: ./uploads
+request_timeout_seconds: 60
+max_request_size_mb: 50
+external_api_endpoints: {}
