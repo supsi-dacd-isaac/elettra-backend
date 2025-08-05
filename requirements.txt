@@ -8,6 +8,18 @@ bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
 python-multipart==0.0.20
 python-dotenv==1.0.0
-pydantic==2.5.0
+pydantic==2.5.3
 pydantic-settings==2.1.0
-PyYAML==6.0.1 
+PyYAML==6.0.1
+
+# GTFS and geospatial processing
+gtfs-kit==6.1.0
+geopandas==0.14.1
+shapely==2.0.2
+pyproj==3.6.1
+requests==2.31.0
+aiofiles==23.2.1
+
+# For pfaedle integration
+subprocess32==3.5.4
+email-validator

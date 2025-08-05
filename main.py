@@ -19,7 +19,7 @@ port = config.get('port', 8000)
 
 import uvicorn
 
-from app.routers import auth, data, simulations
+from app.routers import auth, data, simulations, algorithms, routes
 from app.core.config import get_cached_settings
 
 # Configure logging early
@@ -90,6 +90,8 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(data.router, prefix="/api/v1/data", tags=["Data Management"])
 app.include_router(simulations.router, prefix="/api/v1/simulations", tags=["Simulations"])
+app.include_router(algorithms.router, prefix="/api/v1/algorithms", tags=["Algorithms"])
+app.include_router(routes.router, prefix="/api/v1/routes", tags=["Swiss Transit Routes & GTFS"])
 
 @app.get("/", tags=["Root"])
 async def root():
@@ -105,7 +107,12 @@ async def root():
             "Battery optimization algorithms", 
             "Swiss market analysis",
             "Company data isolation",
-            "External configuration support"
+            "External configuration support",
+            "Energy consumption analysis", 
+            "Battery sizing optimization",
+            "Swiss GTFS data processing with pfaedle",
+            "Real route-based simulations",
+            "Secure JWT authentication"
         ]
     }
 
