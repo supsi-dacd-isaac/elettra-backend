@@ -3,14 +3,13 @@ Database configuration and models for existing Elettra database
 """
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
-from sqlalchemy import Column, String, DateTime, UUID, Text, Integer, Boolean, Numeric, ForeignKey, JSON, Enum as SQLEnum
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy import Column, String, DateTime, UUID, Text, Integer, Boolean, Numeric, ForeignKey, JSON, select
 from sqlalchemy.dialects.postgresql import JSONB, ENUM as PG_ENUM
 from sqlalchemy.sql import func
 import uuid
 from enum import Enum as PyEnum
 from app.core.config import get_cached_settings
-from sqlalchemy.orm import relationship, sessionmaker
 from datetime import datetime
 
 # Base class for all models
@@ -203,14 +202,15 @@ engine = create_async_engine(
 )
 
 # Create async session factory
-AsyncSessionLocal = sessionmaker(
-    engine, class_=AsyncSession, expire_on_commit=False
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    expire_on_commit=False
 )
 
-async def get_db():
-    """Dependency to get database session"""
+async def get_async_session() -> AsyncSession:
+    """Dependency to get async database session"""
     async with AsyncSessionLocal() as session:
         try:
             yield session
         finally:
-            await session.close() 
+            await session.close()
