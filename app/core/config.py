@@ -7,7 +7,7 @@ import json
 import yaml
 from pathlib import Path
 from pydantic_settings import BaseSettings
-from pydantic import Field, validator, root_validator, ValidationError
+from pydantic import Field, ValidationError, model_validator, ConfigDict
 from typing import List, Optional, Dict, Any
 import logging
 
@@ -62,26 +62,32 @@ class Settings(BaseSettings):
     max_request_size_mb: int
 
     # Optional key (keep empty dict if missing)
-    external_api_endpoints: Dict[str, str] = {}
+    external_api_endpoints: Dict[str, str] = Field(default_factory=dict)
+
+    # Pydantic v2 config
+    model_config = ConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="allow"  # allow future keys without code changes
+    )
 
     # ------------------------------------------------------------------ #
-    # Helpers & config
+    # Normalisers (Pydantic v2 style)
     # ------------------------------------------------------------------ #
-    @root_validator(pre=True)
-    def _normalise_origins(cls, values):
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_origins(cls, values: Dict[str, Any]):  # type: ignore[override]
         raw = values.get("allowed_origins")
         if isinstance(raw, str):
             values["allowed_origins"] = [o.strip() for o in raw.split(",") if o.strip()]
         return values
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
-        extra = "allow"  # allow future keys without code changes
-
-    def get_database_url(self) -> str:
-        """Get database URL"""
+    def get_database_url(self) -> str:  # Convenience wrapper
         return self.database_url
+
+# --------------------------------------------------------------------------- #
+# Loader helpers
+# --------------------------------------------------------------------------- #
 
 def load_config_from_file(config_path: str) -> Dict[str, Any]:
     """Load configuration from external file (JSON or YAML)"""
@@ -103,7 +109,7 @@ def load_config_from_file(config_path: str) -> Dict[str, Any]:
                 logger.error("Unsupported configuration file format: %s", file_extension)
                 return {}
         return config_data
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         logger.error("Error reading configuration file: %s", e)
         return {}
 
@@ -113,7 +119,6 @@ def get_settings() -> Settings:
     object.  No in-code defaults exist, so any missing key raises a
     ValidationError and stops application startup.
     """
-    # 1.  Find config path ----------------------------------------------------
     cfg_path = os.getenv("ELETTRA_CONFIG_FILE")
     if not cfg_path:
         for candidate in (
@@ -135,26 +140,23 @@ def get_settings() -> Settings:
             "Set ELETTRA_CONFIG_FILE or place it at 'config/elettra-config.yaml'."
         )
 
-    # 2.  Load + validate -----------------------------------------------------
     cfg_dict = load_config_from_file(cfg_path)
     try:
         return Settings(**cfg_dict)
-    except ValidationError as err:
+    except ValidationError as err:  # pragma: no cover
         logger.error("Invalid / incomplete configuration file '%s':\n%s", cfg_path, err)
         raise
 
-# Global settings instance
+# Global settings instance (simple cache)
 _settings: Optional[Settings] = None
 
 def get_cached_settings() -> Settings:
-    """Get cached settings instance"""
     global _settings
     if _settings is None:
         _settings = get_settings()
     return _settings
 
 def reload_settings():
-    """Reload settings"""
     global _settings
     _settings = None
     _settings = get_settings()
@@ -163,26 +165,20 @@ def reload_settings():
 # --------------------------------------------------------------------------- #
 # Helper used later to merge defaults back into the YAML file
 # --------------------------------------------------------------------------- #
-def _write_yaml(path: Path, data: Dict[str, Any]) -> None:
-    """Safely dump `data` back to *path* in YAML format."""
+
+def _write_yaml(path: Path, data: Dict[str, Any]) -> None:  # pragma: no cover
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
-            # Preserve key order – nice to read
             yaml.safe_dump(data, fh, sort_keys=False)
         logger.info("📄 Added missing keys – configuration file updated at %s", path)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         logger.error("Unable to write updated configuration file %s: %s", path, exc)
 
 def _merge_defaults(original: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
-    """
-    Add any key that is present in *defaults* but missing in *original*.
-
-    Returns True if *original* was modified.
-    """
     updated = False
     for key, value in defaults.items():
         if key not in original:
             original[key] = value
             updated = True
-    return updated 
+    return updated
