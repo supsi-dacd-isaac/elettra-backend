@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from app.routers import api
+from app.routers import api, auth
 from app.core.config import get_cached_settings
 
 # Configure logging early
@@ -61,12 +61,25 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Include only the API router
+# Include authentication and API routers
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(api.router, prefix="/api/v1", tags=["API"])
+
+# Fallback CORS headers for tools/tests that don't send Origin (debug only)
+if settings.debug:
+    @app.middleware("http")
+    async def add_default_cors_headers(request, call_next):
+        response = await call_next(request)
+        # If standard CORS middleware did not add headers (no Origin supplied), add permissive ones for dev/testing
+        if 'access-control-allow-origin' not in (k.lower() for k in response.headers.keys()):
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = '*'
+        return response
 
 @app.get("/", tags=["Root"])
 async def root():

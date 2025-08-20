@@ -5,14 +5,36 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict
+from pydantic.networks import EmailStr
+from enum import Enum
+
+# Authentication schemas
+class UserLogin(BaseModel):
+    # Accept any string; invalid formats will be treated as auth failure (401)
+    email: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class RoleEnum(str, Enum):
+    admin = "admin"
+    analyst = "analyst"
+    viewer = "viewer"
+
+class UserRegister(BaseModel):
+    company_id: UUID
+    email: EmailStr
+    full_name: str
+    password: str
+    role: RoleEnum
 
 class UsersCreate(BaseModel):
     company_id: UUID
     email: str
     full_name: str
-    password_hash: str
-    role: str
-    created_at: datetime
+    role: RoleEnum
 
 class UsersUpdate(BaseModel):
     id: Optional[UUID] = None
@@ -20,7 +42,7 @@ class UsersUpdate(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     password_hash: Optional[str] = None
-    role: Optional[str] = None
+    role: Optional[RoleEnum] = None
     created_at: Optional[datetime] = None
 
 class UsersRead(BaseModel):
@@ -28,8 +50,7 @@ class UsersRead(BaseModel):
     company_id: UUID
     email: str
     full_name: str
-    password_hash: str
-    role: str
+    role: RoleEnum
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 

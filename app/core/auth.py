@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.database import get_db, User
+from app.database import get_async_session
+from app.models import Users
 
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -38,10 +39,21 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
     return encoded_jwt
 
+async def authenticate_user(email: str, password: str, db: AsyncSession) -> Optional[Users]:
+    """Authenticate user with email and password"""
+    result = await db.execute(select(Users).where(Users.email == email))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        return None
+    if not verify_password(password, user.password_hash):
+        return None
+    return user
+
 async def verify_jwt_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db)
-) -> User:
+    db: AsyncSession = Depends(get_async_session)
+) -> Users:
     """Verify JWT token and return user"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -58,7 +70,7 @@ async def verify_jwt_token(
         raise credentials_exception
     
     # Get user from database
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(Users).where(Users.id == user_id))
     user = result.scalar_one_or_none()
     
     if user is None:
@@ -68,11 +80,19 @@ async def verify_jwt_token(
 
 def require_role(required_role: str):
     """Decorator to require specific user role"""
-    def role_checker(current_user: User = Depends(verify_jwt_token)):
+    def role_checker(current_user: Users = Depends(verify_jwt_token)):
         if current_user.role != required_role and current_user.role != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access denied. Required role: {required_role}"
             )
         return current_user
-    return role_checker 
+    return role_checker
+
+# Convenience dependencies for common roles
+require_admin = require_role("admin")
+require_analyst = require_role("analyst")
+
+def get_current_user(current_user: Users = Depends(verify_jwt_token)) -> Users:
+    """Get current authenticated user"""
+    return current_user
