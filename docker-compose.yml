@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: elettra-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: elettra
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5440:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d elettra"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    container_name: elettra-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Point to the docker-specific config file copied into the image
+      ELETTRA_CONFIG_FILE: /app/config/elettra-config.docker.yaml
+      # Optionally override log level at runtime
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount only if you want live-reload during local development (uncomment and set reload true)
+      # - ./:/app
+      - ./config/elettra-config.docker.yaml:/app/config/elettra-config.docker.yaml:ro
+    # For local dev with code changes + reload you can override command:
+    # command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+volumes:
+  db-data:
+

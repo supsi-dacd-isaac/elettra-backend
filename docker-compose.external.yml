@@ -1,0 +1,33 @@
+version: "3.9"
+
+# Option B: Run ONLY the FastAPI app container and connect to an existing / externally managed Postgres database.
+# Provide the external database connection string via the DATABASE_URL environment variable
+# before running `docker compose -f docker-compose.external.yml up -d`.
+# Example:
+#   export DATABASE_URL=postgresql+asyncpg://user:pwd@your-db-host:5432/elettra
+#   docker compose -f docker-compose.external.yml up --build
+
+services:
+  app:
+    build: .
+    container_name: elettra-api
+    restart: unless-stopped
+    environment:
+      # Path to config file inside container (copied or mounted below)
+      ELETTRA_CONFIG_FILE: /app/config/elettra-config.docker.yaml
+      # Runtime overrides (DATABASE_URL MUST point to existing external DB host)
+      DATABASE_URL: ${DATABASE_URL}
+      APP_LOG_LEVEL: INFO
+      APP_DEBUG: "false"
+      # Optional: override secret at runtime
+      # APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount a docker-specific config (read-only). Adjust path if you rename file.
+      - ./config/elettra-config.docker.yaml:/app/config/elettra-config.docker.yaml:ro
+    # Command can be overridden for reload in dev with: --reload (not recommended in prod)
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# No volumes needed here (database is external)
+

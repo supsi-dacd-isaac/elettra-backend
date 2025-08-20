@@ -20,6 +20,7 @@ FastAPI backend for managing GTFS agencies/routes/trips, electric bus models and
 12. Development Tips
 13. Roadmap
 14. License & Acknowledgments
+15. Dockerization
 
 ---
 ## 1. Features
@@ -246,6 +247,146 @@ Acknowledgments:
 - FastAPI & SQLAlchemy teams
 - Open GTFS ecosystem
 - (Future) pfaedle integration contributors
+
+---
+## 15. Dockerization
+Two supported compose modes are provided:
+
+### 15.0 Quick Docker Run (External Host DB)
+1. Build image:
+   ```bash
+   docker build -t elettra-backend .
+   ```
+2. Run container pointing to host Postgres (Linux) using host gateway mapping:
+   ```bash
+   docker run -d \
+     --add-host=host.docker.internal:host-gateway \
+     -p 8000:8000 \
+     -e DATABASE_URL="postgresql+asyncpg://$user:$password@host.docker.internal:5440/elettra" \
+     --name elettra-api \
+     elettra-backend
+   ```
+3. Verify:
+   ```bash
+   curl http://localhost:8000/    # should return status JSON
+   docker logs -f elettra-api     # watch startup logs
+   ```
+
+Optional (env file to shorten command):
+```bash
+cp .env.docker.example .env.docker
+# edit credentials in .env.docker
+docker run -d \
+  --add-host=host.docker.internal:host-gateway \
+  --env-file .env.docker \
+  -p 8000:8000 \
+  --name elettra-api \
+  elettra-backend
+```
+If you hard‑code the correct `database_url` in `config/elettra-config.docker.yaml` you can omit `-e DATABASE_URL`.
+
+> NOTE: `localhost` inside the container is NOT your host database. Use `host.docker.internal` (with the mapping flag above) or a resolvable hostname / IP.
+
+### 15.1 Internal Ephemeral Database (Full Stack)
+Uses `docker-compose.yml` to spin up both the API (`app`) and a Postgres service (`db`). Data persists in the named volume `db-data`.
+
+Run:
+```bash
+docker compose up --build -d
+# View logs
+docker compose logs -f app
+```
+Tear down (preserving data volume):
+```bash
+docker compose down
+```
+Remove volumes (DESTROYS db data):
+```bash
+docker compose down -v
+```
+
+### 15.2 External / Managed Database
+If you already run PostgreSQL elsewhere, use `docker-compose.external.yml` which only launches the API container and connects to your external DB via the `DATABASE_URL` environment variable.
+
+Example run:
+```bash
+export DATABASE_URL="postgresql+asyncpg://$user:$password@$host:5432/elettra"
+docker compose -f docker-compose.external.yml up --build -d
+```
+
+### 15.3 Configuration Files inside Containers
+By default the image expects: `ELETTRA_CONFIG_FILE=/app/config/elettra-config.docker.yaml`.
+Mount (read‑only) your tailored config:
+```bash
+# In compose service definition (already present):
+volumes:
+  - ./config/elettra-config.docker.yaml:/app/config/elettra-config.docker.yaml:ro
+```
+Only a *placeholder* `database_url` inside the file is required because `DATABASE_URL` env will override it if provided (see overrides in `app/core/config.py`).
+
+### 15.4 Environment Overrides
+The loader allows these direct env overrides (case sensitive):
+- `DATABASE_URL` → replaces `database_url`
+- `APP_LOG_LEVEL` → replaces `log_level`
+- `APP_DEBUG` (`true/false/1/0`) → replaces `debug`
+- `APP_ALLOWED_ORIGINS` (comma separated)
+- `APP_SECRET_KEY`
+
+### 15.5 Development (Live Reload) in Docker
+For rapid iteration you can:
+1. Uncomment the source bind mount in `docker-compose.yml` or `docker-compose.external.yml`:
+   ```yaml
+   volumes:
+     - ./:/app
+   ```
+2. Override the command to enable reload:
+   ```yaml
+   command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+   ```
+Reload is **not** recommended for production.
+
+### 15.6 Manual Image Build, Run & other commands
+(See 15.0 for preferred external DB run.)
+```bash
+docker build -t elettra-backend .
+# Example with explicit host mapping
+docker run -d \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8000:8000 \
+  -e DATABASE_URL="postgresql+asyncpg://$user:$password@host.docker.internal:5440/elettra" \
+  --name elettra-api elettra-backend
+# Start the container if it was stopped
+docker start elettra-api 
+# Stop the container
+docker stop elettra-api
+# Remove the container
+docker rm elettra-api
+```
+### 15.7 Health & Logs
+- Basic health: `curl http://localhost:8000/`
+- Container logs: `docker logs -f elettra-api`
+
+### 15.8 Security Notes
+- Always set a strong `APP_SECRET_KEY` (override value in config file).
+- Restrict exposed ports in production (e.g. run behind a reverse proxy / API gateway).
+- Use separate, least‑privilege DB credentials for production.
+
+### 15.9 Upgrading
+```bash
+docker compose pull && docker compose up -d --build
+# or for external setup
+docker compose -f docker-compose.external.yml up -d --build
+```
+
+### 15.10 Troubleshooting
+| Symptom | Action |
+|---------|--------|
+| App cannot reach DB | Verify `DATABASE_URL` host/port, firewalls, and that asyncpg driver string matches `postgresql+asyncpg://` |
+| `psycopg2` / build errors | Ensure base image has `libpq-dev` & build-essential (already in Dockerfile) |
+| Config file not found | Confirm `ELETTRA_CONFIG_FILE` path inside container and mounted volume path |
+| 403/401 on endpoints | Ensure Authorization header contains fresh JWT (re-login if expired) |
+| Changes not reflected | Use `--reload` + bind mount (dev only) |
+| Cannot connect using localhost | Use host.docker.internal with --add-host mapping or --network host (Linux only) |
 
 ---
 **Elettra** – Foundation for electric public transport analytics.

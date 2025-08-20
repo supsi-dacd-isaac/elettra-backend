@@ -125,9 +125,11 @@ def get_settings() -> Settings:
             "config/elettra-config.yaml",
             "config/elettra-config.yml",
             "config/elettra-config.json",
+            "config/elettra-config.docker.yaml",  # added candidate so docker image works without env var
             "./elettra-config.yaml",
             "./elettra-config.yml",
             "./elettra-config.json",
+            "./elettra-config.docker.yaml",
         ):
             if Path(candidate).exists():
                 cfg_path = candidate
@@ -141,6 +143,26 @@ def get_settings() -> Settings:
         )
 
     cfg_dict = load_config_from_file(cfg_path)
+
+    # Explicit environment variable overrides (minimal set for container flexibility)
+    override_env_map = {
+        'DATABASE_URL': 'database_url',
+        'APP_LOG_LEVEL': 'log_level',
+        'APP_DEBUG': 'debug',
+        'APP_ALLOWED_ORIGINS': 'allowed_origins',  # comma separated
+        'APP_SECRET_KEY': 'secret_key'
+    }
+    for env_key, target_key in override_env_map.items():
+        if env_key in os.environ and os.environ[env_key].strip():
+            val = os.environ[env_key].strip()
+            if target_key == 'allowed_origins':
+                cfg_dict[target_key] = [o.strip() for o in val.split(',') if o.strip()]
+            elif target_key == 'debug':
+                cfg_dict[target_key] = val.lower() in ('1', 'true', 'yes', 'on')
+            else:
+                cfg_dict[target_key] = val
+            logger.info("Overrode config key '%s' from ENV '%s'", target_key, env_key)
+
     try:
         return Settings(**cfg_dict)
     except ValidationError as err:  # pragma: no cover
