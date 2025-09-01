@@ -176,5 +176,8 @@ cython_debug/
 # Data folder
 data/*
 
+# Config folder
+config/*
+
 # Cursor folder
 .cursor
