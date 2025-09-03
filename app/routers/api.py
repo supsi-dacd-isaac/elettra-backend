@@ -129,14 +129,85 @@ async def read_trips_by_route(route_id: UUID, db: AsyncSession = Depends(get_asy
     return trips
 
 # Variants endpoints (authenticated users only)
-@router.get("/variants/by-route/{route_id}", response_model=List[VariantsRead])
+@router.get("/variants/by-route/{route_id}", response_model=List[VariantsReadWithRoute])
 async def read_variants_by_route(route_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    """Get all variants for a given route ID"""
+    """Get all variants for a given route ID with elevation data included"""
+    # Import settings here to avoid circular imports
+    from app.core.config import get_cached_settings
+    import os
+    import csv
+
+    # Get settings for elevation profiles path
+    settings = get_cached_settings()
+
+    # Query to get all variants for the route, route info, and user's company info
     result = await db.execute(
-        select(Variants).filter(Variants.route_id == route_id)
+        select(
+            Variants,
+            GtfsRoutes.route_id.label('gtfs_route_id'),
+            GtfsAgencies.gtfs_agency_id.label('agency_id')
+        )
+        .join(GtfsRoutes, Variants.route_id == GtfsRoutes.id)
+        .join(GtfsAgencies, GtfsAgencies.id == current_user.company_id)
+        .filter(Variants.route_id == route_id)
+        .order_by(Variants.variant_num)
     )
-    variants = result.scalars().all()
-    return variants
+    rows = result.all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No variants found for this route")
+
+    variants_with_elevation = []
+
+    for variant, gtfs_route_id, agency_id in rows:
+        # Construct elevation file path for each variant
+        elevation_file_path = os.path.join(
+            settings.elevation_profiles_path,
+            agency_id,
+            "routes_variants",
+            f"route_{gtfs_route_id}_variant_{variant.variant_num}",
+            "elevation_data.csv"
+        )
+
+        # Read elevation data from CSV file for each variant
+        elevation_data = []
+        elevation_data_fields = ["segment_id", "point_number", "latitude", "longitude", "altitude_m"]
+
+        try:
+            if os.path.exists(elevation_file_path):
+                with open(elevation_file_path, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    for row in reader:
+                        # Extract and convert the required columns with proper data types
+                        elevation_row = [
+                            row.get('segment_id', ''),  # Keep as string
+                            int(row.get('point_number', 0)) if row.get('point_number', '').strip() else 0,  # Convert to int
+                            float(row.get('latitude', 0.0)) if row.get('latitude', '').strip() else 0.0,  # Convert to float
+                            float(row.get('longitude', 0.0)) if row.get('longitude', '').strip() else 0.0,  # Convert to float
+                            float(row.get('altitude_m', 0.0)) if row.get('altitude_m', '').strip() else 0.0  # Convert to float
+                        ]
+                        elevation_data.append(elevation_row)
+            else:
+                # If file doesn't exist, log a warning but don't fail the request
+                print(f"Warning: Elevation file not found at {elevation_file_path}")
+        except Exception as e:
+            # If there's an error reading the file, log it but don't fail the request
+            print(f"Error reading elevation file {elevation_file_path}: {str(e)}")
+
+        # Create the response object for this variant
+        variant_with_elevation = VariantsReadWithRoute(
+            id=variant.id,
+            route_id=variant.route_id,
+            variant_num=variant.variant_num,
+            created_at=variant.created_at,
+            gtfs_route_id=gtfs_route_id,
+            elevation_file_path=elevation_file_path,
+            elevation_data_fields=elevation_data_fields,
+            elevation_data=elevation_data
+        )
+        variants_with_elevation.append(variant_with_elevation)
+
+    return variants_with_elevation
 
 @router.get("/variants/{route_id}/{variant_num}", response_model=VariantsReadWithRoute)
 async def read_variant_by_route_and_number(route_id: UUID, variant_num: int, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
