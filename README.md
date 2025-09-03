@@ -257,35 +257,48 @@ Two supported compose modes are provided:
    ```bash
    docker build -t elettra-backend .
    ```
-2. Run container pointing to host Postgres (Linux) using host gateway mapping:
+2. Run container with host networking (recommended for external DB on host):
    ```bash
    docker run -d \
-     --add-host=host.docker.internal:host-gateway \
-     -p 8000:8000 \
-     -e DATABASE_URL="postgresql+asyncpg://$user:$password@host.docker.internal:5440/elettra" \
+     --network host \
+     -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
+     -e ELETTRA_CONFIG_FILE=/app/config/elettra-config.docker.yaml \
+     -e DATABASE_URL="postgresql+asyncpg://admin:admin@localhost:5440/elettra" \
      --name elettra-api \
      elettra-backend
    ```
+   
+   > **Note**: The path `$(pwd)/../elettra-backend-data/elevation_profiles` is just an example. Replace it with the actual path to your elevation profiles directory.
 3. Verify:
    ```bash
    curl http://localhost:8000/    # should return status JSON
    docker logs -f elettra-api     # watch startup logs
    ```
 
+> **Note**: Using `--network host` allows the container to access services running on the host (like your PostgreSQL database) directly via `localhost`. The `-v` flag mounts the elevation profiles directory as read-only so the API can access elevation data files.
+
+**Alternative for cross-platform compatibility** (if host networking is not available):
+```bash
+docker run -d \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8000:8000 \
+  -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
+  -e DATABASE_URL="postgresql+asyncpg://admin:admin@host.docker.internal:5440/elettra" \
+  --name elettra-api \
+  elettra-backend
+```
+
 Optional (env file to shorten command):
 ```bash
 cp .env.docker.example .env.docker
 # edit credentials in .env.docker
 docker run -d \
-  --add-host=host.docker.internal:host-gateway \
+  --network host \
+  -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
   --env-file .env.docker \
-  -p 8000:8000 \
   --name elettra-api \
   elettra-backend
 ```
-If you hard‑code the correct `database_url` in `config/elettra-config.docker.yaml` you can omit `-e DATABASE_URL`.
-
-> NOTE: `localhost` inside the container is NOT your host database. Use `host.docker.internal` (with the mapping flag above) or a resolvable hostname / IP.
 
 ### 15.1 Internal Ephemeral Database (Full Stack)
 Uses `docker-compose.yml` to spin up both the API (`app`) and a Postgres service (`db`). Data persists in the named volume `db-data`.
@@ -349,19 +362,27 @@ Reload is **not** recommended for production.
 (See 15.0 for preferred external DB run.)
 ```bash
 docker build -t elettra-backend .
-# Example with explicit host mapping
+# Preferred: use host networking with elevation data
+docker run -d \
+  --network host \
+  -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
+  -e DATABASE_URL="postgresql+asyncpg://$user:$password@localhost:5440/elettra" \
+  --name elettra-api elettra-backend
+
+# Alternative: explicit port mapping with host gateway
 docker run -d \
   --add-host=host.docker.internal:host-gateway \
   -p 8000:8000 \
+      -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
   -e DATABASE_URL="postgresql+asyncpg://$user:$password@host.docker.internal:5440/elettra" \
   --name elettra-api elettra-backend
-# Start the container if it was stopped
-docker start elettra-api 
-# Stop the container
-docker stop elettra-api
-# Remove the container
-docker rm elettra-api
+
+# Container management
+docker start elettra-api    # Start if stopped
+docker stop elettra-api     # Stop the container
+docker rm elettra-api       # Remove the container
 ```
+
 ### 15.7 Health & Logs
 - Basic health: `curl http://localhost:8000/`
 - Container logs: `docker logs -f elettra-api`
@@ -370,6 +391,7 @@ docker rm elettra-api
 - Always set a strong `APP_SECRET_KEY` (override value in config file).
 - Restrict exposed ports in production (e.g. run behind a reverse proxy / API gateway).
 - Use separate, least‑privilege DB credentials for production.
+- When using `--network host`, the container shares the host's network stack entirely.
 
 ### 15.9 Upgrading
 ```bash
@@ -381,12 +403,18 @@ docker compose -f docker-compose.external.yml up -d --build
 ### 15.10 Troubleshooting
 | Symptom | Action |
 |---------|--------|
-| App cannot reach DB | Verify `DATABASE_URL` host/port, firewalls, and that asyncpg driver string matches `postgresql+asyncpg://` |
+| App cannot reach DB | Verify `DATABASE_URL` host/port, firewalls. Use `--network host` for localhost DB access |
+| Connection refused | Ensure database is running and accessible. Check if using correct host (localhost vs host.docker.internal) |
 | `psycopg2` / build errors | Ensure base image has `libpq-dev` & build-essential (already in Dockerfile) |
 | Config file not found | Confirm `ELETTRA_CONFIG_FILE` path inside container and mounted volume path |
 | 403/401 on endpoints | Ensure Authorization header contains fresh JWT (re-login if expired) |
 | Changes not reflected | Use `--reload` + bind mount (dev only) |
-| Cannot connect using localhost | Use host.docker.internal with --add-host mapping or --network host (Linux only) |
+| Port already in use | Stop existing containers or use different port mapping |
+
+### 15.11 Network Modes Explained
+- **Host networking** (`--network host`): Container shares host's network stack. Simplest for local development.
+- **Bridge networking** (default): Container gets its own IP. Requires port mapping (`-p`) and special host access.
+- **Custom networks**: For complex multi-container setups with internal communication.
 
 ---
 **Elettra** – Foundation for electric public transport analytics.

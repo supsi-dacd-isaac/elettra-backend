@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     # File system
     temp_dir: str
     upload_dir: str
+    elevation_profiles_path: str
 
     # Performance
     request_timeout_seconds: int

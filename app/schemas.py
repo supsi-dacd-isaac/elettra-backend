@@ -291,6 +291,17 @@ class VariantsRead(BaseModel):
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
+class VariantsReadWithRoute(BaseModel):
+    id: UUID
+    route_id: UUID
+    variant_num: int
+    created_at: datetime
+    gtfs_route_id: str
+    elevation_file_path: str
+    elevation_data_fields: list[str]
+    elevation_data: list[list]
+    model_config = ConfigDict(from_attributes=True)
+
 class GtfsStopsTimesCreate(BaseModel):
     trip_id: UUID
     stop_id: UUID
