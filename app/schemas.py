@@ -391,3 +391,22 @@ class GtfsRoutesRead(BaseModel):
     continuous_pickup: Optional[int]
     continuous_drop_off: Optional[int]
     model_config = ConfigDict(from_attributes=True)
+
+class GtfsRoutesReadWithVariant(BaseModel):
+    id: UUID
+    route_id: str
+    agency_id: UUID
+    route_short_name: Optional[str]
+    route_long_name: Optional[str]
+    route_desc: Optional[str]
+    route_type: Optional[int]
+    route_url: Optional[str]
+    route_color: Optional[str]
+    route_text_color: Optional[str]
+    route_sort_order: Optional[int]
+    continuous_pickup: Optional[int]
+    continuous_drop_off: Optional[int]
+    variant_elevation_file_path: str
+    variant_elevation_data_fields: list[str]
+    variant_elevation_data: list[list]
+    model_config = ConfigDict(from_attributes=True)

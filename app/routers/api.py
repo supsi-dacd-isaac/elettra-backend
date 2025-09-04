@@ -15,7 +15,7 @@ from app.schemas import (
     GtfsTripsCreate, GtfsTripsRead, GtfsTripsUpdate,
     VariantsCreate, VariantsRead, VariantsUpdate, VariantsReadWithRoute,
     GtfsStopsTimesCreate, GtfsStopsTimesRead, GtfsStopsTimesUpdate,
-    GtfsRoutesCreate, GtfsRoutesRead, GtfsRoutesUpdate
+    GtfsRoutesCreate, GtfsRoutesRead, GtfsRoutesUpdate, GtfsRoutesReadWithVariant
 )
 from app.models import (
     Users, GtfsAgencies, SimulationRuns, GtfsCalendar,
@@ -118,6 +118,97 @@ async def read_routes_by_agency(agency_id: UUID, db: AsyncSession = Depends(get_
     )
     routes = result.scalars().all()
     return routes
+
+@router.get("/gtfs-routes/by-agency/{agency_id}/with-variant-1", response_model=List[GtfsRoutesReadWithVariant])
+async def read_routes_by_agency_with_variant_1(agency_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    """Get all routes for an agency with variant number 1 data included"""
+    # Import settings here to avoid circular imports
+    from app.core.config import get_cached_settings
+    import os
+    import csv
+
+    # Get settings for elevation profiles path
+    settings = get_cached_settings()
+
+    # Query to get all routes for the agency with their variant 1 data
+    result = await db.execute(
+        select(
+            GtfsRoutes,
+            Variants,
+            GtfsAgencies.gtfs_agency_id.label('agency_gtfs_id')
+        )
+        .join(Variants, GtfsRoutes.id == Variants.route_id)
+        .join(GtfsAgencies, GtfsRoutes.agency_id == GtfsAgencies.id)
+        .filter(
+            GtfsRoutes.agency_id == agency_id,
+            Variants.variant_num == 1
+        )
+        .order_by(GtfsRoutes.route_short_name)
+    )
+    rows = result.all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No routes with variant 1 found for this agency")
+
+    routes_with_variant = []
+
+    for route, variant, agency_gtfs_id in rows:
+        # Construct elevation file path for variant 1
+        elevation_file_path = os.path.join(
+            settings.elevation_profiles_path,
+            agency_gtfs_id,
+            "routes_variants",
+            f"route_{route.route_id}_variant_1",
+            "elevation_data.csv"
+        )
+
+        # Read elevation data from CSV file
+        elevation_data = []
+        elevation_data_fields = ["segment_id", "point_number", "latitude", "longitude", "altitude_m"]
+
+        try:
+            if os.path.exists(elevation_file_path):
+                with open(elevation_file_path, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    for row in reader:
+                        # Extract and convert the required columns with proper data types
+                        elevation_row = [
+                            row.get('segment_id', ''),  # Keep as string
+                            int(row.get('point_number', 0)) if row.get('point_number', '').strip() else 0,  # Convert to int
+                            float(row.get('latitude', 0.0)) if row.get('latitude', '').strip() else 0.0,  # Convert to float
+                            float(row.get('longitude', 0.0)) if row.get('longitude', '').strip() else 0.0,  # Convert to float
+                            float(row.get('altitude_m', 0.0)) if row.get('altitude_m', '').strip() else 0.0  # Convert to float
+                        ]
+                        elevation_data.append(elevation_row)
+            else:
+                # If file doesn't exist, log a warning but don't fail the request
+                print(f"Warning: Elevation file not found at {elevation_file_path}")
+        except Exception as e:
+            # If there's an error reading the file, log it but don't fail the request
+            print(f"Error reading elevation file {elevation_file_path}: {str(e)}")
+
+        # Create the response object with route data and variant 1 elevation data
+        route_with_variant = GtfsRoutesReadWithVariant(
+            id=route.id,
+            route_id=route.route_id,
+            agency_id=route.agency_id,
+            route_short_name=route.route_short_name,
+            route_long_name=route.route_long_name,
+            route_desc=route.route_desc,
+            route_type=route.route_type,
+            route_url=route.route_url,
+            route_color=route.route_color,
+            route_text_color=route.route_text_color,
+            route_sort_order=route.route_sort_order,
+            continuous_pickup=route.continuous_pickup,
+            continuous_drop_off=route.continuous_drop_off,
+            variant_elevation_file_path=elevation_file_path,
+            variant_elevation_data_fields=elevation_data_fields,
+            variant_elevation_data=elevation_data
+        )
+        routes_with_variant.append(route_with_variant)
+
+    return routes_with_variant
 
 # GTFS Trips endpoints (authenticated users only)
 @router.get("/gtfs-trips/by-route/{route_id}", response_model=List[GtfsTripsRead])
