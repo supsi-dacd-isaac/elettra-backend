@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     upload_dir: str
     elevation_profiles_path: str
 
+    # PVGIS Configuration
+    pvgis_coerce_year: int
+
     # Performance
     request_timeout_seconds: int
     max_request_size_mb: int

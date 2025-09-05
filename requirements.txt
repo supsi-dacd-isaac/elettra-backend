@@ -20,6 +20,9 @@ pyproj==3.6.1
 requests==2.31.0
 aiofiles==23.2.1
 
+# PVGIS and solar data processing
+pvlib==0.13.0
+
 # For pfaedle integration
 subprocess32==3.5.4
 email-validator

@@ -410,3 +410,16 @@ class GtfsRoutesReadWithVariant(BaseModel):
     variant_elevation_data_fields: list[str]
     variant_elevation_data: list[list]
     model_config = ConfigDict(from_attributes=True)
+
+# PVGIS TMY schemas
+class PvgisTmyRequest(BaseModel):
+    latitude: float
+    longitude: float
+
+class PvgisTmyResponse(BaseModel):
+    data: dict
+    metadata: dict
+    latitude: float
+    longitude: float
+    coerce_year: int
+    generated_at: datetime

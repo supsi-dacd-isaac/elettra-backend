@@ -134,33 +134,39 @@ Agencies:
 GTFS Routes (named `gtfs-routes`):
 - POST `/api/v1/gtfs-routes/`
 - GET  `/api/v1/gtfs-routes/`
-- GET  `/api/v1/gtfs-routes/{route_uuid}` (internal UUID key)
-- GET  `/api/v1/gtfs-routes/by-agency/{agency_uuid}`
+- GET  `/api/v1/gtfs-routes/{route_id}` (internal UUID key)
+- GET  `/api/v1/gtfs-routes/by-agency/{agency_id}`
+- GET  `/api/v1/gtfs-routes/by-agency/{agency_id}/with-variant-1` – routes with variant 1 elevation data
+- GET  `/api/v1/gtfs-routes/by-agency/{agency_id}/with-largest-variant` – routes with largest variant elevation data
 
 Trips:
-- GET `/api/v1/gtfs-trips/by-route/{route_uuid}`
-- GET `/api/v1/gtfs-trips/by-stop/{stop_uuid}` (reverse lookup via stop_times)
+- GET `/api/v1/gtfs-trips/by-route/{route_id}`
+- GET `/api/v1/gtfs-trips/by-stop/{stop_id}` (reverse lookup via stop_times)
 
 Stops:
-- GET `/api/v1/gtfs-stops/by-trip/{trip_uuid}` (ordered by sequence)
+- GET `/api/v1/gtfs-stops/by-trip/{trip_id}` (ordered by sequence)
 
 Variants:
-- GET `/api/v1/variants/by-route/{route_uuid}`
+- GET `/api/v1/variants/by-route/{route_id}` – all variants for a route with elevation data
+- GET `/api/v1/variants/{route_id}/{variant_num}` – specific variant with elevation data
 
 Calendar:
-- GET `/api/v1/gtfs-calendar/by-trip/{trip_uuid}` *(Note: current query uses a direct filter; underlying schema may need refinement to join via trips' service reference.)*
+- GET `/api/v1/gtfs-calendar/by-trip/{trip_id}` *(Note: current query uses a direct filter; underlying schema may need refinement to join via trips' service reference.)*
 
 Bus Models:
 - POST `/api/v1/bus-models/`
 - GET  `/api/v1/bus-models/`
-- GET  `/api/v1/bus-models/{model_uuid}`
-- PUT  `/api/v1/bus-models/{model_uuid}`
+- GET  `/api/v1/bus-models/{model_id}`
+- PUT  `/api/v1/bus-models/{model_id}`
 
 Simulation Runs:
 - POST `/api/v1/simulation-runs/`
 - GET  `/api/v1/simulation-runs/`
-- GET  `/api/v1/simulation-runs/{run_uuid}`
-- PUT  `/api/v1/simulation-runs/{run_uuid}`
+- GET  `/api/v1/simulation-runs/{run_id}`
+- PUT  `/api/v1/simulation-runs/{run_id}`
+
+Weather & PVGIS:
+- POST `/api/v1/pvgis-tmy/` – generate TMY (Typical Meteorological Year) dataset from PVGIS using latitude/longitude (coerce_year configured via YAML)
 
 Root:
 - GET `/` – simple status payload

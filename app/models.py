@@ -245,3 +245,35 @@ class SimulationRuns(Base):
 
     user: Mapped['Users'] = relationship('Users', back_populates='simulation_runs')
     variant: Mapped['Variants'] = relationship('Variants', back_populates='simulation_runs')
+
+
+class WeatherMeasurements(Base):
+    __tablename__ = 'weather_measurements'
+    __table_args__ = (
+        PrimaryKeyConstraint('id', name='weather_measurements_pkey'),
+        UniqueConstraint('time_utc', 'latitude', 'longitude', name='uq_weather_time_lat_lon'),
+        CheckConstraint('relative_humidity BETWEEN 0 AND 100', name='weather_measurements_relative_humidity_check'),
+        CheckConstraint('wind_speed >= 0', name='weather_measurements_wind_speed_check'),
+        CheckConstraint('wind_direction >= 0 AND wind_direction < 360', name='weather_measurements_wind_direction_check'),
+        CheckConstraint('pressure > 0', name='weather_measurements_pressure_check'),
+        CheckConstraint('latitude BETWEEN -90 AND 90', name='ck_lat_range'),
+        CheckConstraint('longitude BETWEEN -180 AND 180', name='ck_lon_range'),
+        Index('ix_weather_time_brin', 'time_utc'),
+        Index('ix_weather_lat_lon', 'latitude', 'longitude'),
+        {'schema': 'public'}
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    time_utc: Mapped[datetime.datetime] = mapped_column(DateTime(True))
+    latitude: Mapped[decimal.Decimal] = mapped_column(Numeric(8, 5))
+    longitude: Mapped[decimal.Decimal] = mapped_column(Numeric(9, 5))
+    temp_air: Mapped[Optional[float]] = mapped_column(Double(53))
+    relative_humidity: Mapped[Optional[float]] = mapped_column(Double(53))
+    ghi: Mapped[Optional[float]] = mapped_column(Double(53))
+    dni: Mapped[Optional[float]] = mapped_column(Double(53))
+    dhi: Mapped[Optional[float]] = mapped_column(Double(53))
+    ir_h: Mapped[Optional[float]] = mapped_column(Double(53))
+    wind_speed: Mapped[Optional[float]] = mapped_column(Double(53))
+    wind_direction: Mapped[Optional[float]] = mapped_column(Double(53))
+    pressure: Mapped[Optional[int]] = mapped_column(Integer)
+
