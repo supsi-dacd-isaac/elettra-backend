@@ -16,7 +16,7 @@ from app.schemas import (
     VariantsCreate, VariantsRead, VariantsUpdate, VariantsReadWithRoute,
     GtfsStopsTimesCreate, GtfsStopsTimesRead, GtfsStopsTimesUpdate,
     GtfsRoutesCreate, GtfsRoutesRead, GtfsRoutesUpdate, GtfsRoutesReadWithVariant,
-    PvgisTmyRequest, PvgisTmyResponse
+    PvgisTmyResponse
 )
 from app.models import (
     Users, GtfsAgencies, SimulationRuns, GtfsCalendar,
@@ -631,8 +631,8 @@ async def update_simulation_run(run_id: UUID, sim_run_update: SimulationRunsUpda
     return db_sim_run
 
 # PVGIS TMY endpoint (authenticated users only)
-@router.post("/pvgis-tmy/", response_model=PvgisTmyResponse)
-async def generate_pvgis_tmy(request: PvgisTmyRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+@router.get("/pvgis-tmy/", response_model=PvgisTmyResponse)
+async def generate_pvgis_tmy(latitude: float, longitude: float, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     """Generate TMY (Typical Meteorological Year) dataset from PVGIS using latitude and longitude.
     First checks if data exists in database, otherwise downloads from PVGIS and stores it.
     The coerce_year is configured via config files (pvgis_coerce_year setting)."""
@@ -648,9 +648,10 @@ async def generate_pvgis_tmy(request: PvgisTmyRequest, db: AsyncSession = Depend
         settings = get_cached_settings()
         coerce_year = settings.pvgis_coerce_year
 
-        # Round latitude and longitude to 5 decimal places to match database precision
-        lat_rounded = round(float(request.latitude), 5)
-        lon_rounded = round(float(request.longitude), 5)
+        # Round latitude and longitude to 3 decimal places to minimize PVGIS requests
+        # This groups nearby locations together (~111m precision at equator)
+        lat_rounded = round(float(latitude), 3)
+        lon_rounded = round(float(longitude), 3)
 
         # Check if we already have a complete dataset (8760 entries) for this location
         count_result = await db.execute(
