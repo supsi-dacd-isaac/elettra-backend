@@ -166,7 +166,7 @@ Simulation Runs:
 - PUT  `/api/v1/simulation-runs/{run_id}`
 
 Weather & PVGIS:
-- POST `/api/v1/pvgis-tmy/` – generate TMY (Typical Meteorological Year) dataset from PVGIS using latitude/longitude (coerce_year configured via YAML)
+- GET `/api/v1/pvgis-tmy/?latitude={lat}&longitude={lon}` – generate TMY (Typical Meteorological Year) dataset from PVGIS using latitude/longitude coordinates as query parameters. Coordinates are rounded to 3 decimal places (~111m precision) to optimize caching and reduce PVGIS API calls. The coerce_year is configured via YAML settings.
 
 Root:
 - GET `/` – simple status payload
