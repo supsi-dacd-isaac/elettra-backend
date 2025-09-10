@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from app.database import get_async_session
@@ -289,10 +289,34 @@ async def read_routes_by_agency_with_largest_variant(agency_id: UUID, db: AsyncS
 
 # GTFS Trips endpoints (authenticated users only)
 @router.get("/gtfs-trips/by-route/{route_id}", response_model=List[GtfsTripsRead])
-async def read_trips_by_route(route_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    result = await db.execute(
-        select(GtfsTrips).filter(GtfsTrips.route_id == route_id)
-    )
+async def read_trips_by_route(
+    route_id: UUID,
+    day_of_week: Optional[str] = None,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    query = select(GtfsTrips).filter(GtfsTrips.route_id == route_id)
+
+    if day_of_week is not None:
+        day = day_of_week.strip().lower()
+        valid_days = {
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        }
+        if day not in valid_days:
+            raise HTTPException(status_code=400, detail="Invalid day_of_week. Use monday..sunday")
+
+        query = (
+            query.join(GtfsCalendar, GtfsTrips.service_id == GtfsCalendar.id)
+            .filter(getattr(GtfsCalendar, day) == 1)
+        )
+
+    result = await db.execute(query)
     trips = result.scalars().all()
     return trips
 

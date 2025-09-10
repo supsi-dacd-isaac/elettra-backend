@@ -14,6 +14,31 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# Load environment variables from .env file if it exists
+def load_env_file(env_path: Path):
+    """Load environment variables from .env file"""
+    if env_path.exists():
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    # Remove quotes if present
+                    value = value.strip('"\'')
+                    os.environ[key.strip()] = value
+
+# Try to load .env files in order of preference
+env_files = [
+    PROJECT_ROOT / ".env",
+    PROJECT_ROOT / "tests" / "test.env",
+    PROJECT_ROOT / ".env.test"
+]
+
+for env_file in env_files:
+    if env_file.exists():
+        load_env_file(env_file)
+        break
+
 from main import app  # noqa: E402
 from app.core.config import get_cached_settings  # noqa: E402
 from app.database import get_async_session  # noqa: E402
