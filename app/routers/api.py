@@ -8,7 +8,7 @@ from app.database import get_async_session
 from app.schemas import (
     UsersCreate, UsersRead, UsersUpdate,
     GtfsAgenciesCreate, GtfsAgenciesRead, GtfsAgenciesUpdate,
-    SimulationRunsCreate, SimulationRunsRead, SimulationRunsUpdate,
+    SimulationRunsCreate, SimulationRunsRead, SimulationRunsUpdate, SimulationRunResults,
     GtfsCalendarCreate, GtfsCalendarRead, GtfsCalendarUpdate,
     GtfsStopsCreate, GtfsStopsRead, GtfsStopsUpdate,
     BusModelsCreate, BusModelsRead, BusModelsUpdate,
@@ -629,6 +629,66 @@ async def update_simulation_run(run_id: UUID, sim_run_update: SimulationRunsUpda
     await db.commit()
     await db.refresh(db_sim_run)
     return db_sim_run
+
+@router.get("/simulation-runs/{run_id}/results", response_model=SimulationRunResults)
+async def get_simulation_run_results(
+    run_id: UUID,
+    keys: str = None,  # Optional comma-separated list of keys to filter
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user)
+):
+    """
+    Get simulation run output results, either complete or filtered by specific keys.
+
+    Args:
+        run_id: UUID of the simulation run
+        keys: Optional comma-separated list of JSON keys to extract from output_results
+              Example: ?keys=energy_consumption,battery_usage,costs
+              If not provided, returns all output_results
+
+    Returns:
+        SimulationRunResults with either complete or filtered output_results
+    """
+    # Get the simulation run
+    sim_run = await db.get(SimulationRuns, run_id)
+    if sim_run is None:
+        raise HTTPException(status_code=404, detail="Simulation run not found")
+
+    requested_keys = None
+
+    # Check if output_results exists
+    if sim_run.output_results is None:
+        output_results = None
+    elif keys:
+        # Filter output_results by requested keys
+        requested_keys = [key.strip() for key in keys.split(',')]
+
+        # Handle both dict and list cases for output_results
+        if isinstance(sim_run.output_results, dict):
+            # Filter dictionary keys
+            filtered_results = {}
+            for key in requested_keys:
+                if key in sim_run.output_results:
+                    filtered_results[key] = sim_run.output_results[key]
+            output_results = filtered_results if filtered_results else None
+        elif isinstance(sim_run.output_results, list):
+            # For list results, return the original list but note the requested keys
+            output_results = sim_run.output_results
+            # Note: For list results, we can't filter by keys, so we return all data
+        else:
+            output_results = sim_run.output_results
+    else:
+        # Return all output_results
+        output_results = sim_run.output_results
+
+    # Create response
+    return SimulationRunResults(
+        run_id=sim_run.id,
+        status=sim_run.status,
+        output_results=output_results,
+        completed_at=sim_run.completed_at,
+        requested_keys=requested_keys
+    )
 
 # PVGIS TMY endpoint (authenticated users only)
 @router.get("/pvgis-tmy/", response_model=PvgisTmyResponse)

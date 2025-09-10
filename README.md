@@ -164,6 +164,7 @@ Simulation Runs:
 - GET  `/api/v1/simulation-runs/`
 - GET  `/api/v1/simulation-runs/{run_id}`
 - PUT  `/api/v1/simulation-runs/{run_id}`
+- GET  `/api/v1/simulation-runs/{run_id}/results` – get simulation output results, either complete or filtered by specific JSON keys (use `?keys=key1,key2,key3` to filter)
 
 Weather & PVGIS:
 - GET `/api/v1/pvgis-tmy/?latitude={lat}&longitude={lon}` – generate TMY (Typical Meteorological Year) dataset from PVGIS using latitude/longitude coordinates as query parameters. Coordinates are rounded to 3 decimal places (~111m precision) to optimize caching and reduce PVGIS API calls. The coerce_year is configured via YAML settings.

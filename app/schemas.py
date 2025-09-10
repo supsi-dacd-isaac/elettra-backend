@@ -120,6 +120,15 @@ class SimulationRunsRead(BaseModel):
     completed_at: Optional[datetime]
     model_config = ConfigDict(from_attributes=True)
 
+class SimulationRunResults(BaseModel):
+    """Schema for returning simulation run output results, either complete or filtered"""
+    run_id: UUID
+    status: str
+    output_results: Optional[dict | list | None]
+    completed_at: Optional[datetime]
+    requested_keys: Optional[list[str]] = None  # Shows which keys were requested if filtered
+    model_config = ConfigDict(from_attributes=True)
+
 class GtfsCalendarCreate(BaseModel):
     service_id: str
     monday: int
