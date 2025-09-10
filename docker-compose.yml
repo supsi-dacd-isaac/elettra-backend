@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: elettra-db
     restart: unless-stopped
     environment:
@@ -32,7 +32,7 @@ services:
       # Optionally override log level at runtime
       LOG_LEVEL: INFO
     ports:
-      - "8000:8000"
+      - "8002:8000"
     volumes:
       # Mount only if you want live-reload during local development (uncomment and set reload true)
       # - ./:/app

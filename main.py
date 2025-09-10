@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from app.routers import api, auth
+from app.routers import agency, auth, gtfs, simulation
 from app.core.config import get_cached_settings
 
 # Configure logging early
@@ -67,7 +67,9 @@ app.add_middleware(
 
 # Include authentication and API routers
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-app.include_router(api.router, prefix="/api/v1", tags=["API"])
+app.include_router(agency.router, prefix="/api/v1/agency", tags=["Agency"])
+app.include_router(gtfs.router, prefix="/api/v1/gtfs", tags=["GTFS"])
+app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])
 
 # Fallback CORS headers for tools/tests that don't send Origin (debug only)
 if settings.debug:
