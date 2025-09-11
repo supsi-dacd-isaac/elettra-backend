@@ -1,0 +1,94 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - heading "Trip Shift Planner" [level=1]
+        - paragraph: Select trips sequentially to build a bus shift. Times support GTFS hours > 24.
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - button "Choose File" [ref=e9]
+          - button "Load sample" [ref=e10]
+        - generic [ref=e11]:
+          - textbox "https://api.example.com/trips" [ref=e12]
+          - button "Fetch" [ref=e13]
+  - main [ref=e14]:
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - heading "Filters" [level=2]
+        - generic [ref=e17]:
+          - generic [ref=e19] [cursor=pointer]:
+            - checkbox "Only show valid next trips" [checked] [ref=e20]
+            - text: Only show valid next trips
+          - generic [ref=e22] [cursor=pointer]:
+            - checkbox "Hide already selected" [checked] [ref=e23]
+            - text: Hide already selected
+          - textbox "Search text" [ref=e25]
+      - generic [ref=e26]:
+        - heading "Backend" [level=2]
+        - generic [ref=e27]:
+          - textbox "Base URL e.g., http://localhost:8002" [ref=e28]
+          - generic [ref=e29]:
+            - textbox "Email" [ref=e30]
+            - textbox "Password" [ref=e31]
+          - generic [ref=e32]:
+            - textbox "Paste Bearer token (optional)" [ref=e33]
+            - button "Login" [ref=e34]
+          - generic [ref=e35]:
+            - textbox "Route ID" [ref=e36]
+            - combobox [ref=e37]:
+              - option "monday" [selected]
+              - option "tuesday"
+              - option "wednesday"
+              - option "thursday"
+              - option "friday"
+              - option "saturday"
+              - option "sunday"
+          - button "Load trips by route + day" [ref=e38]
+      - generic [ref=e39]:
+        - heading "Selection summary" [level=2]
+        - list:
+          - listitem:
+            - generic: "Trips loaded:"
+            - text: "5"
+          - listitem:
+            - generic: "Selected:"
+            - text: "1"
+          - listitem:
+            - generic: "Next candidates:"
+            - text: "0"
+          - listitem:
+            - generic: "Last arrival:"
+            - text: 09:16 at Zürich, Klusplatz
+      - generic [ref=e40]:
+        - heading "Self‑tests" [level=2]
+        - list:
+          - listitem: ✔ parse 25:13:00 — got 90780
+          - listitem: ✔ valid next B after A->B
+          - listitem: ✔ invalid next different stop
+    - generic [ref=e41]:
+      - generic [ref=e42]:
+        - heading "Available trips" [level=2]
+        - generic: (sorted by departure time)
+      - generic:
+        - generic: No trips match the current filters. Try disabling "Only show valid next trips" or clearing the search.
+    - generic [ref=e43]:
+      - generic [ref=e44]:
+        - heading "Selected shift" [level=2]
+        - generic: Click a trip on the left to append here
+      - list [ref=e45]:
+        - listitem [ref=e46]:
+          - generic:
+            - generic: Stettbach, Bahnhof → Zürich, Klusplatz
+            - generic: "#1"
+          - generic:
+            - generic: "Dep: 08:42"
+            - generic: "Arr: 09:16"
+          - generic: "Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 4886 · Headsign: Zürich, Klusplatz"
+      - generic [ref=e47]:
+        - button "Undo last" [ref=e48]
+        - button "Reset" [ref=e49]
+        - button "Export selection" [ref=e50]
+```

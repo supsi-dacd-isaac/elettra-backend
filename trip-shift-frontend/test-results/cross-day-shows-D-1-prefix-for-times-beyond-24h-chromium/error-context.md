@@ -1,0 +1,117 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - heading "Trip Shift Planner" [level=1]
+        - paragraph: Select trips sequentially to build a bus shift. Times support GTFS hours > 24.
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - button "Choose File" [ref=e9]
+          - button "Load sample" [ref=e10]
+        - generic [ref=e11]:
+          - textbox "https://api.example.com/trips" [ref=e12]
+          - button "Fetch" [ref=e13]
+  - main [ref=e14]:
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - heading "Filters" [level=2]
+        - generic [ref=e17]:
+          - generic [ref=e19] [cursor=pointer]:
+            - checkbox "Only show valid next trips" [checked] [ref=e20]
+            - text: Only show valid next trips
+          - generic [ref=e22] [cursor=pointer]:
+            - checkbox "Hide already selected" [checked] [ref=e23]
+            - text: Hide already selected
+          - textbox "Search text" [active] [ref=e25]
+      - generic [ref=e26]:
+        - heading "Backend" [level=2]
+        - generic [ref=e27]:
+          - textbox "Base URL e.g., http://localhost:8002" [ref=e28]
+          - generic [ref=e29]:
+            - textbox "Email" [ref=e30]
+            - textbox "Password" [ref=e31]
+          - generic [ref=e32]:
+            - textbox "Paste Bearer token (optional)" [ref=e33]
+            - button "Login" [ref=e34]
+          - generic [ref=e35]:
+            - textbox "Route ID" [ref=e36]
+            - combobox [ref=e37]:
+              - option "monday" [selected]
+              - option "tuesday"
+              - option "wednesday"
+              - option "thursday"
+              - option "friday"
+              - option "saturday"
+              - option "sunday"
+          - button "Load trips by route + day" [ref=e38]
+      - generic [ref=e39]:
+        - heading "Selection summary" [level=2]
+        - list:
+          - listitem:
+            - generic: "Trips loaded:"
+            - text: "5"
+          - listitem:
+            - generic: "Selected:"
+            - text: "0"
+          - listitem:
+            - generic: "Next candidates:"
+            - text: "5"
+      - generic [ref=e40]:
+        - heading "Self‑tests" [level=2]
+        - list:
+          - listitem: ✔ parse 25:13:00 — got 90780
+          - listitem: ✔ valid next B after A->B
+          - listitem: ✔ invalid next different stop
+    - generic [ref=e41]:
+      - generic [ref=e42]:
+        - heading "Available trips" [level=2]
+        - generic: (sorted by departure time)
+      - generic [ref=e43]:
+        - 'button "Stettbach, Bahnhof → Zürich, Klusplatz Dep: 08:42 Arr: 09:16 Headsign: Zürich, Klusplatz Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 4886" [ref=e44]':
+          - generic: Stettbach, Bahnhof → Zürich, Klusplatz
+          - generic:
+            - generic: "Dep: 08:42"
+            - generic: "Arr: 09:16"
+          - generic: "Headsign: Zürich, Klusplatz"
+          - generic: "Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 4886"
+        - 'button "Zürich, Bucheggplatz → Zürich, Bahnhofplatz/HB Dep: 12:58 Arr: 13:09 Headsign: Zürich, Bahnhofplatz/HB Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 12148" [ref=e45]':
+          - generic: Zürich, Bucheggplatz → Zürich, Bahnhofplatz/HB
+          - generic:
+            - generic: "Dep: 12:58"
+            - generic: "Arr: 13:09"
+          - generic: "Headsign: Zürich, Bahnhofplatz/HB"
+          - generic: "Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 12148"
+        - 'button "Stettbach, Bahnhof → Zürich, Klusplatz Dep: 13:42 Arr: 14:16 Headsign: Zürich, Klusplatz Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 13577" [ref=e46]':
+          - generic: Stettbach, Bahnhof → Zürich, Klusplatz
+          - generic:
+            - generic: "Dep: 13:42"
+            - generic: "Arr: 14:16"
+          - generic: "Headsign: Zürich, Klusplatz"
+          - generic: "Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 13577"
+        - 'button "Zürich, Bucheggplatz → Zürich Stadelhofen, Bahnhof Dep: 14:58 Arr: 15:13 Headsign: Zürich Stadelhofen, Bahnhof Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 16199" [ref=e47]':
+          - generic: Zürich, Bucheggplatz → Zürich Stadelhofen, Bahnhof
+          - generic:
+            - generic: "Dep: 14:58"
+            - generic: "Arr: 15:13"
+          - generic: "Headsign: Zürich Stadelhofen, Bahnhof"
+          - generic: "Route: 55f151ad-63f8-40dc-85e7-330becb51c75 · Trip: 16199"
+        - 'button "Zürich Stadelhofen, Bahnhof → Overnight Hub Dep: D+1 01:10 Arr: D+1 01:55 Headsign: Overnight Hub Route: demo · Trip: ON1" [ref=e48]':
+          - generic: Zürich Stadelhofen, Bahnhof → Overnight Hub
+          - generic:
+            - generic: "Dep: D+1 01:10"
+            - generic: "Arr: D+1 01:55"
+          - generic: "Headsign: Overnight Hub"
+          - generic: "Route: demo · Trip: ON1"
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - heading "Selected shift" [level=2]
+        - generic: Click a trip on the left to append here
+      - generic: Nothing selected yet.
+      - generic [ref=e51]:
+        - button "Undo last" [ref=e52]
+        - button "Reset" [ref=e53]
+        - button "Export selection" [ref=e54]
+```
