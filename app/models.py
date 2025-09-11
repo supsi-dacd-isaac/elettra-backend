@@ -170,6 +170,10 @@ class GtfsTrips(Base):
     shape_id: Mapped[Optional[str]] = mapped_column(Text)
     wheelchair_accessible: Mapped[Optional[int]] = mapped_column(Integer)
     bikes_allowed: Mapped[Optional[int]] = mapped_column(Integer)
+    start_stop_name: Mapped[Optional[str]] = mapped_column(Text)
+    end_stop_name: Mapped[Optional[str]] = mapped_column(Text)
+    departure_time: Mapped[Optional[str]] = mapped_column(Text)
+    arrival_time: Mapped[Optional[str]] = mapped_column(Text)
 
     route: Mapped['GtfsRoutes'] = relationship('GtfsRoutes', back_populates='gtfs_trips')
     service: Mapped['GtfsCalendar'] = relationship('GtfsCalendar', back_populates='gtfs_trips')

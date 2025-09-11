@@ -252,6 +252,10 @@ class GtfsTripsCreate(BaseModel):
     shape_id: Optional[str] = None
     wheelchair_accessible: Optional[int] = None
     bikes_allowed: Optional[int] = None
+    start_stop_name: Optional[str] = None
+    end_stop_name: Optional[str] = None
+    departure_time: Optional[str] = None
+    arrival_time: Optional[str] = None
 
 class GtfsTripsUpdate(BaseModel):
     id: Optional[UUID] = None
@@ -266,6 +270,10 @@ class GtfsTripsUpdate(BaseModel):
     shape_id: Optional[str] = None
     wheelchair_accessible: Optional[int] = None
     bikes_allowed: Optional[int] = None
+    start_stop_name: Optional[str] = None
+    end_stop_name: Optional[str] = None
+    departure_time: Optional[str] = None
+    arrival_time: Optional[str] = None
 
 class GtfsTripsRead(BaseModel):
     id: UUID
@@ -280,6 +288,10 @@ class GtfsTripsRead(BaseModel):
     shape_id: Optional[str]
     wheelchair_accessible: Optional[int]
     bikes_allowed: Optional[int]
+    start_stop_name: Optional[str]
+    end_stop_name: Optional[str]
+    departure_time: Optional[str]
+    arrival_time: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
 class VariantsCreate(BaseModel):
