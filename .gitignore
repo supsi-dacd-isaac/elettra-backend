@@ -182,3 +182,6 @@ config/*.yaml
 
 # Cursor folder
 .cursor
+
+# Node
+node_modules/

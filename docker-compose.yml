@@ -38,6 +38,18 @@ services:
     # For local dev with code changes + reload you can override command:
     # command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
+  trip-shift-frontend:
+    build: ./trip-shift-frontend
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_BASE_URL=${API_BASE_URL:-http://elettra-api:8000}
+      - VITE_TEST_ROUTE_ID=${TEST_ROUTE_ID:-55f151ad-63f8-40dc-85e7-330becb51c75}
+      - VITE_DAY=${TEST_DAY:-monday}
+      # - VITE_API_TOKEN=${TEST_API_TOKEN}
+    depends_on:
+      - app
+
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z-cpuv1
     restart: unless-stopped
