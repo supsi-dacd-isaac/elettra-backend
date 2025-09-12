@@ -7,7 +7,7 @@ from uuid import UUID
 from app.database import get_async_session
 from app.schemas import (
     GtfsCalendarRead, GtfsStopsReadWithTimes, GtfsTripsRead, VariantsReadWithRoute,
-    GtfsRoutesCreate, GtfsRoutesRead, GtfsRoutesReadWithVariant,
+    GtfsRoutesCreate, GtfsRoutesRead, GtfsRoutesReadWithVariant, ElevationProfileResponse,
 )
 from app.models import (
     Users, GtfsAgencies, GtfsCalendar,
@@ -15,6 +15,10 @@ from app.models import (
     GtfsStopsTimes, GtfsRoutes
 )
 from app.core.auth import get_current_user
+from minio import Minio
+import pandas as pd
+import io
+import os
 
 router = APIRouter()
 
@@ -536,3 +540,48 @@ async def read_trips_by_stop(stop_id: UUID, db: AsyncSession = Depends(get_async
     )
     trips = result.scalars().all()
     return trips
+
+# Elevation profile by trip
+@router.get("/elevation-profile/by-trip/{trip_id}", response_model=ElevationProfileResponse)
+async def get_elevation_profile_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    """Fetch elevation profile parquet by trip's shape_id from MinIO and return as JSON records"""
+    # 1) Find the trip to get shape_id
+    trip = await db.get(GtfsTrips, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if not trip.shape_id:
+        raise HTTPException(status_code=404, detail="Trip has no shape_id")
+
+    shape_id = trip.shape_id
+
+    # 2) Connect to MinIO within the docker network
+    # Using docker-compose defaults: endpoint http://minio:9000 and env AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+    endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
+    access_key = os.getenv("AWS_ACCESS_KEY_ID", "minio_user")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "minio_password")
+    secure = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes", "on")
+
+    client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
+
+    bucket_name = "elevation-profiles"
+    object_name = f"{shape_id}.parquet"
+
+    # 3) Fetch object and load parquet into pandas
+    try:
+        response = client.get_object(bucket_name, object_name)
+        try:
+            data = response.read()
+        finally:
+            response.close()
+            response.release_conn()
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Elevation profile not found for shape_id {shape_id}: {str(e)}")
+
+    try:
+        df = pd.read_parquet(io.BytesIO(data))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse parquet for shape_id {shape_id}: {str(e)}")
+
+    # 4) Return as list of dict records
+    records = df.to_dict(orient="records")
+    return ElevationProfileResponse(shape_id=shape_id, records=records)

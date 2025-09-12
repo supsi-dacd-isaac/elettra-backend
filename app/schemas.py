@@ -464,3 +464,9 @@ class PvgisTmyResponse(BaseModel):
     longitude: float
     coerce_year: int
     generated_at: datetime
+
+# Elevation profile schemas
+class ElevationProfileResponse(BaseModel):
+    shape_id: str
+    records: list[dict]
+    model_config = ConfigDict(from_attributes=True)
