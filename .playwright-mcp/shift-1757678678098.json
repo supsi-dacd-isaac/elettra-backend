@@ -1,0 +1,22 @@
+[
+  {
+    "id": "9882c2da-a29b-408f-9fb2-63bba0e68698",
+    "route_id": "6e18d32a-09fa-4158-a265-7e758ae7b497",
+    "service_id": "a8cd2221-5367-4a01-937c-4309bc45d405",
+    "gtfs_service_id": "TA+po",
+    "trip_id": "901.TA.91-14-j25-1.28.R",
+    "trip_headsign": "Basel, Aeschenplatz",
+    "trip_short_name": "1659",
+    "direction_id": 1,
+    "block_id": null,
+    "shape_id": "shp_900_570",
+    "wheelchair_accessible": 0,
+    "bikes_allowed": 0,
+    "start_stop_name": "Basel, Wiesenplatz",
+    "end_stop_name": "Basel, Aeschenplatz",
+    "departure_time": "02:00:00",
+    "arrival_time": "02:18:00",
+    "departure_sec": 7200,
+    "arrival_sec": 8280
+  }
+]

@@ -38,6 +38,20 @@ export type TripX = Trip & {
   arrival_sec: number;
 };
 
+type Agency = {
+  id: string;
+  gtfs_agency_id: string;
+  agency_name: string;
+};
+
+type RouteRead = {
+  id: string; // database UUID for route
+  route_id: string; // GTFS route_id
+  agency_id: string;
+  route_short_name?: string | null;
+  route_long_name?: string | null;
+};
+
 type TripStop = {
   id: string;
   stop_id: string;
@@ -200,7 +214,7 @@ const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sun
 
 // ---------- Main Component ----------
 export default function TripShiftPlanner() {
-  const [rawTrips, setRawTrips] = useState<Trip[]>(SAMPLE_TRIPS);
+  const [rawTrips, setRawTrips] = useState<Trip[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [onlyValidNext, setOnlyValidNext] = useState<boolean>(true);
   const [hideUsed, setHideUsed] = useState<boolean>(true);
@@ -222,13 +236,19 @@ export default function TripShiftPlanner() {
     // fallback sensible default
     return "http://localhost:8002";
   }, []);
-  const [routeId, setRouteId] = useState<string>(ENV_ROUTE_ID);
+  const [routeId] = useState<string>(ENV_ROUTE_ID);
   const [day, setDay] = useState<string>(ENV_DAY);
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [token, setToken] = useState<string>(ENV_TOKEN);
   const [authInfo, setAuthInfo] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+
+  // Agency/Route selection
+  const [agencies, setAgencies] = useState<Agency[]>([]);
+  const [agencyId, setAgencyId] = useState<string>(""); // database UUID for agency
+  const [routes, setRoutes] = useState<RouteRead[]>([]);
+  const [routeDbId, setRouteDbId] = useState<string>(ENV_ROUTE_ID); // database UUID for route
 
   // Hovered trip and stops cache
   const [hoveredTripId, setHoveredTripId] = useState<string | null>(null); // database trip id (UUID)
@@ -396,15 +416,16 @@ export default function TripShiftPlanner() {
   }
 
   async function loadByRouteDay() {
-    if (!effectiveBaseUrl || !routeId) {
-      alert("Base URL and Route ID required");
+    const selectedRouteId = routeDbId || routeId; // support legacy env for now
+    if (!effectiveBaseUrl || !selectedRouteId) {
+      alert("Base URL and Route selection required");
       return;
     }
     try {
       setLoading(true);
       const url = joinUrl(
         effectiveBaseUrl,
-        `/api/v1/gtfs/gtfs-trips/by-route/${routeId}${day ? `?day_of_week=${encodeURIComponent(day)}` : ""}`
+        `/api/v1/gtfs/gtfs-trips/by-route/${selectedRouteId}${day ? `?day_of_week=${encodeURIComponent(day)}` : ""}`
       );
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -420,6 +441,55 @@ export default function TripShiftPlanner() {
       setLoading(false);
     }
   }
+
+  // ---- Agencies/Routes fetching ----
+  async function fetchAgencies() {
+    if (!effectiveBaseUrl || !token) return;
+    try {
+      const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/agencies/?limit=1000");
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = (await res.json()) as Agency[];
+      setAgencies(Array.isArray(data) ? data : []);
+    } catch (e) {
+      // silent fail; user might not be logged in yet
+    }
+  }
+
+  async function fetchRoutesByAgency(aid: string) {
+    if (!effectiveBaseUrl || !token || !aid) return;
+    try {
+      const url = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-routes/by-agency/${encodeURIComponent(aid)}`);
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = (await res.json()) as RouteRead[];
+      const sorted = (Array.isArray(data) ? data : []).sort((a, b) => {
+        const sa = (a.route_short_name || a.route_long_name || a.route_id || "").toString();
+        const sb = (b.route_short_name || b.route_long_name || b.route_id || "").toString();
+        return sa.localeCompare(sb, undefined, { numeric: true, sensitivity: "base" });
+      });
+      setRoutes(sorted);
+    } catch (e) {
+      setRoutes([]);
+    }
+  }
+
+  // When token becomes available, load agencies
+  useEffect(() => {
+    if (token) {
+      fetchAgencies();
+    }
+  }, [token, effectiveBaseUrl]);
+
+  // When agency changes, load routes and clear selection
+  useEffect(() => {
+    if (agencyId) {
+      setRouteDbId("");
+      fetchRoutesByAgency(agencyId);
+    } else {
+      setRoutes([]);
+    }
+  }, [agencyId, token, effectiveBaseUrl]);
 
   async function ensureStopsForTrip(tripDbId: string) {
     if (!tripDbId) return;
@@ -567,14 +637,39 @@ export default function TripShiftPlanner() {
               {authInfo && <div className="text-xs text-gray-600">{authInfo}</div>}
 
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <input className="px-3 py-2 border rounded-lg" placeholder="Route ID" value={routeId} onChange={(e) => setRouteId(e.target.value)} />
+                <select
+                  className="px-3 py-2 border rounded-lg"
+                  value={agencyId}
+                  onChange={(e) => setAgencyId(e.target.value)}
+                  disabled={!token}
+                >
+                  <option value="">{token ? "Select agency" : "Login or paste token first"}</option>
+                  {agencies.map((a) => (
+                    <option key={a.id} value={a.id}>{a.agency_name || a.gtfs_agency_id}</option>
+                  ))}
+                </select>
+                <select
+                  className="px-3 py-2 border rounded-lg"
+                  value={routeDbId}
+                  onChange={(e) => setRouteDbId(e.target.value)}
+                  disabled={!agencyId || routes.length === 0}
+                >
+                  <option value="">{agencyId ? (routes.length ? "Select route" : "Loading routes…") : "Select agency first"}</option>
+                  {routes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {(r.route_short_name || r.route_long_name || r.route_id) as string}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-2">
                 <select className="px-3 py-2 border rounded-lg" value={day} onChange={(e) => setDay(e.target.value)}>
                   {DAYS.map((d) => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
               </div>
-              <button onClick={loadByRouteDay} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 w-full" disabled={loading}>
+              <button onClick={loadByRouteDay} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 w-full" disabled={loading || !(routeDbId || routeId)}>
                 Load trips by route + day
               </button>
             </div>
@@ -655,7 +750,7 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="grid grid-cols-1 gap-1 overflow-auto pr-1">
-            {pagedNextCandidates.map((t) => (
+            {rawTrips.length > 0 && pagedNextCandidates.map((t) => (
               <TripCard
                 key={t.id}
                 t={t}
@@ -682,9 +777,11 @@ export default function TripShiftPlanner() {
                 stopsError={stopsErrorByTrip[t.id]}
               />
             ))}
-            {pagedNextCandidates.length === 0 && (
+            {rawTrips.length === 0 ? (
+              <div className="text-sm text-gray-600">No trips loaded yet. Login and select an agency and route, then click "Load trips by route + day".</div>
+            ) : pagedNextCandidates.length === 0 ? (
               <div className="text-sm text-gray-600">No trips match the current filters. Try disabling "Only show valid next trips" or clearing the search.</div>
-            )}
+            ) : null}
           </div>
         </section>
 
