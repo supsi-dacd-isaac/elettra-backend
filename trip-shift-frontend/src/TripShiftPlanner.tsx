@@ -474,10 +474,10 @@ export default function TripShiftPlanner() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <main className="mx-auto max-w-7xl px-4 py-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Left: Controls */}
         <section className="lg:col-span-1 space-y-4">
-          <div className="p-4 rounded-2xl bg-white shadow-sm border">
+          <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">Filters</h2>
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
@@ -507,7 +507,7 @@ export default function TripShiftPlanner() {
             </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-white shadow-sm border">
+          <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">Backend</h2>
             <div className="space-y-2 text-sm">
               <input className="w-full px-3 py-2 border rounded-lg" placeholder="Base URL e.g., http://localhost:8002" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
@@ -535,7 +535,7 @@ export default function TripShiftPlanner() {
             </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-white shadow-sm border">
+          <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">Selection summary</h2>
             <ul className="space-y-2 text-sm">
               <li>
@@ -555,7 +555,7 @@ export default function TripShiftPlanner() {
             </ul>
           </div>
 
-          <div className="p-4 rounded-2xl bg-white shadow-sm border">
+          <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">Self‑tests</h2>
             <ul className="text-xs space-y-1">
               {tests.map((t, i) => (
@@ -568,7 +568,7 @@ export default function TripShiftPlanner() {
         </section>
 
         {/* Middle: Available trips */}
-        <section className="lg:col-span-2 p-4 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
+        <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
           <div className="flex items-baseline justify-between mb-3">
             <h2 className="text-lg font-medium">Available trips</h2>
             <span className="text-sm text-gray-600">(sorted by departure time){loading ? " · loading…" : ""}</span>
@@ -609,7 +609,7 @@ export default function TripShiftPlanner() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 overflow-auto pr-1">
+          <div className="grid grid-cols-1 gap-1 overflow-auto pr-1">
             {pagedNextCandidates.map((t) => (
               <TripCard
                 key={t.id}
@@ -680,7 +680,7 @@ function TripCard({
       disabled={disabled}
       onClick={onPick}
       className={
-        "text-left p-3 rounded-xl border shadow-sm transition " +
+        "text-left p-2 rounded-lg border shadow-sm transition " +
         (disabled
           ? "bg-gray-100 text-gray-400 cursor-not-allowed"
           : used
@@ -689,13 +689,18 @@ function TripCard({
       }
       title={disabled ? "Doesn't follow from the last selected trip" : "Add to shift"}
     >
-      <div className="font-medium truncate">{t.start_stop_name} → {t.end_stop_name}</div>
-      <div className="text-sm">
-        <span className="inline-block mr-4">Dep: {formatDayHHMM(t.departure_sec)}</span>
-        <span>Arr: {formatDayHHMM(t.arrival_sec)}</span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-medium truncate">{t.start_stop_name} → {t.end_stop_name}</div>
+        <div className="text-xs whitespace-nowrap text-gray-700">
+          {formatDayHHMM(t.departure_sec)} → {formatDayHHMM(t.arrival_sec)}
+        </div>
       </div>
-      <div className="text-xs text-gray-600 truncate">Headsign: {t.trip_headsign}</div>
-      <div className="text-xs text-gray-600 truncate">Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id}</div>
+      <div className="mt-0.5 text-[11px] text-gray-600 truncate">
+        Headsign: {t.trip_headsign}
+      </div>
+      <div className="text-[11px] text-gray-600 truncate">
+        Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id}
+      </div>
     </button>
   );
 }
