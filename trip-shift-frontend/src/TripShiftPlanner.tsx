@@ -247,7 +247,9 @@ export default function TripShiftPlanner() {
   // Agency/Route selection
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [agencyId, setAgencyId] = useState<string>(""); // database UUID for agency
-  const [agencySearch, setAgencySearch] = useState<string>("");
+  const [agencyQuery, setAgencyQuery] = useState<string>(""); // typeahead query / display label
+  const [agencyOpen, setAgencyOpen] = useState<boolean>(false);
+  const [agencyHighlight, setAgencyHighlight] = useState<number>(-1);
   const [routes, setRoutes] = useState<RouteRead[]>([]);
   const [routeDbId, setRouteDbId] = useState<string>(ENV_ROUTE_ID); // database UUID for route
 
@@ -495,10 +497,21 @@ export default function TripShiftPlanner() {
   // Filter and sort agencies by name/id
   const filteredAgencies = useMemo(() => {
     const label = (a: Agency) => (a.agency_name || a.gtfs_agency_id || "").toString();
-    const q = agencySearch.trim().toLowerCase();
+    const q = agencyQuery.trim().toLowerCase();
     const list = q ? agencies.filter((a) => label(a).toLowerCase().includes(q)) : agencies.slice();
     return list.sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base" }));
-  }, [agencies, agencySearch]);
+  }, [agencies, agencyQuery]);
+
+  function agencyLabel(a?: Agency) {
+    return (a?.agency_name || a?.gtfs_agency_id || "").toString();
+  }
+
+  // Keep visible query in sync with selected agencyId
+  useEffect(() => {
+    if (!agencyId) return; // do not overwrite user typing when nothing selected
+    const sel = agencies.find((x) => x.id === agencyId);
+    if (sel) setAgencyQuery(agencyLabel(sel));
+  }, [agencyId]);
 
   async function ensureStopsForTrip(tripDbId: string) {
     if (!tripDbId) return;
@@ -645,27 +658,75 @@ export default function TripShiftPlanner() {
               </div>
               {authInfo && <div className="text-xs text-gray-600">{authInfo}</div>}
 
-              <div className="mt-2">
-                <input
-                  className="w-full px-3 py-2 border rounded-lg"
-                  placeholder="Search agency"
-                  value={agencySearch}
-                  onChange={(e) => setAgencySearch(e.target.value)}
-                  disabled={!token}
-                />
-              </div>
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <select
-                  className="px-3 py-2 border rounded-lg"
-                  value={agencyId}
-                  onChange={(e) => setAgencyId(e.target.value)}
-                  disabled={!token}
-                >
-                  <option value="">{token ? "Select agency" : "Login or paste token first"}</option>
-                  {filteredAgencies.map((a) => (
-                    <option key={a.id} value={a.id}>{a.agency_name || a.gtfs_agency_id}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    className="w-full px-3 py-2 border rounded-lg"
+                    placeholder={token ? "Select agency" : "Login or paste token first"}
+                    value={agencyQuery}
+                    disabled={!token}
+                    onFocus={() => token && setAgencyOpen(true)}
+                    onChange={(e) => {
+                      setAgencyQuery(e.target.value);
+                      setAgencyOpen(true);
+                      setAgencyHighlight(-1);
+                      if (agencyId) setAgencyId(""); // clear selection when typing
+                    }}
+                    onKeyDown={(e) => {
+                      if (!agencyOpen && (e.key === "ArrowDown" || e.key === "Enter")) {
+                        setAgencyOpen(true);
+                        return;
+                      }
+                      if (!agencyOpen) return;
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setAgencyHighlight((h) => Math.min((filteredAgencies.length - 1), h + 1));
+                      } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setAgencyHighlight((h) => Math.max(-1, h - 1));
+                      } else if (e.key === "Enter") {
+                        e.preventDefault();
+                        const pick = agencyHighlight >= 0 ? filteredAgencies[agencyHighlight] : filteredAgencies[0];
+                        if (pick) {
+                          setAgencyId(pick.id);
+                          setAgencyQuery(agencyLabel(pick));
+                          setAgencyOpen(false);
+                          setAgencyHighlight(-1);
+                        }
+                      } else if (e.key === "Escape") {
+                        setAgencyOpen(false);
+                        setAgencyHighlight(-1);
+                      }
+                    }}
+                    onBlur={() => {
+                      // Close after click selection
+                      setTimeout(() => setAgencyOpen(false), 100);
+                    }}
+                  />
+                  {agencyOpen && token && filteredAgencies.length > 0 && (
+                    <ul className="absolute z-10 mt-1 w-full max-h-48 overflow-auto border rounded-lg bg-white shadow">
+                      {filteredAgencies.map((a, idx) => (
+                        <li
+                          key={a.id}
+                          className={
+                            "px-3 py-2 cursor-pointer text-sm " +
+                            (idx === agencyHighlight ? "bg-blue-600 text-white" : "hover:bg-gray-100")
+                          }
+                          onMouseEnter={() => setAgencyHighlight(idx)}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setAgencyId(a.id);
+                            setAgencyQuery(agencyLabel(a));
+                            setAgencyOpen(false);
+                            setAgencyHighlight(-1);
+                          }}
+                        >
+                          {agencyLabel(a)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <select
                   className="px-3 py-2 border rounded-lg"
                   value={routeDbId}
