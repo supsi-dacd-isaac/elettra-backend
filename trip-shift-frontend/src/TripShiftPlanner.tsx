@@ -1,4 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
+import { MapContainer, TileLayer, Polyline, useMap, Marker } from "react-leaflet";
+import * as L from "leaflet";
 
 /**
  * Trip Shift Planner — single‑file React demo (TypeScript + Tailwind)
@@ -58,6 +60,21 @@ type TripStop = {
   stop_name: string;
   arrival_time?: string | null;
   departure_time?: string | null;
+  stop_lat?: number | null;
+  stop_lon?: number | null;
+};
+
+type ElevationRecord = {
+  point_number: number;
+  latitude: number;
+  longitude: number;
+  altitude_m: number;
+  cumulative_distance_m: number;
+};
+
+type ElevationProfile = {
+  shape_id: string;
+  records: ElevationRecord[];
 };
 
 // ---------- Utils ----------
@@ -258,6 +275,10 @@ export default function TripShiftPlanner() {
   const [stopsByTrip, setStopsByTrip] = useState<Record<string, TripStop[]>>({}); // keyed by database trip id
   const [stopsLoadingTripId, setStopsLoadingTripId] = useState<string | null>(null); // database trip id
   const [stopsErrorByTrip, setStopsErrorByTrip] = useState<Record<string, string>>({});
+  // Elevation cache per trip
+  const [elevationByTrip, setElevationByTrip] = useState<Record<string, ElevationProfile>>({});
+  const [elevationLoadingTripId, setElevationLoadingTripId] = useState<string | null>(null);
+  const [elevationErrorByTrip, setElevationErrorByTrip] = useState<Record<string, string>>({});
   const hoverTimerRef = useRef<number | null>(null);
 
   // Precompute enriched + sorted list
@@ -530,6 +551,25 @@ export default function TripShiftPlanner() {
       setStopsErrorByTrip((prev) => ({ ...prev, [tripDbId]: e?.message || String(e) }));
     } finally {
       setStopsLoadingTripId((prev) => (prev === tripDbId ? null : prev));
+    }
+  }
+
+  async function ensureElevationForTrip(tripDbId: string) {
+    if (!tripDbId) return;
+    if (elevationByTrip[tripDbId]) return; // cached
+    if (!effectiveBaseUrl) return;
+    try {
+      setElevationLoadingTripId(tripDbId);
+      const url = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/elevation-profile/by-trip/${encodeURIComponent(tripDbId)}`);
+      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = (await res.json()) as ElevationProfile;
+      if (!data || !Array.isArray(data.records)) throw new Error("Invalid elevation response");
+      setElevationByTrip((prev) => ({ ...prev, [tripDbId]: data }));
+    } catch (e: any) {
+      setElevationErrorByTrip((prev) => ({ ...prev, [tripDbId]: e?.message || String(e) }));
+    } finally {
+      setElevationLoadingTripId((prev) => (prev === tripDbId ? null : prev));
     }
   }
 
@@ -841,6 +881,7 @@ export default function TripShiftPlanner() {
                   hoverTimerRef.current = window.setTimeout(() => {
                     setHoveredTripId(t.id); // use database id (UUID)
                     ensureStopsForTrip(t.id);
+                    ensureElevationForTrip(t.id);
                   }, 1000);
                 }}
                 onLeave={() => {
@@ -854,6 +895,9 @@ export default function TripShiftPlanner() {
                 stops={stopsByTrip[t.id]}
                 stopsLoading={stopsLoadingTripId === t.id}
                 stopsError={stopsErrorByTrip[t.id]}
+                elevation={elevationByTrip[t.id]}
+                elevationLoading={elevationLoadingTripId === t.id}
+                elevationError={elevationErrorByTrip[t.id]}
               />
             ))}
             {rawTrips.length === 0 ? (
@@ -914,6 +958,9 @@ function TripCard({
   stops,
   stopsLoading,
   stopsError,
+  elevation,
+  elevationLoading,
+  elevationError,
 }: {
   t: TripX;
   disabled?: boolean;
@@ -925,7 +972,110 @@ function TripCard({
   stops?: TripStop[];
   stopsLoading?: boolean;
   stopsError?: string;
+  elevation?: ElevationProfile;
+  elevationLoading?: boolean;
+  elevationError?: string;
 }) {
+  function renderMiniElevationChart(profile?: ElevationProfile) {
+    if (!profile || !profile.records || profile.records.length === 0) return null;
+    const pts = profile.records;
+    const minAlt = Math.min(...pts.map((p) => p.altitude_m));
+    const maxAlt = Math.max(...pts.map((p) => p.altitude_m));
+    const maxX = Math.max(...pts.map((p) => p.cumulative_distance_m));
+    // Match map size: 260x180
+    const W = 260;
+    const H = 180;
+    // Add padding so tick labels and unit labels do not overlap
+    const padLeft = 44;
+    const padBottom = 28;
+    const padTop = 8;
+    const padRight = 10;
+    const innerHeight = H - padTop - padBottom;
+    const scaleX = (x: number) => padLeft + (maxX === 0 ? 0 : (x / maxX) * (W - padLeft - padRight));
+    const scaleY = (y: number) => {
+      const norm = (y - minAlt) / (maxAlt - minAlt || 1);
+      return H - padBottom - norm * innerHeight;
+    };
+    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${scaleX(p.cumulative_distance_m)},${scaleY(p.altitude_m)}`).join(" ");
+
+    // Axis ticks
+    const xTicks: number[] = [];
+    const numXTicks = 4;
+    for (let i = 0; i <= numXTicks; i++) xTicks.push((maxX / numXTicks) * i);
+    const yTicks: number[] = [];
+    const numYTicks = 4;
+    for (let i = 0; i <= numYTicks; i++) yTicks.push(minAlt + ((maxAlt - minAlt) / numYTicks) * i);
+
+    return (
+      <svg width={W} height={H} className="block">
+        {/* Axes */}
+        <line x1={padLeft} y1={padTop} x2={padLeft} y2={H - padBottom} stroke="#e5e7eb" />
+        <line x1={padLeft} y1={H - padBottom} x2={W - padRight} y2={H - padBottom} stroke="#e5e7eb" />
+        {/* Ticks and labels */}
+        {xTicks.map((x, i) => (
+          <g key={`xt-${i}`}>
+            <line x1={scaleX(x)} y1={H - padBottom} x2={scaleX(x)} y2={H - padBottom + 4} stroke="#9ca3af" />
+            <text x={scaleX(x)} y={H - padBottom + 16} textAnchor="middle" fontSize="10" fill="#6b7280">
+              {(x / 1000).toFixed(1)}
+            </text>
+          </g>
+        ))}
+        <text x={W - padRight} y={H - 6} textAnchor="end" fontSize="10" fill="#6b7280">km</text>
+        {yTicks.map((y, i) => (
+          <g key={`yt-${i}`}>
+            <line x1={padLeft - 4} y1={scaleY(y)} x2={padLeft} y2={scaleY(y)} stroke="#9ca3af" />
+            <text x={padLeft - 6} y={scaleY(y) + 3} textAnchor="end" fontSize="10" fill="#6b7280">
+              {Math.round(y)}
+            </text>
+          </g>
+        ))}
+        {/* Y-axis unit label, vertically centered and kept clear of tick labels */}
+        <text x={12} y={padTop + innerHeight / 2} textAnchor="middle" fontSize="10" fill="#6b7280" transform={`rotate(-90 12 ${padTop + innerHeight / 2})`}>
+          m
+        </text>
+        {/* Line */}
+        <path d={d} stroke="#059669" strokeWidth={1.6} fill="none" />
+      </svg>
+    );
+  }
+
+  function renderMiniMap(profile?: ElevationProfile, stops?: TripStop[]) {
+    if (!profile || !profile.records || profile.records.length === 0) return null;
+    const positions = profile.records.map((r) => [r.latitude, r.longitude]) as [number, number][];
+    const validStops = (stops || []).filter((s) => typeof s.stop_lat === "number" && typeof s.stop_lon === "number");
+    const start = validStops.length > 0 ? [validStops[0].stop_lat as number, validStops[0].stop_lon as number] as [number, number] : null;
+    const end = validStops.length > 0 ? [validStops[validStops.length - 1].stop_lat as number, validStops[validStops.length - 1].stop_lon as number] as [number, number] : null;
+
+    const playIcon = L.divIcon({
+      className: "",
+      html: '<div style="background:#10b981;color:#fff;border-radius:9999px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:2px solid #065f46"><i class="fa-solid fa-play" style="font-size:12px;margin-left:2px"></i></div>',
+      iconSize: [26, 26],
+      iconAnchor: [13, 13],
+    });
+    const stopIcon = L.divIcon({
+      className: "",
+      html: '<div style="background:#ef4444;color:#fff;border-radius:9999px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;border:2px solid #7f1d1d"><i class="fa-solid fa-stop" style="font-size:12px"></i></div>',
+      iconSize: [26, 26],
+      iconAnchor: [13, 13],
+    });
+    function FitBounds({ positions }: { positions: [number, number][] }) {
+      const map = useMap();
+      useEffect(() => {
+        if (!positions || positions.length === 0) return;
+        map.fitBounds(positions as any, { padding: [6, 6] });
+      }, [map, positions]);
+      return null;
+    }
+    return (
+      <MapContainer {...({ className: "w-[260px] h-[180px] rounded border", center: positions[0] } as any)}>
+        <TileLayer {...({ url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", maxZoom: 19 } as any)} />
+        <Polyline positions={positions} pathOptions={{ color: "#2563eb", weight: 3 }} />
+        {start && <Marker position={start} {...({ icon: playIcon } as any)} />}
+        {end && <Marker position={end} {...({ icon: stopIcon } as any)} />}
+        <FitBounds positions={positions} />
+      </MapContainer>
+    );
+  }
   return (
     <button
       disabled={disabled}
@@ -972,6 +1122,17 @@ function TripCard({
           {!stopsLoading && !stopsError && (!stops || stops.length === 0) && (
             <div className="text-[11px] text-gray-500">No stops found</div>
           )}
+          <div className="mt-2">
+            <div className="text-[11px] font-medium text-gray-700 mb-1">Route map · Elevation</div>
+            {elevationLoading && <div className="text-[11px] text-gray-500">Loading elevation…</div>}
+            {elevationError && <div className="text-[11px] text-red-600">{elevationError}</div>}
+            {!elevationLoading && !elevationError && elevation && (
+              <div className="flex items-start gap-3">
+                <div>{renderMiniMap(elevation, stops)}</div>
+                <div>{renderMiniElevationChart(elevation)}</div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </button>
