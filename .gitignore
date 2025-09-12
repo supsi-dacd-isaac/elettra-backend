@@ -185,3 +185,6 @@ config/*.yaml
 
 # Node
 node_modules/
+
+# Playwright MCP artifacts
+.playwright-mcp/
