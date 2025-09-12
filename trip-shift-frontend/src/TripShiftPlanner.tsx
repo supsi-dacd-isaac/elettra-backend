@@ -80,6 +80,12 @@ function enrichTrips(trips: Trip[]): TripX[] {
     .filter((t) => Number.isFinite(t.departure_sec) && Number.isFinite(t.arrival_sec));
 }
 
+function joinUrl(base: string, path: string): string {
+  const cleanBase = (base || "").replace(/\/+$/, "");
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return cleanBase ? `${cleanBase}${cleanPath}` : cleanPath;
+}
+
 // ---------- Sample (small) ----------
 const SAMPLE_TRIPS: Trip[] = [
   {
@@ -197,7 +203,7 @@ export default function TripShiftPlanner() {
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   // Backend integration
-  const [baseUrl, setBaseUrl] = useState<string>(ENV_BASE_URL);
+  const [baseUrl, setBaseUrl] = useState<string>(ENV_BASE_URL || "/");
   const [routeId, setRouteId] = useState<string>(ENV_ROUTE_ID);
   const [day, setDay] = useState<string>(ENV_DAY);
   const [email, setEmail] = useState<string>("");
@@ -238,6 +244,21 @@ export default function TripShiftPlanner() {
       : withText;
   }, [sortedTrips, used, hideUsed, textFilter, onlyValidNext, lastSelected]);
 
+  // Pagination for available trips
+  const [pageSize, setPageSize] = useState<number>(20);
+  const [page, setPage] = useState<number>(1);
+  const totalPages = Math.max(1, Math.ceil(nextCandidates.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, nextCandidates.length);
+  const pagedNextCandidates = useMemo(
+    () => nextCandidates.slice(startIndex, endIndex),
+    [nextCandidates, startIndex, endIndex]
+  );
+  useEffect(() => {
+    setPage(1);
+  }, [onlyValidNext, hideUsed, textFilter, lastSelected, pageSize]);
+
   // --- Actions ---
   function handlePickTrip(t: TripX) {
     // Return a click handler (curried); this fixes prior syntax error
@@ -259,14 +280,27 @@ export default function TripShiftPlanner() {
   }
 
   function handleExport() {
-    const data = JSON.stringify(selectedTrips, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `shift_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    if (selectedTrips.length === 0) {
+      alert("No trips selected to export.");
+      return;
+    }
+    try {
+      const data = JSON.stringify(selectedTrips, null, 2);
+      const blob = new Blob([data], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `shift_${Date.now()}.json`;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        if (a.parentNode) a.parentNode.removeChild(a);
+      }, 1000);
+    } catch (e: any) {
+      alert(`Export failed: ${e?.message || e}`);
+    }
   }
 
   async function handleFetchFreeUrl() {
@@ -318,7 +352,7 @@ export default function TripShiftPlanner() {
     }
     try {
       setLoading(true);
-      const res = await fetch(`${baseUrl}/auth/login`, {
+      const res = await fetch(joinUrl(baseUrl, "/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -343,7 +377,10 @@ export default function TripShiftPlanner() {
     }
     try {
       setLoading(true);
-      const url = `${baseUrl}/api/v1/gtfs/gtfs-trips/by-route/${routeId}${day ? `?day_of_week=${encodeURIComponent(day)}` : ""}`;
+      const url = joinUrl(
+        baseUrl,
+        `/api/v1/gtfs/gtfs-trips/by-route/${routeId}${day ? `?day_of_week=${encodeURIComponent(day)}` : ""}`
+      );
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
@@ -536,8 +573,44 @@ export default function TripShiftPlanner() {
             <h2 className="text-lg font-medium">Available trips</h2>
             <span className="text-sm text-gray-600">(sorted by departure time){loading ? " · loading…" : ""}</span>
           </div>
+          <div className="flex items-center justify-between mb-2 text-sm">
+            <div>
+              Showing {nextCandidates.length === 0 ? 0 : startIndex + 1}–{endIndex} of {nextCandidates.length}
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-gray-600">Per page</label>
+              <select
+                className="px-2 py-1 border rounded"
+                value={pageSize}
+                onChange={(e) => setPageSize(parseInt(e.target.value, 10) || 20)}
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+              <div className="ml-2 flex items-center gap-2">
+                <button
+                  className="px-2 py-1 border rounded disabled:opacity-50"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                >
+                  Prev
+                </button>
+                <span className="text-gray-600">Page {currentPage} / {totalPages}</span>
+                <button
+                  className="px-2 py-1 border rounded disabled:opacity-50"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 overflow-auto pr-1">
-            {nextCandidates.map((t) => (
+            {pagedNextCandidates.map((t) => (
               <TripCard
                 key={t.id}
                 t={t}
@@ -546,7 +619,7 @@ export default function TripShiftPlanner() {
                 onPick={handlePickTrip(t)}
               />
             ))}
-            {nextCandidates.length === 0 && (
+            {pagedNextCandidates.length === 0 && (
               <div className="text-sm text-gray-600">No trips match the current filters. Try disabling "Only show valid next trips" or clearing the search.</div>
             )}
           </div>
@@ -582,7 +655,7 @@ export default function TripShiftPlanner() {
           <div className="mt-3 flex gap-2 text-sm">
             <button onClick={handleUndo} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Undo last</button>
             <button onClick={handleReset} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Reset</button>
-            <button onClick={handleExport} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Export selection</button>
+            <button onClick={handleExport} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700" disabled={selectedTrips.length === 0}>Export selection</button>
           </div>
         </section>
       </main>
