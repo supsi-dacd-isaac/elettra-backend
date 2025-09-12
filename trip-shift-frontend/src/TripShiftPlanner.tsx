@@ -38,6 +38,14 @@ export type TripX = Trip & {
   arrival_sec: number;
 };
 
+type TripStop = {
+  id: string;
+  stop_id: string;
+  stop_name: string;
+  arrival_time?: string | null;
+  departure_time?: string | null;
+};
+
 // ---------- Utils ----------
 function parseGtfsTimeToSeconds(t: string): number {
   // Accepts strings like "08:42:00" or "25:13:00" (hours > 24 allowed)
@@ -211,6 +219,12 @@ export default function TripShiftPlanner() {
   const [token, setToken] = useState<string>(ENV_TOKEN);
   const [authInfo, setAuthInfo] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+
+  // Hovered trip and stops cache
+  const [hoveredTripId, setHoveredTripId] = useState<string | null>(null);
+  const [stopsByTrip, setStopsByTrip] = useState<Record<string, TripStop[]>>({});
+  const [stopsLoadingTripId, setStopsLoadingTripId] = useState<string | null>(null);
+  const [stopsErrorByTrip, setStopsErrorByTrip] = useState<Record<string, string>>({});
 
   // Precompute enriched + sorted list
   const tripsX = useMemo(() => enrichTrips(rawTrips), [rawTrips]);
@@ -393,6 +407,26 @@ export default function TripShiftPlanner() {
       alert(`Fetch failed: ${e?.message || e}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function ensureStopsForTrip(tripId: string) {
+    if (!tripId) return;
+    if (stopsByTrip[tripId]) return; // cached
+    if (!baseUrl) return;
+    try {
+      setStopsLoadingTripId(tripId);
+      const url = joinUrl(baseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(tripId)}`);
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = (await res.json()) as TripStop[];
+      setStopsByTrip((prev) => ({ ...prev, [tripId]: data }));
+    } catch (e: any) {
+      setStopsErrorByTrip((prev) => ({ ...prev, [tripId]: e?.message || String(e) }));
+    } finally {
+      setStopsLoadingTripId((prev) => (prev === tripId ? null : prev));
     }
   }
 
@@ -617,6 +651,15 @@ export default function TripShiftPlanner() {
                 disabled={selectedIds.length > 0 && !computeValidNext(lastSelected, t)}
                 used={used.has(t.id)}
                 onPick={handlePickTrip(t)}
+                onHover={() => {
+                  setHoveredTripId(t.trip_id);
+                  ensureStopsForTrip(t.trip_id);
+                }}
+                onLeave={() => setHoveredTripId((prev) => (prev === t.trip_id ? null : prev))}
+                hovered={hoveredTripId === t.trip_id}
+                stops={stopsByTrip[t.trip_id]}
+                stopsLoading={stopsLoadingTripId === t.trip_id}
+                stopsError={stopsErrorByTrip[t.trip_id]}
               />
             ))}
             {pagedNextCandidates.length === 0 && (
@@ -669,16 +712,30 @@ function TripCard({
   disabled,
   used,
   onPick,
+  onHover,
+  onLeave,
+  hovered,
+  stops,
+  stopsLoading,
+  stopsError,
 }: {
   t: TripX;
   disabled?: boolean;
   used?: boolean;
   onPick: () => void;
+  onHover?: () => void;
+  onLeave?: () => void;
+  hovered?: boolean;
+  stops?: TripStop[];
+  stopsLoading?: boolean;
+  stopsError?: string;
 }) {
   return (
     <button
       disabled={disabled}
       onClick={onPick}
+      onMouseEnter={onHover}
+      onMouseLeave={onLeave}
       className={
         "text-left p-2 rounded-lg border shadow-sm transition " +
         (disabled
@@ -701,6 +758,26 @@ function TripCard({
       <div className="text-[11px] text-gray-600 truncate">
         Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id}
       </div>
+      {hovered && (
+        <div className="mt-2 border-t pt-2">
+          <div className="text-[11px] font-medium text-gray-700 mb-1">Stops</div>
+          {stopsLoading && <div className="text-[11px] text-gray-500">Loading stops…</div>}
+          {stopsError && <div className="text-[11px] text-red-600">{stopsError}</div>}
+          {!stopsLoading && !stopsError && stops && stops.length > 0 && (
+            <ul className="max-h-32 overflow-auto space-y-1 pr-1">
+              {stops.map((s, i) => (
+                <li key={s.id || i} className="text-[11px] text-gray-700 truncate">
+                  {s.stop_name}
+                  {s.arrival_time ? ` · ${s.arrival_time}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+          {!stopsLoading && !stopsError && (!stops || stops.length === 0) && (
+            <div className="text-[11px] text-gray-500">No stops found</div>
+          )}
+        </div>
+      )}
     </button>
   );
 }
