@@ -6,7 +6,7 @@ from uuid import UUID
 
 from app.database import get_async_session
 from app.schemas import (
-    GtfsCalendarRead, GtfsStopsRead, GtfsTripsRead, VariantsReadWithRoute,
+    GtfsCalendarRead, GtfsStopsReadWithTimes, GtfsTripsRead, VariantsReadWithRoute,
     GtfsRoutesCreate, GtfsRoutesRead, GtfsRoutesReadWithVariant,
 )
 from app.models import (
@@ -489,17 +489,42 @@ async def read_calendar_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_as
     return calendar_entries
 
 # GTFS Stops endpoints (authenticated users only)
-@router.get("/gtfs-stops/by-trip/{trip_id}", response_model=List[GtfsStopsRead])
+@router.get("/gtfs-stops/by-trip/{trip_id}", response_model=List[GtfsStopsReadWithTimes])
 async def read_stops_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     """Get all GTFS stops for a given trip ID"""
     result = await db.execute(
-        select(GtfsStops)
+        select(
+            GtfsStops,
+            GtfsStopsTimes.arrival_time,
+            GtfsStopsTimes.departure_time
+        )
         .join(GtfsStopsTimes, GtfsStops.id == GtfsStopsTimes.stop_id)
         .filter(GtfsStopsTimes.trip_id == trip_id)
         .order_by(GtfsStopsTimes.stop_sequence)
     )
-    stops = result.scalars().all()
-    return stops
+    rows = result.all()
+    return [
+        GtfsStopsReadWithTimes(
+            id=stop.id,
+            stop_id=stop.stop_id,
+            stop_code=stop.stop_code,
+            stop_name=stop.stop_name,
+            stop_desc=stop.stop_desc,
+            stop_lat=stop.stop_lat,
+            stop_lon=stop.stop_lon,
+            zone_id=stop.zone_id,
+            stop_url=stop.stop_url,
+            location_type=stop.location_type,
+            parent_station=stop.parent_station,
+            stop_timezone=stop.stop_timezone,
+            wheelchair_boarding=stop.wheelchair_boarding,
+            platform_code=stop.platform_code,
+            level_id=stop.level_id,
+            arrival_time=arrival_time,
+            departure_time=departure_time,
+        )
+        for (stop, arrival_time, departure_time) in rows
+    ]
 
 @router.get("/gtfs-trips/by-stop/{stop_id}", response_model=List[GtfsTripsRead])
 async def read_trips_by_stop(stop_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):

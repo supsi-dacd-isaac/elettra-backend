@@ -210,8 +210,18 @@ export default function TripShiftPlanner() {
   const [restUrl, setRestUrl] = useState<string>("");
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // Backend integration
-  const [baseUrl, setBaseUrl] = useState<string>(ENV_BASE_URL || "/");
+  // Backend integration — auto-configured base URL
+  const effectiveBaseUrl = useMemo(() => {
+    if (ENV_BASE_URL) return ENV_BASE_URL;
+    if (typeof window !== "undefined") {
+      const host = window.location.hostname;
+      if (host === "localhost" || host === "127.0.0.1") return "http://localhost:8002";
+      if (/^10\./.test(host)) return `http://${host}:8002`;
+      if (host === "isaac-elettra.dacd.supsi.ch") return "http://isaac-elettra.dacd.supsi.ch:8002";
+    }
+    // fallback sensible default
+    return "http://localhost:8002";
+  }, []);
   const [routeId, setRouteId] = useState<string>(ENV_ROUTE_ID);
   const [day, setDay] = useState<string>(ENV_DAY);
   const [email, setEmail] = useState<string>("");
@@ -221,10 +231,11 @@ export default function TripShiftPlanner() {
   const [loading, setLoading] = useState<boolean>(false);
 
   // Hovered trip and stops cache
-  const [hoveredTripId, setHoveredTripId] = useState<string | null>(null);
-  const [stopsByTrip, setStopsByTrip] = useState<Record<string, TripStop[]>>({});
-  const [stopsLoadingTripId, setStopsLoadingTripId] = useState<string | null>(null);
+  const [hoveredTripId, setHoveredTripId] = useState<string | null>(null); // database trip id (UUID)
+  const [stopsByTrip, setStopsByTrip] = useState<Record<string, TripStop[]>>({}); // keyed by database trip id
+  const [stopsLoadingTripId, setStopsLoadingTripId] = useState<string | null>(null); // database trip id
   const [stopsErrorByTrip, setStopsErrorByTrip] = useState<Record<string, string>>({});
+  const hoverTimerRef = useRef<number | null>(null);
 
   // Precompute enriched + sorted list
   const tripsX = useMemo(() => enrichTrips(rawTrips), [rawTrips]);
@@ -352,7 +363,7 @@ export default function TripShiftPlanner() {
   }
 
   async function login() {
-    if (!baseUrl) {
+    if (!effectiveBaseUrl) {
       alert("Base URL required");
       return;
     }
@@ -366,7 +377,7 @@ export default function TripShiftPlanner() {
     }
     try {
       setLoading(true);
-      const res = await fetch(joinUrl(baseUrl, "/auth/login"), {
+      const res = await fetch(joinUrl(effectiveBaseUrl, "/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -385,14 +396,14 @@ export default function TripShiftPlanner() {
   }
 
   async function loadByRouteDay() {
-    if (!baseUrl || !routeId) {
+    if (!effectiveBaseUrl || !routeId) {
       alert("Base URL and Route ID required");
       return;
     }
     try {
       setLoading(true);
       const url = joinUrl(
-        baseUrl,
+        effectiveBaseUrl,
         `/api/v1/gtfs/gtfs-trips/by-route/${routeId}${day ? `?day_of_week=${encodeURIComponent(day)}` : ""}`
       );
       const res = await fetch(url, {
@@ -410,23 +421,23 @@ export default function TripShiftPlanner() {
     }
   }
 
-  async function ensureStopsForTrip(tripId: string) {
-    if (!tripId) return;
-    if (stopsByTrip[tripId]) return; // cached
-    if (!baseUrl) return;
+  async function ensureStopsForTrip(tripDbId: string) {
+    if (!tripDbId) return;
+    if (stopsByTrip[tripDbId]) return; // cached
+    if (!effectiveBaseUrl) return;
     try {
-      setStopsLoadingTripId(tripId);
-      const url = joinUrl(baseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(tripId)}`);
+      setStopsLoadingTripId(tripDbId);
+      const url = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(tripDbId)}`);
       const res = await fetch(url, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data = (await res.json()) as TripStop[];
-      setStopsByTrip((prev) => ({ ...prev, [tripId]: data }));
+      setStopsByTrip((prev) => ({ ...prev, [tripDbId]: data }));
     } catch (e: any) {
-      setStopsErrorByTrip((prev) => ({ ...prev, [tripId]: e?.message || String(e) }));
+      setStopsErrorByTrip((prev) => ({ ...prev, [tripDbId]: e?.message || String(e) }));
     } finally {
-      setStopsLoadingTripId((prev) => (prev === tripId ? null : prev));
+      setStopsLoadingTripId((prev) => (prev === tripDbId ? null : prev));
     }
   }
 
@@ -544,7 +555,7 @@ export default function TripShiftPlanner() {
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">Backend</h2>
             <div className="space-y-2 text-sm">
-              <input className="w-full px-3 py-2 border rounded-lg" placeholder="Base URL e.g., http://localhost:8002" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+              <div className="w-full px-3 py-2 border rounded-lg text-xs text-gray-600">Backend: auto-configured</div>
               <div className="grid grid-cols-2 gap-2">
                 <input className="px-3 py-2 border rounded-lg" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
                 <input className="px-3 py-2 border rounded-lg" type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -652,14 +663,23 @@ export default function TripShiftPlanner() {
                 used={used.has(t.id)}
                 onPick={handlePickTrip(t)}
                 onHover={() => {
-                  setHoveredTripId(t.trip_id);
-                  ensureStopsForTrip(t.trip_id);
+                  if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
+                  hoverTimerRef.current = window.setTimeout(() => {
+                    setHoveredTripId(t.id); // use database id (UUID)
+                    ensureStopsForTrip(t.id);
+                  }, 1000);
                 }}
-                onLeave={() => setHoveredTripId((prev) => (prev === t.trip_id ? null : prev))}
-                hovered={hoveredTripId === t.trip_id}
-                stops={stopsByTrip[t.trip_id]}
-                stopsLoading={stopsLoadingTripId === t.trip_id}
-                stopsError={stopsErrorByTrip[t.trip_id]}
+                onLeave={() => {
+                  if (hoverTimerRef.current) {
+                    window.clearTimeout(hoverTimerRef.current);
+                    hoverTimerRef.current = null;
+                  }
+                  setHoveredTripId((prev) => (prev === t.id ? null : prev));
+                }}
+                hovered={hoveredTripId === t.id}
+                stops={stopsByTrip[t.id]}
+                stopsLoading={stopsLoadingTripId === t.id}
+                stopsError={stopsErrorByTrip[t.id]}
               />
             ))}
             {pagedNextCandidates.length === 0 && (
@@ -760,15 +780,15 @@ function TripCard({
       </div>
       {hovered && (
         <div className="mt-2 border-t pt-2">
-          <div className="text-[11px] font-medium text-gray-700 mb-1">Stops</div>
+          <div className="text-[11px] font-medium text-gray-700 mb-1">Stops (Arr · Dep)</div>
           {stopsLoading && <div className="text-[11px] text-gray-500">Loading stops…</div>}
           {stopsError && <div className="text-[11px] text-red-600">{stopsError}</div>}
           {!stopsLoading && !stopsError && stops && stops.length > 0 && (
             <ul className="max-h-32 overflow-auto space-y-1 pr-1">
               {stops.map((s, i) => (
-                <li key={s.id || i} className="text-[11px] text-gray-700 truncate">
-                  {s.stop_name}
-                  {s.arrival_time ? ` · ${s.arrival_time}` : ""}
+                <li key={s.id || i} className="text-[11px] text-gray-700 flex items-center justify-between gap-2">
+                  <span className="truncate">{s.stop_name}</span>
+                  <span className="whitespace-nowrap text-gray-600">Arr {(s.arrival_time || "").slice(0,5)} · Dep {(s.departure_time || "").slice(0,5)}</span>
                 </li>
               ))}
             </ul>

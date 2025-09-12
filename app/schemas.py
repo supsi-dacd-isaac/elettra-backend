@@ -219,6 +219,26 @@ class GtfsStopsRead(BaseModel):
     level_id: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
+class GtfsStopsReadWithTimes(BaseModel):
+    id: UUID
+    stop_id: str
+    stop_code: Optional[str]
+    stop_name: Optional[str]
+    stop_desc: Optional[str]
+    stop_lat: Optional[float]
+    stop_lon: Optional[float]
+    zone_id: Optional[str]
+    stop_url: Optional[str]
+    location_type: Optional[int]
+    parent_station: Optional[str]
+    stop_timezone: Optional[str]
+    wheelchair_boarding: Optional[int]
+    platform_code: Optional[str]
+    level_id: Optional[str]
+    arrival_time: Optional[str]
+    departure_time: Optional[str]
+    model_config = ConfigDict(from_attributes=True)
+
 class BusModelsCreate(BaseModel):
     company_id: UUID
     name: str
