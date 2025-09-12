@@ -247,6 +247,7 @@ export default function TripShiftPlanner() {
   // Agency/Route selection
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [agencyId, setAgencyId] = useState<string>(""); // database UUID for agency
+  const [agencySearch, setAgencySearch] = useState<string>("");
   const [routes, setRoutes] = useState<RouteRead[]>([]);
   const [routeDbId, setRouteDbId] = useState<string>(ENV_ROUTE_ID); // database UUID for route
 
@@ -491,6 +492,14 @@ export default function TripShiftPlanner() {
     }
   }, [agencyId, token, effectiveBaseUrl]);
 
+  // Filter and sort agencies by name/id
+  const filteredAgencies = useMemo(() => {
+    const label = (a: Agency) => (a.agency_name || a.gtfs_agency_id || "").toString();
+    const q = agencySearch.trim().toLowerCase();
+    const list = q ? agencies.filter((a) => label(a).toLowerCase().includes(q)) : agencies.slice();
+    return list.sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base" }));
+  }, [agencies, agencySearch]);
+
   async function ensureStopsForTrip(tripDbId: string) {
     if (!tripDbId) return;
     if (stopsByTrip[tripDbId]) return; // cached
@@ -636,6 +645,15 @@ export default function TripShiftPlanner() {
               </div>
               {authInfo && <div className="text-xs text-gray-600">{authInfo}</div>}
 
+              <div className="mt-2">
+                <input
+                  className="w-full px-3 py-2 border rounded-lg"
+                  placeholder="Search agency"
+                  value={agencySearch}
+                  onChange={(e) => setAgencySearch(e.target.value)}
+                  disabled={!token}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <select
                   className="px-3 py-2 border rounded-lg"
@@ -644,7 +662,7 @@ export default function TripShiftPlanner() {
                   disabled={!token}
                 >
                   <option value="">{token ? "Select agency" : "Login or paste token first"}</option>
-                  {agencies.map((a) => (
+                  {filteredAgencies.map((a) => (
                     <option key={a.id} value={a.id}>{a.agency_name || a.gtfs_agency_id}</option>
                   ))}
                 </select>
