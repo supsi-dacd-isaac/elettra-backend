@@ -226,6 +226,8 @@ const ENV_BASE_URL: string = VITE.VITE_API_BASE_URL || "";
 const ENV_TOKEN: string = VITE.VITE_API_TOKEN || "";
 const ENV_ROUTE_ID: string = VITE.VITE_TEST_ROUTE_ID || "";
 const ENV_DAY: string = VITE.VITE_DAY || "monday";
+const ENV_LOGIN_EMAIL: string = VITE.VITE_TEST_LOGIN_EMAIL || VITE.TEST_LOGIN_EMAIL || "";
+const ENV_LOGIN_PASSWORD: string = VITE.VITE_TEST_LOGIN_PASSWORD || VITE.TEST_LOGIN_PASSWORD || "";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
 
@@ -406,16 +408,12 @@ export default function TripShiftPlanner() {
     reader.readAsText(file);
   }
 
-  async function login() {
+  async function performLogin(emailToUse: string, passwordToUse: string) {
     if (!effectiveBaseUrl) {
       alert("Base URL required");
       return;
     }
-    if (token) {
-      setAuthInfo(`Using pasted token (${token.slice(0, 8)}… )`);
-      return;
-    }
-    if (!email || !password) {
+    if (!emailToUse || !passwordToUse) {
       alert("Provide email and password or paste a token");
       return;
     }
@@ -424,7 +422,7 @@ export default function TripShiftPlanner() {
       const res = await fetch(joinUrl(effectiveBaseUrl, "/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: emailToUse, password: passwordToUse }),
       });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data: any = await res.json();
@@ -437,6 +435,29 @@ export default function TripShiftPlanner() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function login() {
+    if (!effectiveBaseUrl) {
+      alert("Base URL required");
+      return;
+    }
+    if (token) {
+      setAuthInfo(`Using pasted token (${token.slice(0, 8)}… )`);
+      return;
+    }
+    await performLogin(email, password);
+  }
+
+  function logout() {
+    setToken("");
+    setAuthInfo("");
+    setEmail("");
+    setPassword("");
+    setAgencyId("");
+    setAgencyQuery("");
+    setAgencies([]);
+    setRoutes([]);
   }
 
   async function loadByRouteDay() {
@@ -504,6 +525,16 @@ export default function TripShiftPlanner() {
       fetchAgencies();
     }
   }, [token, effectiveBaseUrl]);
+
+  // Attempt auto-login on first load using env credentials
+  useEffect(() => {
+    if (!token && ENV_LOGIN_EMAIL && ENV_LOGIN_PASSWORD && effectiveBaseUrl) {
+      setEmail(ENV_LOGIN_EMAIL);
+      setPassword(ENV_LOGIN_PASSWORD);
+      performLogin(ENV_LOGIN_EMAIL, ENV_LOGIN_PASSWORD);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveBaseUrl]);
 
   // When agency changes, load routes and clear selection
   useEffect(() => {
@@ -694,7 +725,11 @@ export default function TripShiftPlanner() {
               </div>
               <div className="flex gap-2">
                 <input className="flex-1 px-3 py-2 border rounded-lg" placeholder="Paste Bearer token (optional)" value={token} onChange={(e) => setToken(e.target.value)} />
-                <button onClick={login} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>Login</button>
+                {token ? (
+                  <button onClick={logout} className="px-3 py-2 rounded-lg bg-gray-200 text-gray-900 text-sm hover:bg-gray-300" disabled={loading}>Logout</button>
+                ) : (
+                  <button onClick={login} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>Login</button>
+                )}
               </div>
               {authInfo && <div className="text-xs text-gray-600">{authInfo}</div>}
 
