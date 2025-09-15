@@ -39,7 +39,11 @@ services:
     # command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   trip-shift-frontend:
-    build: ./trip-shift-frontend
+    build:
+      context: ./trip-shift-frontend
+      args:
+        VITE_TEST_LOGIN_EMAIL: ${VITE_TEST_LOGIN_EMAIL:-}
+        VITE_TEST_LOGIN_PASSWORD: ${VITE_TEST_LOGIN_PASSWORD:-}
     ports:
       - "5173:80"
     environment:

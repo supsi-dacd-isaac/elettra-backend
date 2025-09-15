@@ -4,6 +4,10 @@ COPY package*.json ./
 # react-leaflet requires legacy peer resolution with React 19
 RUN npm ci --legacy-peer-deps
 COPY . .
+ARG VITE_TEST_LOGIN_EMAIL
+ARG VITE_TEST_LOGIN_PASSWORD
+ENV VITE_TEST_LOGIN_EMAIL=${VITE_TEST_LOGIN_EMAIL}
+ENV VITE_TEST_LOGIN_PASSWORD=${VITE_TEST_LOGIN_PASSWORD}
 RUN npm run build
 
 FROM nginx:alpine
