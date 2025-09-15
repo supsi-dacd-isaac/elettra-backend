@@ -19,6 +19,13 @@ from minio import Minio
 import pandas as pd
 import io
 import os
+import httpx
+
+try:
+    # pyproj is a dependency of geopandas, but import may fail if extras not installed
+    from pyproj import Transformer
+except Exception:  # pragma: no cover
+    Transformer = None  # type: ignore
 
 router = APIRouter()
 
@@ -563,6 +570,91 @@ async def read_trips_by_stop(stop_id: UUID, db: AsyncSession = Depends(get_async
     )
     trips = result.scalars().all()
     return trips
+
+
+# OSRM distance endpoint
+@router.get("/osrm/driving-distance")
+async def get_driving_distance_to_stop(
+    stop_uuid: UUID,
+    lat: float,
+    lon: float,
+    direction: str = "to_stop",  # "to_stop" or "from_stop"
+    coord_sys: str = "wgs84",  # "wgs84" (EPSG:4326), "lv95" (EPSG:2056), "lv03" (EPSG:21781)
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    """Return OSRM driving distance and duration between a coordinate and a GTFS stop.
+
+    - stop_uuid: UUID primary key of `gtfs_stops.id`
+    - lat, lon: input coordinates in the selected `coord_sys`
+    - direction: "to_stop" (lat,lon -> stop) or "from_stop" (stop -> lat,lon)
+    - coord_sys: one of {"wgs84", "lv95", "lv03"}
+    """
+    # Fetch stop
+    stop = await db.get(GtfsStops, stop_uuid)
+    if stop is None:
+        raise HTTPException(status_code=404, detail="Stop not found")
+    if stop.stop_lat is None or stop.stop_lon is None:
+        raise HTTPException(status_code=400, detail="Stop has no coordinates")
+
+    # Convert input to WGS84 (lat, lon)
+    def to_wgs84(input_lat: float, input_lon: float, system: str) -> tuple[float, float]:
+        if system.lower() in ("wgs84", "epsg:4326"):
+            return float(input_lat), float(input_lon)
+        if Transformer is None:
+            raise HTTPException(status_code=500, detail="Coordinate transform not available: pyproj missing")
+
+        if system.lower() in ("lv95", "epsg:2056"):
+            # LV95 (EPSG:2056) input order: E, N (x, y)
+            transformer = Transformer.from_crs(2056, 4326, always_xy=True)
+            wgs_lon, wgs_lat = transformer.transform(float(input_lon), float(input_lat))
+            return wgs_lat, wgs_lon
+        if system.lower() in ("lv03", "epsg:21781"):
+            # LV03 (EPSG:21781) input order: E, N (x, y)
+            transformer = Transformer.from_crs(21781, 4326, always_xy=True)
+            wgs_lon, wgs_lat = transformer.transform(float(input_lon), float(input_lat))
+            return wgs_lat, wgs_lon
+
+        raise HTTPException(status_code=400, detail="Unsupported coord_sys. Use wgs84, lv95, or lv03")
+
+    src_lat, src_lon = to_wgs84(lat, lon, coord_sys)
+    stop_lat = float(stop.stop_lat)
+    stop_lon = float(stop.stop_lon)
+
+    # OSRM expects lon,lat order
+    if direction == "to_stop":
+        start_lon, start_lat = src_lon, src_lat
+        end_lon, end_lat = stop_lon, stop_lat
+    elif direction == "from_stop":
+        start_lon, start_lat = stop_lon, stop_lat
+        end_lon, end_lat = src_lon, src_lat
+    else:
+        raise HTTPException(status_code=400, detail="Invalid direction. Use to_stop or from_stop")
+
+    osrm_base = os.getenv("OSRM_BASE_URL", "http://osrm:5000")
+    url = f"{osrm_base}/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=false"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(url)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"OSRM request failed: {exc}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"OSRM error: {resp.text}")
+
+    data = resp.json()
+    if data.get("code") != "Ok" or not data.get("routes"):
+        raise HTTPException(status_code=502, detail=f"OSRM routing failed: {data}")
+
+    route = data["routes"][0]
+    return {
+        "direction": direction,
+        "coord_sys": coord_sys,
+        "distance_meters": route.get("distance"),
+        "duration_seconds": route.get("duration"),
+        "waypoints": data.get("waypoints", []),
+    }
 
 # Elevation profile by trip
 @router.get("/elevation-profile/by-trip/{trip_id}", response_model=ElevationProfileResponse)

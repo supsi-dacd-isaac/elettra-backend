@@ -90,6 +90,64 @@ services:
       fi
       "
 
+  osrm-download:
+    image: alpine:latest
+    container_name: elettra-osrm-download
+    volumes:
+      - osrm-data:/data
+    entrypoint: >
+      sh -c "
+      apk add --no-cache curl &&
+      if [ ! -f /data/switzerland-latest.osm.pbf ]; then
+        echo 'Downloading Switzerland OSM data...'
+        curl -L -o /data/switzerland-latest.osm.pbf https://download.geofabrik.de/europe/switzerland-latest.osm.pbf
+        echo 'Switzerland OSM data downloaded successfully'
+      else
+        echo 'Switzerland OSM data already exists'
+      fi
+      "
+
+  osrm-process:
+    image: osrm/osrm-backend:latest
+    container_name: elettra-osrm-process
+    depends_on:
+      osrm-download:
+        condition: service_completed_successfully
+    volumes:
+      - osrm-data:/data
+    entrypoint: >
+      bash -c "
+      if [ ! -f /data/switzerland-latest.osrm ]; then
+        echo 'Extracting OSRM data...'
+        osrm-extract -p /opt/car.lua /data/switzerland-latest.osm.pbf
+        echo 'OSRM data extracted successfully'
+      else
+        echo 'OSRM data already extracted'
+      fi &&
+      if [ ! -f /data/switzerland-latest.osrm.hsgr ]; then
+        echo 'Contracting OSRM data...'
+        osrm-contract /data/switzerland-latest.osrm
+        echo 'OSRM data contracted successfully'
+      else
+        echo 'OSRM data already contracted'
+      fi &&
+      echo 'OSRM data preparation completed'
+      "
+
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: elettra-osrm
+    restart: unless-stopped
+    depends_on:
+      osrm-process:
+        condition: service_completed_successfully
+    ports:
+      - "5001:5000"
+    volumes:
+      - osrm-data:/data
+    command: osrm-routed --algorithm ch /data/switzerland-latest.osrm
+
 volumes:
   db-data:
   minio-data:
+  osrm-data:

@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # Load environment variables from .env file if it exists
+
 def load_env_file(env_path: Path):
     """Load environment variables from .env file"""
     if env_path.exists():
@@ -23,6 +24,9 @@ def load_env_file(env_path: Path):
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
+                    # Allow optional leading 'export '
+                    if key.startswith('export '):
+                        key = key[len('export '):]
                     # Remove quotes if present
                     value = value.strip('"\'')
                     os.environ[key.strip()] = value
