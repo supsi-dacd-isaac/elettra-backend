@@ -18,6 +18,9 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+class LogoutResponse(BaseModel):
+    message: str
+
 class RoleEnum(str, Enum):
     admin = "admin"
     analyst = "analyst"

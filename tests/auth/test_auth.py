@@ -90,9 +90,41 @@ def test_openapi_has_auth_paths(client, record):
         return
     spec = r.json()
     paths = spec.get("paths", {})
-    needed = {"/auth/login", "/auth/register", "/auth/me"}
+    needed = {"/auth/login", "/auth/register", "/auth/me", "/auth/logout"}
     missing = needed - set(paths.keys())
     record("openapi_auth_paths", not missing, f"missing={missing}")
+
+def test_logout_without_token(client, record):
+    r = client.post(f"{AUTH_BASE}/logout")
+    record("logout_no_token", r.status_code in (401, 403), f"status={r.status_code}")
+
+def test_logout_with_invalid_token(client, record):
+    r = client.post(f"{AUTH_BASE}/logout", headers={"Authorization": "Bearer invalid"})
+    record("logout_invalid_token", r.status_code == 401, f"status={r.status_code}")
+
+def test_logout_with_valid_token(client, record):
+    # First login to get a valid token
+    login_data = {
+        "email": "test01.elettra@fart.ch",
+        "password": "elettra"
+    }
+    login_r = client.post(f"{AUTH_BASE}/login", json=login_data)
+    if login_r.status_code != 200:
+        record("logout_login_failed", False, f"login_status={login_r.status_code}")
+        return
+    
+    token = login_r.json().get("access_token")
+    if not token:
+        record("logout_no_token_from_login", False, "no token in login response")
+        return
+    
+    # Now test logout with valid token
+    logout_r = client.post(f"{AUTH_BASE}/logout", headers={"Authorization": f"Bearer {token}"})
+    record("logout_valid_token", logout_r.status_code == 200, f"status={logout_r.status_code}")
+    
+    if logout_r.status_code == 200:
+        data = logout_r.json()
+        record("logout_response_format", "message" in data, f"response={data}")
 
 @pytest.mark.parametrize("injection", [
     "admin@example.com'; DROP TABLE users; --",

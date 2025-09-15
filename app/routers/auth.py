@@ -5,7 +5,7 @@ from sqlalchemy import select
 from datetime import timedelta
 
 from app.database import get_async_session
-from app.schemas import UserLogin, Token, UserRegister, UsersRead
+from app.schemas import UserLogin, Token, UserRegister, UsersRead, LogoutResponse
 from app.models import Users
 from app.core.auth import (
     authenticate_user,
@@ -66,3 +66,8 @@ async def register(user_data: UserRegister, db: AsyncSession = Depends(get_async
 async def read_users_me(current_user: Users = Depends(get_current_user)):
     """Get current user information"""
     return current_user
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(current_user: Users = Depends(get_current_user)):
+    """Logout user (client should remove token from storage)"""
+    return {"message": "Successfully logged out"}
