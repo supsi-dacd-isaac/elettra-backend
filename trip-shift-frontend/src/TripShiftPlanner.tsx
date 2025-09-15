@@ -239,9 +239,7 @@ export default function TripShiftPlanner() {
   const [hideUsed, setHideUsed] = useState<boolean>(true);
   const [textFilter, setTextFilter] = useState<string>("");
 
-  // Free-URL fetch (optional)
-  const [restUrl, setRestUrl] = useState<string>("");
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  // Removed outdated file upload and free-URL fetch
 
   // Backend integration — auto-configured base URL
   const effectiveBaseUrl = useMemo(() => {
@@ -372,40 +370,6 @@ export default function TripShiftPlanner() {
     } catch (e: any) {
       alert(`Export failed: ${e?.message || e}`);
     }
-  }
-
-  async function handleFetchFreeUrl() {
-    if (!restUrl) return;
-    try {
-      setLoading(true);
-      const res = await fetch(restUrl);
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const data = (await res.json()) as Trip[];
-      if (!Array.isArray(data)) throw new Error("Response is not an array");
-      setRawTrips(data);
-      setSelectedIds([]);
-    } catch (err: any) {
-      alert(`Fetch failed: ${err?.message || err}`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function handleFileUpload(ev: React.ChangeEvent<HTMLInputElement>) {
-    const file = ev.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(String(reader.result));
-        if (!Array.isArray(data)) throw new Error("File JSON is not an array");
-        setRawTrips(data);
-        setSelectedIds([]);
-      } catch (e: any) {
-        alert(`Invalid JSON: ${e?.message || e}`);
-      }
-    };
-    reader.readAsText(file);
   }
 
   async function performLogin(emailToUse: string, passwordToUse: string) {
@@ -644,40 +608,7 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
-            <div className="flex items-center gap-2">
-              <input
-                ref={fileRef}
-                type="file"
-                accept="application/json"
-                onChange={handleFileUpload}
-                className="block text-sm"
-                title="Upload trips JSON"
-              />
-              <button
-                onClick={() => {
-                  setRawTrips(SAMPLE_TRIPS);
-                  setSelectedIds([]);
-                  if (fileRef.current) fileRef.current.value = "";
-                }}
-                className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm"
-                title="Load sample"
-              >
-                Load sample
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="url"
-                placeholder="https://api.example.com/trips"
-                value={restUrl}
-                onChange={(e) => setRestUrl(e.target.value)}
-                className="px-3 py-2 border rounded-lg text-sm w-72"
-              />
-              <button onClick={handleFetchFreeUrl} className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700">
-                Fetch
-              </button>
-            </div>
+            {/* Removed file upload, sample load, and free URL fetch UI */}
           </div>
         </div>
       </header>
