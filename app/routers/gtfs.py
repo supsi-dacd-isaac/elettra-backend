@@ -291,6 +291,29 @@ async def read_routes_by_agency_with_largest_variant(agency_id: UUID, db: AsyncS
 
     return routes_with_variant
 
+@router.get("/gtfs-routes/by-stop/{stop_id}", response_model=List[GtfsRoutesRead])
+async def read_routes_by_stop(
+    stop_id: UUID, 
+    agency_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_async_session), 
+    current_user: Users = Depends(get_current_user)
+):
+    """Get all unique GTFS routes for a given stop ID, optionally filtered by agency"""
+    query = (
+        select(GtfsRoutes)
+        .join(GtfsTrips, GtfsRoutes.id == GtfsTrips.route_id)
+        .join(GtfsStopsTimes, GtfsTrips.id == GtfsStopsTimes.trip_id)
+        .filter(GtfsStopsTimes.stop_id == stop_id)
+        .distinct()
+    )
+    
+    if agency_id is not None:
+        query = query.filter(GtfsRoutes.agency_id == agency_id)
+    
+    result = await db.execute(query)
+    routes = result.scalars().all()
+    return routes
+
 # GTFS Trips endpoints (authenticated users only)
 @router.get("/gtfs-trips/by-route/{route_id}", response_model=List[GtfsTripsRead])
 async def read_trips_by_route(
