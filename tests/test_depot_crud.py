@@ -56,6 +56,41 @@ def create_test_depot(client: TestClient, token: str, name: str = "Test Depot") 
     return None
 
 # -----------------------------
+# Pytest Fixtures
+# -----------------------------
+
+@pytest.fixture(autouse=True)
+def cleanup_test_depots(client):
+    """Cleanup fixture that runs after each test to remove any remaining test depots"""
+    yield  # Let the test run first
+    
+    # After test completion, clean up any depots with test names
+    try:
+        token = get_auth_token(client)
+        if not token:
+            return
+            
+        headers = get_auth_headers(token)
+        response = client.get(f"{API_BASE}/depots/", headers=headers)
+        
+        if response.status_code == 200:
+            depots = response.json()
+            test_depot_names = [
+                "Test Depot", "Minimal Depot", "Read Test Depot", "Update Test Depot",
+                "Partial Update Test Depot", "Invalid Data Test Depot", "Delete Test Depot",
+                "Workflow Depot", "Test Depot valid_coordinates"
+            ]
+            
+            for depot in depots:
+                if depot.get("name") in test_depot_names:
+                    depot_id = depot.get("id")
+                    if depot_id:
+                        client.delete(f"{API_BASE}/depots/{depot_id}", headers=headers)
+    except Exception:
+        # Silently ignore cleanup errors to avoid masking test failures
+        pass
+
+# -----------------------------
 # Create Depot Tests
 # -----------------------------
 
@@ -82,11 +117,17 @@ def test_create_depot_success(client, record):
     
     record("create_depot_success", response.status_code == 200, f"status={response.status_code}")
     
+    depot_id = None
     if response.status_code == 200:
         data = response.json()
+        depot_id = data.get("id")
         record("create_depot_response_id", "id" in data, "id field missing")
         record("create_depot_response_name", data.get("name") == "Test Depot", f"name={data.get('name')}")
         record("create_depot_response_agency_id", data.get("agency_id") == TEST_AGENCY_ID, f"agency_id={data.get('agency_id')}")
+    
+    # Clean up - delete the test depot
+    if depot_id:
+        client.delete(f"{API_BASE}/depots/{depot_id}", headers=headers)
 
 def test_create_depot_minimal_data(client, record):
     """Test depot creation with minimal required data"""
@@ -104,6 +145,12 @@ def test_create_depot_minimal_data(client, record):
     response = client.post(f"{API_BASE}/depots/", json=depot_data, headers=headers)
     
     record("create_depot_minimal", response.status_code == 200, f"status={response.status_code}")
+    
+    # Clean up - delete the test depot
+    if response.status_code == 200:
+        depot_id = response.json().get("id")
+        if depot_id:
+            client.delete(f"{API_BASE}/depots/{depot_id}", headers=headers)
 
 def test_create_depot_invalid_agency_id(client, record):
     """Test depot creation with invalid agency ID"""
@@ -479,6 +526,7 @@ def test_depot_validation_coordinates(client, record):
         return
     
     headers = get_auth_headers(token)
+    created_depot_ids = []  # Track created depots for cleanup
     
     test_cases = [
         ("valid_coordinates", {"latitude": 40.7128, "longitude": -74.0060}, 200),
@@ -497,3 +545,13 @@ def test_depot_validation_coordinates(client, record):
         
         response = client.post(f"{API_BASE}/depots/", json=depot_data, headers=headers)
         record(f"validation_{test_name}", response.status_code == expected_status, f"status={response.status_code}")
+        
+        # Track successfully created depots for cleanup
+        if response.status_code == 200:
+            depot_id = response.json().get("id")
+            if depot_id:
+                created_depot_ids.append(depot_id)
+    
+    # Clean up - delete all successfully created test depots
+    for depot_id in created_depot_ids:
+        client.delete(f"{API_BASE}/depots/{depot_id}", headers=headers)
