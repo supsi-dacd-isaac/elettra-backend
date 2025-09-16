@@ -90,7 +90,7 @@ class GtfsCalendarRead(BaseModel):
     end_date: date
     model_config = ConfigDict(from_attributes=True)
 
-class DeposCreate(BaseModel):
+class DepotsCreate(BaseModel):
     agency_id: UUID
     name: str
     address: Optional[str] = None
@@ -99,7 +99,7 @@ class DeposCreate(BaseModel):
     longitude: Optional[float] = None
     features: Optional[dict | list | None] = None
 
-class DeposUpdate(BaseModel):
+class DepotsUpdate(BaseModel):
     id: Optional[UUID] = None
     agency_id: Optional[UUID] = None
     name: Optional[str] = None
@@ -109,7 +109,7 @@ class DeposUpdate(BaseModel):
     longitude: Optional[float] = None
     features: Optional[dict | list | None] = None
 
-class DeposRead(BaseModel):
+class DepotsRead(BaseModel):
     id: UUID
     agency_id: UUID
     name: str

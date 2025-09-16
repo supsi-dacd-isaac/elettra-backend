@@ -29,7 +29,7 @@ class GtfsAgencies(Base):
     agency_email: Mapped[Optional[str]] = mapped_column(Text)
 
     bus_models: Mapped[list['BusModels']] = relationship('BusModels', back_populates='company')
-    depos: Mapped[list['Depos']] = relationship('Depos', back_populates='agency')
+    depots: Mapped[list['Depots']] = relationship('Depots', back_populates='agency')
     gtfs_routes: Mapped[list['GtfsRoutes']] = relationship('GtfsRoutes', back_populates='agency')
     users: Mapped[list['Users']] = relationship('Users', back_populates='company')
 
@@ -140,19 +140,19 @@ class BusModels(Base):
     company: Mapped['GtfsAgencies'] = relationship('GtfsAgencies', back_populates='bus_models')
 
 
-class Depos(Base):
-    __tablename__ = 'depos'
+class Depots(Base):
+    __tablename__ = 'depots'
     __table_args__ = (
-        CheckConstraint("latitude IS NULL OR latitude >= '-90'::integer::double precision AND latitude <= 90::double precision", name='depos_latitude_check'),
-        CheckConstraint("longitude IS NULL OR longitude >= '-180'::integer::double precision AND longitude <= 180::double precision", name='depos_longitude_check'),
-        ForeignKeyConstraint(['agency_id'], ['gtfs_agencies.id'], ondelete='RESTRICT', onupdate='CASCADE', name='depos_agency_fk'),
-        PrimaryKeyConstraint('id', name='depos_pkey'),
-        Index('depos_agency_id_idx', 'agency_id'),
-        Index('depos_city_idx', 'city'),
-        Index('depos_coords_idx', 'latitude', 'longitude')
+        CheckConstraint("latitude IS NULL OR latitude >= '-90'::integer::double precision AND latitude <= 90::double precision", name='depots_latitude_check'),
+        CheckConstraint("longitude IS NULL OR longitude >= '-180'::integer::double precision AND longitude <= 180::double precision", name='depots_longitude_check'),
+        ForeignKeyConstraint(['agency_id'], ['gtfs_agencies.id'], ondelete='RESTRICT', onupdate='CASCADE', name='depots_agency_fk'),
+        PrimaryKeyConstraint('id', name='depots_pkey'),
+        Index('depots_agency_id_idx', 'agency_id'),
+        Index('depots_city_idx', 'city'),
+        Index('depots_coords_idx', 'latitude', 'longitude')
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     agency_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     address: Mapped[Optional[str]] = mapped_column(Text)
@@ -161,7 +161,7 @@ class Depos(Base):
     longitude: Mapped[Optional[float]] = mapped_column(Double(53))
     features: Mapped[Optional[dict]] = mapped_column(JSONB)
 
-    agency: Mapped['GtfsAgencies'] = relationship('GtfsAgencies', back_populates='depos')
+    agency: Mapped['GtfsAgencies'] = relationship('GtfsAgencies', back_populates='depots')
 
 
 class GtfsRoutes(Base):

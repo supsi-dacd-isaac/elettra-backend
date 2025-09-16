@@ -14,7 +14,7 @@ __all__ = [
     "ShiftsCreate", "ShiftsUpdate", "ShiftsRead",
     "WeatherMeasurementsCreate", "WeatherMeasurementsUpdate", "WeatherMeasurementsRead",
     "BusModelsCreate", "BusModelsUpdate", "BusModelsRead",
-    "DeposCreate", "DeposUpdate", "DeposRead",
+    "DepotsCreate", "DepotsUpdate", "DepotsRead",
     "GtfsRoutesCreate", "GtfsRoutesUpdate", "GtfsRoutesRead",
     "UsersCreate", "UsersUpdate", "UsersRead",
     "GtfsTripsCreate", "GtfsTripsUpdate", "GtfsTripsRead",

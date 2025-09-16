@@ -9,9 +9,10 @@ from app.schemas.database import (
     UsersCreate, UsersRead, UsersUpdate,
     GtfsAgenciesCreate, GtfsAgenciesRead,
     BusModelsCreate, BusModelsRead, BusModelsUpdate,
+    DepotsCreate, DepotsRead, DepotsUpdate,
 )
 from app.models import (
-    Users, GtfsAgencies, BusModels
+    Users, GtfsAgencies, BusModels, Depots
 )
 from app.core.auth import get_current_user, require_admin, get_password_hash
 
@@ -115,3 +116,77 @@ async def update_bus_model(model_id: UUID, bus_model_update: BusModelsUpdate, db
     await db.commit()
     await db.refresh(db_bus_model)
     return db_bus_model
+
+# Depot endpoints (authenticated users only)
+@router.post("/depots/", response_model=DepotsRead)
+async def create_depot(depot: DepotsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    # Validate coordinates
+    if depot.latitude is not None and (depot.latitude < -90 or depot.latitude > 90):
+        raise HTTPException(status_code=400, detail="Latitude must be between -90 and 90")
+    if depot.longitude is not None and (depot.longitude < -180 or depot.longitude > 180):
+        raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180")
+    
+    # Validate agency exists
+    from app.models import GtfsAgencies
+    agency = await db.get(GtfsAgencies, depot.agency_id)
+    if agency is None:
+        raise HTTPException(status_code=400, detail="Agency not found")
+    
+    db_depot = Depots(**depot.model_dump(exclude_unset=True))
+    db.add(db_depot)
+    await db.commit()
+    await db.refresh(db_depot)
+    return db_depot
+
+@router.get("/depots/", response_model=List[DepotsRead])
+async def read_depots(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    result = await db.execute(select(Depots).offset(skip).limit(limit))
+    depots = result.scalars().all()
+    return depots
+
+@router.get("/depots/{depot_id}", response_model=DepotsRead)
+async def read_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    depot = await db.get(Depots, depot_id)
+    if depot is None:
+        raise HTTPException(status_code=404, detail="Depot not found")
+    return depot
+
+@router.put("/depots/{depot_id}", response_model=DepotsRead)
+async def update_depot(depot_id: UUID, depot_update: DepotsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_depot = await db.get(Depots, depot_id)
+    if db_depot is None:
+        raise HTTPException(status_code=404, detail="Depot not found")
+
+    update_data = depot_update.model_dump(exclude_unset=True, exclude={'id'})
+    
+    # Validate coordinates if provided
+    if 'latitude' in update_data and update_data['latitude'] is not None:
+        if update_data['latitude'] < -90 or update_data['latitude'] > 90:
+            raise HTTPException(status_code=400, detail="Latitude must be between -90 and 90")
+    if 'longitude' in update_data and update_data['longitude'] is not None:
+        if update_data['longitude'] < -180 or update_data['longitude'] > 180:
+            raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180")
+    
+    # Validate agency exists if provided
+    if 'agency_id' in update_data:
+        from app.models import GtfsAgencies
+        agency = await db.get(GtfsAgencies, update_data['agency_id'])
+        if agency is None:
+            raise HTTPException(status_code=400, detail="Agency not found")
+    
+    for field, value in update_data.items():
+        setattr(db_depot, field, value)
+
+    await db.commit()
+    await db.refresh(db_depot)
+    return db_depot
+
+@router.delete("/depots/{depot_id}")
+async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_depot = await db.get(Depots, depot_id)
+    if db_depot is None:
+        raise HTTPException(status_code=404, detail="Depot not found")
+    
+    await db.delete(db_depot)
+    await db.commit()
+    return {"message": "Depot deleted successfully"}
