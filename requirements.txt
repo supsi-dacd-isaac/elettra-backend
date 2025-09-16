@@ -44,3 +44,4 @@ python-dotenv>=1.0.1
 tqdm>=4.67.1
 pyarrow>=21.0.0
 minio>=7.2.7
+polyline>=2.0.0

@@ -27,6 +27,12 @@ try:
 except Exception:  # pragma: no cover
     Transformer = None  # type: ignore
 
+try:
+    # For decoding OSRM polyline geometry
+    import polyline
+except ImportError:
+    polyline = None  # type: ignore
+
 router = APIRouter()
 
 
@@ -580,6 +586,7 @@ async def get_driving_distance_to_stop(
     lon: float,
     direction: str = "to_stop",  # "to_stop" or "from_stop"
     coord_sys: str = "wgs84",  # "wgs84" (EPSG:4326), "lv95" (EPSG:2056), "lv03" (EPSG:21781)
+    include_geometry: str = "false",  # Include full route geometry as lat/lon points ("true" or "false")
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
@@ -589,6 +596,7 @@ async def get_driving_distance_to_stop(
     - lat, lon: input coordinates in the selected `coord_sys`
     - direction: "to_stop" (lat,lon -> stop) or "from_stop" (stop -> lat,lon)
     - coord_sys: one of {"wgs84", "lv95", "lv03"}
+    - include_geometry: if True, returns full route geometry as lat/lon coordinates
     """
     # Fetch stop
     stop = await db.get(GtfsStops, stop_uuid)
@@ -631,8 +639,13 @@ async def get_driving_distance_to_stop(
     else:
         raise HTTPException(status_code=400, detail="Invalid direction. Use to_stop or from_stop")
 
+    # Convert string parameter to boolean
+    include_geom = include_geometry.lower() in ("true", "1", "yes", "on")
+    
     osrm_base = os.getenv("OSRM_BASE_URL", "http://osrm:5000")
-    url = f"{osrm_base}/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=false"
+    overview_param = "full" if include_geom else "false"
+    url = f"{osrm_base}/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview={overview_param}"
+    
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
@@ -648,13 +661,36 @@ async def get_driving_distance_to_stop(
         raise HTTPException(status_code=502, detail=f"OSRM routing failed: {data}")
 
     route = data["routes"][0]
-    return {
+    response = {
         "direction": direction,
         "coord_sys": coord_sys,
         "distance_meters": route.get("distance"),
         "duration_seconds": route.get("duration"),
         "waypoints": data.get("waypoints", []),
     }
+    
+    # Add geometry if requested
+    if include_geom and "geometry" in route:
+        geometry = route.get("geometry")
+        if polyline and isinstance(geometry, str):
+            # Decode polyline to get actual lat/lon coordinates
+            try:
+                decoded_coords = polyline.decode(geometry)
+                # Convert to list of [lat, lon] pairs
+                response["geometry"] = [[lat, lon] for lat, lon in decoded_coords]
+                response["geometry_type"] = "coordinates"
+                response["geometry_count"] = len(decoded_coords)
+            except Exception as e:
+                # Fallback to raw geometry if decoding fails
+                response["geometry"] = geometry
+                response["geometry_type"] = "polyline"
+                response["geometry_error"] = str(e)
+        else:
+            # Return as-is if polyline library not available or geometry not a string
+            response["geometry"] = geometry
+            response["geometry_type"] = "raw"
+    
+    return response
 
 # Elevation profile by trip
 @router.get("/elevation-profile/by-trip/{trip_id}", response_model=ElevationProfileResponse)
