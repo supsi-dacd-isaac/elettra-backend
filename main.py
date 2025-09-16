@@ -3,18 +3,26 @@ Elettra Backend - Main FastAPI Application
 """
 
 import logging
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from datetime import datetime, UTC
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from app.routers import agency, auth, gtfs, simulation
 from app.core.config import get_cached_settings
+from app.schemas.health import HealthCheckResponse, ServiceStatus
+from app.database import get_async_session
+from sqlalchemy import text
 
 # Configure logging early
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 settings = get_cached_settings()
+
+# Track application startup time for uptime calculation
+startup_time = time.time()
 
 # Configure logging with settings
 logging.basicConfig(
@@ -91,6 +99,64 @@ async def root():
         "status": "running",
         "version": settings.app_version
     }
+
+
+@app.get("/health", response_model=HealthCheckResponse, tags=["Health"])
+async def health_check():
+    """
+    Health check endpoint for monitoring and load balancers.
+    
+    Returns the overall health status of the application and its dependencies.
+    """
+    timestamp = datetime.now(UTC)
+    uptime_seconds = time.time() - startup_time
+    
+    services = {}
+    overall_status = "healthy"
+    
+    # Check database connectivity
+    try:
+        start_time = time.time()
+        async for session in get_async_session():
+            result = await session.execute(text("SELECT 1"))
+            result.fetchone()
+            response_time = (time.time() - start_time) * 1000
+            services["database"] = ServiceStatus(
+                status="healthy",
+                message="Database connection successful",
+                response_time_ms=round(response_time, 2),
+                last_checked=timestamp
+            )
+            break
+    except Exception as e:
+        services["database"] = ServiceStatus(
+            status="unhealthy",
+            message=f"Database connection failed: {str(e)}",
+            last_checked=timestamp
+        )
+        overall_status = "unhealthy"
+    
+    # Check external services (optional - can be extended)
+    # For now, we'll just check if the application is running
+    services["application"] = ServiceStatus(
+        status="healthy",
+        message="Application is running",
+        last_checked=timestamp
+    )
+    
+    # Determine overall status
+    if any(service.status == "unhealthy" for service in services.values()):
+        overall_status = "unhealthy"
+    elif any(service.status == "degraded" for service in services.values()):
+        overall_status = "degraded"
+    
+    return HealthCheckResponse(
+        status=overall_status,
+        timestamp=timestamp,
+        version=settings.app_version,
+        services=services,
+        uptime_seconds=round(uptime_seconds, 2)
+    )
 
 if __name__ == "__main__":
     uvicorn.run(app, host=settings.host, port=settings.port)

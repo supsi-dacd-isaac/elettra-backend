@@ -1,12 +1,15 @@
 # FastAPI and web framework dependencies
-fastapi>=0.104.1
+fastapi[standard]>=0.104.1
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 
 # Database dependencies
-sqlalchemy>=2.0.23
+sqlalchemy[asyncio]>=2.0.23
 asyncpg>=0.29.0
 alembic>=1.13.0
+psycopg2-binary
+fastapi-crudrouter>=0.8.6
+sqlacodegen>=3.0.0
 
 # Authentication and security
 python-jose[cryptography]>=3.3.0

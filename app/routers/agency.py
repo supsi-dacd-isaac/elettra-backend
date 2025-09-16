@@ -5,7 +5,7 @@ from typing import List
 from uuid import UUID
 
 from app.database import get_async_session
-from app.schemas import (
+from app.schemas.database import (
     UsersCreate, UsersRead, UsersUpdate,
     GtfsAgenciesCreate, GtfsAgenciesRead,
     BusModelsCreate, BusModelsRead, BusModelsUpdate,

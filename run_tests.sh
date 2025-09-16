@@ -19,7 +19,9 @@ export PYTHONPATH="$SCRIPT_DIR:$PYTHONPATH"
 # Load environment variables from test.env if it exists
 if [ -f "tests/test.env" ]; then
     echo "Loading environment variables from tests/test.env..."
+    set -a  # automatically export all variables
     source tests/test.env
+    set +a  # stop automatically exporting
 fi
 
 # Run pytest with any arguments passed to this script

@@ -5,39 +5,32 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict
-from pydantic.networks import EmailStr
-from enum import Enum
 
-# Authentication schemas
-class UserLogin(BaseModel):
-    # Accept any string; invalid formats will be treated as auth failure (401)
-    email: str
-    password: str
+class ShiftsStructuresCreate(BaseModel):
+    trip_id: UUID
+    shift_id: UUID
+    sequence_number: int
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+class ShiftsStructuresUpdate(BaseModel):
+    id: Optional[UUID] = None
+    trip_id: Optional[UUID] = None
+    shift_id: Optional[UUID] = None
+    sequence_number: Optional[int] = None
 
-class LogoutResponse(BaseModel):
-    message: str
-
-class RoleEnum(str, Enum):
-    admin = "admin"
-    analyst = "analyst"
-    viewer = "viewer"
-
-class UserRegister(BaseModel):
-    company_id: UUID
-    email: EmailStr
-    full_name: str
-    password: str
-    role: RoleEnum
+class ShiftsStructuresRead(BaseModel):
+    id: UUID
+    trip_id: UUID
+    shift_id: UUID
+    sequence_number: int
+    model_config = ConfigDict(from_attributes=True)
 
 class UsersCreate(BaseModel):
     company_id: UUID
     email: str
     full_name: str
-    role: RoleEnum
+    password_hash: str
+    role: str
+    created_at: datetime
 
 class UsersUpdate(BaseModel):
     id: Optional[UUID] = None
@@ -45,7 +38,7 @@ class UsersUpdate(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     password_hash: Optional[str] = None
-    role: Optional[RoleEnum] = None
+    role: Optional[str] = None
     created_at: Optional[datetime] = None
 
 class UsersRead(BaseModel):
@@ -53,83 +46,9 @@ class UsersRead(BaseModel):
     company_id: UUID
     email: str
     full_name: str
-    role: RoleEnum
+    password_hash: str
+    role: str
     created_at: datetime
-    model_config = ConfigDict(from_attributes=True)
-
-class GtfsAgenciesCreate(BaseModel):
-    gtfs_agency_id: str
-    agency_name: str
-    agency_url: str
-    agency_timezone: str
-    agency_lang: Optional[str] = None
-    agency_phone: Optional[str] = None
-    agency_fare_url: Optional[str] = None
-    agency_email: Optional[str] = None
-
-class GtfsAgenciesUpdate(BaseModel):
-    id: Optional[UUID] = None
-    gtfs_agency_id: Optional[str] = None
-    agency_name: Optional[str] = None
-    agency_url: Optional[str] = None
-    agency_timezone: Optional[str] = None
-    agency_lang: Optional[str] = None
-    agency_phone: Optional[str] = None
-    agency_fare_url: Optional[str] = None
-    agency_email: Optional[str] = None
-
-class GtfsAgenciesRead(BaseModel):
-    id: UUID
-    gtfs_agency_id: str
-    agency_name: str
-    agency_url: str
-    agency_timezone: str
-    agency_lang: Optional[str]
-    agency_phone: Optional[str]
-    agency_fare_url: Optional[str]
-    agency_email: Optional[str]
-    model_config = ConfigDict(from_attributes=True)
-
-class SimulationRunsCreate(BaseModel):
-    user_id: UUID
-    input_params: dict | list | None
-    status: str
-    created_at: datetime
-    variant_id: UUID
-    optimal_battery_kwh: Optional[Decimal] = None
-    output_results: Optional[dict | list | None] = None
-    completed_at: Optional[datetime] = None
-
-class SimulationRunsUpdate(BaseModel):
-    id: Optional[UUID] = None
-    user_id: Optional[UUID] = None
-    input_params: Optional[dict | list | None] = None
-    status: Optional[str] = None
-    created_at: Optional[datetime] = None
-    variant_id: Optional[UUID] = None
-    optimal_battery_kwh: Optional[Decimal] = None
-    output_results: Optional[dict | list | None] = None
-    completed_at: Optional[datetime] = None
-
-class SimulationRunsRead(BaseModel):
-    id: UUID
-    user_id: UUID
-    input_params: dict | list | None
-    status: str
-    created_at: datetime
-    variant_id: UUID
-    optimal_battery_kwh: Optional[Decimal]
-    output_results: Optional[dict | list | None]
-    completed_at: Optional[datetime]
-    model_config = ConfigDict(from_attributes=True)
-
-class SimulationRunResults(BaseModel):
-    """Schema for returning simulation run output results, either complete or filtered"""
-    run_id: UUID
-    status: str
-    output_results: Optional[dict | list | None]
-    completed_at: Optional[datetime]
-    requested_keys: Optional[list[str]] = None  # Shows which keys were requested if filtered
     model_config = ConfigDict(from_attributes=True)
 
 class GtfsCalendarCreate(BaseModel):
@@ -169,6 +88,192 @@ class GtfsCalendarRead(BaseModel):
     sunday: int
     start_date: date
     end_date: date
+    model_config = ConfigDict(from_attributes=True)
+
+class DeposCreate(BaseModel):
+    agency_id: UUID
+    name: str
+    address: Optional[str] = None
+    city: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    features: Optional[dict | list | None] = None
+
+class DeposUpdate(BaseModel):
+    id: Optional[UUID] = None
+    agency_id: Optional[UUID] = None
+    name: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    features: Optional[dict | list | None] = None
+
+class DeposRead(BaseModel):
+    id: UUID
+    agency_id: UUID
+    name: str
+    address: Optional[str]
+    city: Optional[str]
+    latitude: Optional[float]
+    longitude: Optional[float]
+    features: Optional[dict | list | None]
+    model_config = ConfigDict(from_attributes=True)
+
+class WeatherMeasurementsCreate(BaseModel):
+    time_utc: datetime
+    latitude: Decimal
+    longitude: Decimal
+    temp_air: Optional[float] = None
+    relative_humidity: Optional[float] = None
+    ghi: Optional[float] = None
+    dni: Optional[float] = None
+    dhi: Optional[float] = None
+    ir_h: Optional[float] = None
+    wind_speed: Optional[float] = None
+    wind_direction: Optional[float] = None
+    pressure: Optional[int] = None
+
+class WeatherMeasurementsUpdate(BaseModel):
+    id: Optional[UUID] = None
+    time_utc: Optional[datetime] = None
+    latitude: Optional[Decimal] = None
+    longitude: Optional[Decimal] = None
+    temp_air: Optional[float] = None
+    relative_humidity: Optional[float] = None
+    ghi: Optional[float] = None
+    dni: Optional[float] = None
+    dhi: Optional[float] = None
+    ir_h: Optional[float] = None
+    wind_speed: Optional[float] = None
+    wind_direction: Optional[float] = None
+    pressure: Optional[int] = None
+
+class WeatherMeasurementsRead(BaseModel):
+    id: UUID
+    time_utc: datetime
+    latitude: Decimal
+    longitude: Decimal
+    temp_air: Optional[float]
+    relative_humidity: Optional[float]
+    ghi: Optional[float]
+    dni: Optional[float]
+    dhi: Optional[float]
+    ir_h: Optional[float]
+    wind_speed: Optional[float]
+    wind_direction: Optional[float]
+    pressure: Optional[int]
+    model_config = ConfigDict(from_attributes=True)
+
+class SimulationRunsCreate(BaseModel):
+    user_id: UUID
+    input_params: dict | list | None
+    status: str
+    created_at: datetime
+    variant_id: UUID
+    optimal_battery_kwh: Optional[Decimal] = None
+    output_results: Optional[dict | list | None] = None
+    completed_at: Optional[datetime] = None
+
+class SimulationRunsUpdate(BaseModel):
+    id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    input_params: Optional[dict | list | None] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
+    variant_id: Optional[UUID] = None
+    optimal_battery_kwh: Optional[Decimal] = None
+    output_results: Optional[dict | list | None] = None
+    completed_at: Optional[datetime] = None
+
+class SimulationRunsRead(BaseModel):
+    id: UUID
+    user_id: UUID
+    input_params: dict | list | None
+    status: str
+    created_at: datetime
+    variant_id: UUID
+    optimal_battery_kwh: Optional[Decimal]
+    output_results: Optional[dict | list | None]
+    completed_at: Optional[datetime]
+    model_config = ConfigDict(from_attributes=True)
+
+class GtfsStopsTimesCreate(BaseModel):
+    trip_id: UUID
+    stop_id: UUID
+    arrival_time: Optional[str] = None
+    departure_time: Optional[str] = None
+    stop_sequence: Optional[int] = None
+    stop_headsign: Optional[str] = None
+    pickup_type: Optional[int] = None
+    drop_off_type: Optional[int] = None
+    shape_dist_traveled: Optional[float] = None
+    timepoint: Optional[int] = None
+    continuous_pickup: Optional[int] = None
+    continuous_drop_off: Optional[int] = None
+
+class GtfsStopsTimesUpdate(BaseModel):
+    id: Optional[UUID] = None
+    trip_id: Optional[UUID] = None
+    stop_id: Optional[UUID] = None
+    arrival_time: Optional[str] = None
+    departure_time: Optional[str] = None
+    stop_sequence: Optional[int] = None
+    stop_headsign: Optional[str] = None
+    pickup_type: Optional[int] = None
+    drop_off_type: Optional[int] = None
+    shape_dist_traveled: Optional[float] = None
+    timepoint: Optional[int] = None
+    continuous_pickup: Optional[int] = None
+    continuous_drop_off: Optional[int] = None
+
+class GtfsStopsTimesRead(BaseModel):
+    id: UUID
+    trip_id: UUID
+    stop_id: UUID
+    arrival_time: Optional[str]
+    departure_time: Optional[str]
+    stop_sequence: Optional[int]
+    stop_headsign: Optional[str]
+    pickup_type: Optional[int]
+    drop_off_type: Optional[int]
+    shape_dist_traveled: Optional[float]
+    timepoint: Optional[int]
+    continuous_pickup: Optional[int]
+    continuous_drop_off: Optional[int]
+    model_config = ConfigDict(from_attributes=True)
+
+class GtfsAgenciesCreate(BaseModel):
+    gtfs_agency_id: str
+    agency_name: str
+    agency_url: str
+    agency_timezone: str
+    agency_lang: Optional[str] = None
+    agency_phone: Optional[str] = None
+    agency_fare_url: Optional[str] = None
+    agency_email: Optional[str] = None
+
+class GtfsAgenciesUpdate(BaseModel):
+    id: Optional[UUID] = None
+    gtfs_agency_id: Optional[str] = None
+    agency_name: Optional[str] = None
+    agency_url: Optional[str] = None
+    agency_timezone: Optional[str] = None
+    agency_lang: Optional[str] = None
+    agency_phone: Optional[str] = None
+    agency_fare_url: Optional[str] = None
+    agency_email: Optional[str] = None
+
+class GtfsAgenciesRead(BaseModel):
+    id: UUID
+    gtfs_agency_id: str
+    agency_name: str
+    agency_url: str
+    agency_timezone: str
+    agency_lang: Optional[str]
+    agency_phone: Optional[str]
+    agency_fare_url: Optional[str]
+    agency_email: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
 class GtfsStopsCreate(BaseModel):
@@ -222,24 +327,25 @@ class GtfsStopsRead(BaseModel):
     level_id: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
-class GtfsStopsReadWithTimes(BaseModel):
+class VariantsCreate(BaseModel):
+    route_id: UUID
+    variant_num: int
+    created_at: datetime
+    shape_id: str
+
+class VariantsUpdate(BaseModel):
+    id: Optional[UUID] = None
+    route_id: Optional[UUID] = None
+    variant_num: Optional[int] = None
+    created_at: Optional[datetime] = None
+    shape_id: Optional[str] = None
+
+class VariantsRead(BaseModel):
     id: UUID
-    stop_id: str
-    stop_code: Optional[str]
-    stop_name: Optional[str]
-    stop_desc: Optional[str]
-    stop_lat: Optional[float]
-    stop_lon: Optional[float]
-    zone_id: Optional[str]
-    stop_url: Optional[str]
-    location_type: Optional[int]
-    parent_station: Optional[str]
-    stop_timezone: Optional[str]
-    wheelchair_boarding: Optional[int]
-    platform_code: Optional[str]
-    level_id: Optional[str]
-    arrival_time: Optional[str]
-    departure_time: Optional[str]
+    route_id: UUID
+    variant_num: int
+    created_at: datetime
+    shape_id: str
     model_config = ConfigDict(from_attributes=True)
 
 class BusModelsCreate(BaseModel):
@@ -261,6 +367,18 @@ class BusModelsRead(BaseModel):
     name: str
     specs: dict | list | None
     manufacturer: Optional[str]
+    model_config = ConfigDict(from_attributes=True)
+
+class ShiftsCreate(BaseModel):
+    name: str
+
+class ShiftsUpdate(BaseModel):
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+
+class ShiftsRead(BaseModel):
+    id: UUID
+    name: str
     model_config = ConfigDict(from_attributes=True)
 
 class GtfsTripsCreate(BaseModel):
@@ -317,80 +435,6 @@ class GtfsTripsRead(BaseModel):
     arrival_time: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
-class VariantsCreate(BaseModel):
-    route_id: UUID
-    variant_num: int
-    created_at: datetime
-
-class VariantsUpdate(BaseModel):
-    id: Optional[UUID] = None
-    route_id: Optional[UUID] = None
-    variant_num: Optional[int] = None
-    created_at: Optional[datetime] = None
-
-class VariantsRead(BaseModel):
-    id: UUID
-    route_id: UUID
-    variant_num: int
-    created_at: datetime
-    model_config = ConfigDict(from_attributes=True)
-
-class VariantsReadWithRoute(BaseModel):
-    id: UUID
-    route_id: UUID
-    variant_num: int
-    created_at: datetime
-    gtfs_route_id: str
-    elevation_file_path: str
-    elevation_data_fields: list[str]
-    elevation_data: list[list]
-    model_config = ConfigDict(from_attributes=True)
-
-class GtfsStopsTimesCreate(BaseModel):
-    trip_id: UUID
-    stop_id: UUID
-    arrival_time: Optional[str] = None
-    departure_time: Optional[str] = None
-    stop_sequence: Optional[int] = None
-    stop_headsign: Optional[str] = None
-    pickup_type: Optional[int] = None
-    drop_off_type: Optional[int] = None
-    shape_dist_traveled: Optional[float] = None
-    timepoint: Optional[int] = None
-    continuous_pickup: Optional[int] = None
-    continuous_drop_off: Optional[int] = None
-
-class GtfsStopsTimesUpdate(BaseModel):
-    id: Optional[UUID] = None
-    trip_id: Optional[UUID] = None
-    stop_id: Optional[UUID] = None
-    arrival_time: Optional[str] = None
-    departure_time: Optional[str] = None
-    stop_sequence: Optional[int] = None
-    stop_headsign: Optional[str] = None
-    pickup_type: Optional[int] = None
-    drop_off_type: Optional[int] = None
-    shape_dist_traveled: Optional[float] = None
-    timepoint: Optional[int] = None
-    continuous_pickup: Optional[int] = None
-    continuous_drop_off: Optional[int] = None
-
-class GtfsStopsTimesRead(BaseModel):
-    id: UUID
-    trip_id: UUID
-    stop_id: UUID
-    arrival_time: Optional[str]
-    departure_time: Optional[str]
-    stop_sequence: Optional[int]
-    stop_headsign: Optional[str]
-    pickup_type: Optional[int]
-    drop_off_type: Optional[int]
-    shape_dist_traveled: Optional[float]
-    timepoint: Optional[int]
-    continuous_pickup: Optional[int]
-    continuous_drop_off: Optional[int]
-    model_config = ConfigDict(from_attributes=True)
-
 class GtfsRoutesCreate(BaseModel):
     route_id: str
     agency_id: UUID
@@ -434,42 +478,4 @@ class GtfsRoutesRead(BaseModel):
     route_sort_order: Optional[int]
     continuous_pickup: Optional[int]
     continuous_drop_off: Optional[int]
-    model_config = ConfigDict(from_attributes=True)
-
-class GtfsRoutesReadWithVariant(BaseModel):
-    id: UUID
-    route_id: str
-    agency_id: UUID
-    route_short_name: Optional[str]
-    route_long_name: Optional[str]
-    route_desc: Optional[str]
-    route_type: Optional[int]
-    route_url: Optional[str]
-    route_color: Optional[str]
-    route_text_color: Optional[str]
-    route_sort_order: Optional[int]
-    continuous_pickup: Optional[int]
-    continuous_drop_off: Optional[int]
-    variant_elevation_file_path: str
-    variant_elevation_data_fields: list[str]
-    variant_elevation_data: list[list]
-    model_config = ConfigDict(from_attributes=True)
-
-# PVGIS TMY schemas
-class PvgisTmyRequest(BaseModel):
-    latitude: float
-    longitude: float
-
-class PvgisTmyResponse(BaseModel):
-    data: dict
-    metadata: dict
-    latitude: float
-    longitude: float
-    coerce_year: int
-    generated_at: datetime
-
-# Elevation profile schemas
-class ElevationProfileResponse(BaseModel):
-    shape_id: str
-    records: list[dict]
     model_config = ConfigDict(from_attributes=True)

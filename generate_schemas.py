@@ -3,7 +3,7 @@
 Generate Pydantic v2 schemas from SQLAlchemy declarative models.
 
 Usage:
-  python generate_schemas.py --models-module app.models --out app/schemas.py
+  python generate_schemas.py --models-module app.models --out app/schemas/database.py
 Optional:
   --include-relationships          include simple FK-id fields (no nested models)
   --include-tables users,orders    only include these tables
@@ -32,13 +32,10 @@ from sqlalchemy.sql.schema import Column
 from sqlalchemy.sql.sqltypes import (
     Integer, BigInteger, SmallInteger, Numeric, Float, DECIMAL,
     String, Text, Unicode, UnicodeText, LargeBinary,
-    Boolean, Date, DateTime, Time, JSON as SA_JSON,
+    Boolean, Date, DateTime, Time, JSON as SA_JSON, Uuid
 )
-try:
-    from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY
-except Exception:
-    PG_UUID = None  # type: ignore
-    ARRAY = None    # type: ignore
+
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY
 
 PY_TYPE_FALLBACKS = {
     Integer: int,
@@ -65,7 +62,7 @@ def sqlalchemy_to_python_type(col: Column) -> str:
     t = type(col.type)
 
     # PostgreSQL UUID
-    if PG_UUID and isinstance(col.type, PG_UUID):
+    if PG_UUID and isinstance(col.type, Uuid):
         return "UUID"
 
     # Enums become str by default (custom Enum class → str for schema I/O)
@@ -129,7 +126,7 @@ def build_schema_text(mapper: Mapper, include_relationships: bool = False) -> st
 
         read_fields.append(f"    {c.name}: {opt_prefix}{pytype}{opt_suffix}")
 
-        if not is_autoincrement_pk(c):
+        if not is_autoincrement_pk(c) and not c.primary_key:
             default = " = None" if c.nullable and c.default is None and c.server_default is None else ""
             create_fields.append(f"    {c.name}: {opt_prefix}{pytype}{opt_suffix}{default}")
 

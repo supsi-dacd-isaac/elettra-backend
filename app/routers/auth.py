@@ -5,7 +5,8 @@ from sqlalchemy import select
 from datetime import timedelta
 
 from app.database import get_async_session
-from app.schemas import UserLogin, Token, UserRegister, UsersRead, LogoutResponse
+from app.schemas.auth import UserLogin, Token, UserRegister, LogoutResponse
+from app.schemas.database import UsersRead
 from app.models import Users
 from app.core.auth import (
     authenticate_user,

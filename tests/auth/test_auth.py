@@ -32,6 +32,18 @@ def test_health(client, record):
     r = client.get(BASE)
     record("health", r.status_code == 200, f"status={r.status_code}")
 
+def test_health_check_endpoint(client, record):
+    """Test the dedicated health check endpoint"""
+    r = client.get("/health")
+    record("health_check_endpoint", r.status_code == 200, f"status={r.status_code}")
+    
+    if r.status_code == 200:
+        data = r.json()
+        record("health_check_status", data.get("status") == "healthy", f"status={data.get('status')}")
+        record("health_check_services", "services" in data, "services field missing")
+        record("health_check_database", "database" in data.get("services", {}), "database service missing")
+        record("health_check_uptime", "uptime_seconds" in data, "uptime_seconds missing")
+
 def test_login_missing_body(client, record):
     r = client.post(f"{AUTH_BASE}/login", json={})
     record("login_missing_body", r.status_code == 422, f"status={r.status_code}")

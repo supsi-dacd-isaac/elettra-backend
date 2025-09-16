@@ -5,10 +5,11 @@ from typing import List
 from uuid import UUID
 
 from app.database import get_async_session
-from app.schemas import (
-    SimulationRunsCreate, SimulationRunsRead, SimulationRunsUpdate, SimulationRunResults,
-    PvgisTmyResponse
+from app.schemas.database import (
+    SimulationRunsCreate, SimulationRunsRead, SimulationRunsUpdate,
 )
+from app.schemas.responses import SimulationRunResults
+from app.schemas.external_apis import PvgisTmyResponse
 from app.models import (
     Users, SimulationRuns, WeatherMeasurements
 )

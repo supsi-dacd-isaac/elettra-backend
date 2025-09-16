@@ -5,10 +5,13 @@ from typing import List, Optional
 from uuid import UUID
 
 from app.database import get_async_session
-from app.schemas import (
-    GtfsCalendarRead, GtfsStopsReadWithTimes, GtfsTripsRead, VariantsReadWithRoute,
-    GtfsRoutesCreate, GtfsRoutesRead, GtfsRoutesReadWithVariant, ElevationProfileResponse,
+from app.schemas.database import (
+    GtfsCalendarRead, GtfsTripsRead, GtfsRoutesCreate, GtfsRoutesRead,
 )
+from app.schemas.responses import (
+    GtfsStopsReadWithTimes, VariantsReadWithRoute, GtfsRoutesReadWithVariant,
+)
+from app.schemas.external_apis import ElevationProfileResponse
 from app.models import (
     Users, GtfsAgencies, GtfsCalendar,
     GtfsStops, GtfsTrips, Variants,
