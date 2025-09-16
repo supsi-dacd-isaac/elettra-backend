@@ -260,6 +260,7 @@ export default function TripShiftPlanner() {
   const [token, setToken] = useState<string>(ENV_TOKEN);
   const [authInfo, setAuthInfo] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const [mode, setMode] = useState<"planner" | "createDepot">("planner");
 
   // Agency/Route selection
   const [agencies, setAgencies] = useState<Agency[]>([]);
@@ -761,6 +762,23 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
+            <h2 className="text-lg font-medium mb-3">Depots</h2>
+            <button
+              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 w-full disabled:opacity-50"
+              disabled={!token || !agencyId}
+              onClick={() => setMode("createDepot")}
+              title={!token ? "Login or paste token first" : !agencyId ? "Select an agency first" : "Create a new depot"}
+            >
+              Create depot
+            </button>
+            {!token || !agencyId ? (
+              <div className="mt-2 text-xs text-gray-600">
+                {!token ? "Authenticate to enable depot creation." : !agencyId ? "Select an agency in the Backend panel." : null}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">Selection summary</h2>
             <ul className="space-y-2 text-sm">
               <li>
@@ -792,121 +810,137 @@ export default function TripShiftPlanner() {
           </div>
         </section>
 
-        {/* Middle: Available trips */}
-        <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="text-lg font-medium">Available trips</h2>
-            <span className="text-sm text-gray-600">(sorted by departure time){loading ? " · loading…" : ""}</span>
-          </div>
-          <div className="flex items-center justify-between mb-2 text-sm">
-            <div>
-              Showing {nextCandidates.length === 0 ? 0 : startIndex + 1}–{endIndex} of {nextCandidates.length}
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-gray-600">Per page</label>
-              <select
-                className="px-2 py-1 border rounded"
-                value={pageSize}
-                onChange={(e) => setPageSize(parseInt(e.target.value, 10) || 20)}
-              >
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
-              <div className="ml-2 flex items-center gap-2">
-                <button
-                  className="px-2 py-1 border rounded disabled:opacity-50"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage <= 1}
-                >
-                  Prev
-                </button>
-                <span className="text-gray-600">Page {currentPage} / {totalPages}</span>
-                <button
-                  className="px-2 py-1 border rounded disabled:opacity-50"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage >= totalPages}
-                >
-                  Next
-                </button>
+        {mode === "planner" ? (
+          <>
+            {/* Middle: Available trips */}
+            <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
+              <div className="flex items-baseline justify-between mb-3">
+                <h2 className="text-lg font-medium">Available trips</h2>
+                <span className="text-sm text-gray-600">(sorted by departure time){loading ? " · loading…" : ""}</span>
               </div>
-            </div>
-          </div>
+              <div className="flex items-center justify-between mb-2 text-sm">
+                <div>
+                  Showing {nextCandidates.length === 0 ? 0 : startIndex + 1}–{endIndex} of {nextCandidates.length}
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-gray-600">Per page</label>
+                  <select
+                    className="px-2 py-1 border rounded"
+                    value={pageSize}
+                    onChange={(e) => setPageSize(parseInt(e.target.value, 10) || 20)}
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                  <div className="ml-2 flex items-center gap-2">
+                    <button
+                      className="px-2 py-1 border rounded disabled:opacity-50"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={currentPage <= 1}
+                    >
+                      Prev
+                    </button>
+                    <span className="text-gray-600">Page {currentPage} / {totalPages}</span>
+                    <button
+                      className="px-2 py-1 border rounded disabled:opacity-50"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={currentPage >= totalPages}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
 
-          <div className="grid grid-cols-1 gap-1 overflow-auto pr-1">
-            {rawTrips.length > 0 && pagedNextCandidates.map((t) => (
-              <TripCard
-                key={t.id}
-                t={t}
-                disabled={selectedIds.length > 0 && !computeValidNext(lastSelected, t)}
-                used={used.has(t.id)}
-                onPick={handlePickTrip(t)}
-                onHover={() => {
-                  if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-                  hoverTimerRef.current = window.setTimeout(() => {
-                    setHoveredTripId(t.id); // use database id (UUID)
-                    ensureStopsForTrip(t.id);
-                    ensureElevationForTrip(t.id);
-                  }, 1000);
-                }}
-                onLeave={() => {
-                  if (hoverTimerRef.current) {
-                    window.clearTimeout(hoverTimerRef.current);
-                    hoverTimerRef.current = null;
-                  }
-                  setHoveredTripId((prev) => (prev === t.id ? null : prev));
-                }}
-                hovered={hoveredTripId === t.id}
-                stops={stopsByTrip[t.id]}
-                stopsLoading={stopsLoadingTripId === t.id}
-                stopsError={stopsErrorByTrip[t.id]}
-                elevation={elevationByTrip[t.id]}
-                elevationLoading={elevationLoadingTripId === t.id}
-                elevationError={elevationErrorByTrip[t.id]}
-              />
-            ))}
-            {rawTrips.length === 0 ? (
-              <div className="text-sm text-gray-600">No trips loaded yet. Login and select an agency and route, then click "Load trips by route + day".</div>
-            ) : pagedNextCandidates.length === 0 ? (
-              <div className="text-sm text-gray-600">No trips match the current filters. Try disabling "Only show valid next trips" or clearing the search.</div>
-            ) : null}
-          </div>
-        </section>
+              <div className="grid grid-cols-1 gap-1 overflow-auto pr-1">
+                {rawTrips.length > 0 && pagedNextCandidates.map((t) => (
+                  <TripCard
+                    key={t.id}
+                    t={t}
+                    disabled={selectedIds.length > 0 && !computeValidNext(lastSelected, t)}
+                    used={used.has(t.id)}
+                    onPick={handlePickTrip(t)}
+                    onHover={() => {
+                      if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
+                      hoverTimerRef.current = window.setTimeout(() => {
+                        setHoveredTripId(t.id); // use database id (UUID)
+                        ensureStopsForTrip(t.id);
+                        ensureElevationForTrip(t.id);
+                      }, 1000);
+                    }}
+                    onLeave={() => {
+                      if (hoverTimerRef.current) {
+                        window.clearTimeout(hoverTimerRef.current);
+                        hoverTimerRef.current = null;
+                      }
+                      setHoveredTripId((prev) => (prev === t.id ? null : prev));
+                    }}
+                    hovered={hoveredTripId === t.id}
+                    stops={stopsByTrip[t.id]}
+                    stopsLoading={stopsLoadingTripId === t.id}
+                    stopsError={stopsErrorByTrip[t.id]}
+                    elevation={elevationByTrip[t.id]}
+                    elevationLoading={elevationLoadingTripId === t.id}
+                    elevationError={elevationErrorByTrip[t.id]}
+                  />
+                ))}
+                {rawTrips.length === 0 ? (
+                  <div className="text-sm text-gray-600">No trips loaded yet. Login and select an agency and route, then click "Load trips by route + day".</div>
+                ) : pagedNextCandidates.length === 0 ? (
+                  <div className="text-sm text-gray-600">No trips match the current filters. Try disabling "Only show valid next trips" or clearing the search.</div>
+                ) : null}
+              </div>
+            </section>
 
-        {/* Right: Selected shift */}
-        <section className="lg:col-span-3 p-4 rounded-2xl bg-white shadow-sm border">
-          <div className="flex items-baseline justify-between mb-3">
-            <h2 className="text-lg font-medium">Selected shift</h2>
-            <span className="text-sm text-gray-600">Click a trip on the left to append here</span>
-          </div>
-          {selectedTrips.length === 0 ? (
-            <div className="text-sm text-gray-600">Nothing selected yet.</div>
-          ) : (
-            <ol className="space-y-3">
-              {selectedTrips.map((t, idx) => (
-                <li key={t.id} className="p-3 border rounded-xl flex flex-col gap-1">
-                  <div className="flex items-center justify-between">
-                    <div className="font-medium">{t.start_stop_name} → {t.end_stop_name}</div>
-                    <div className="text-xs text-gray-600">#{idx + 1}</div>
-                  </div>
-                  <div className="text-sm">
-                    <span className="inline-block mr-4">Dep: {formatDayHHMM(t.departure_sec)}</span>
-                    <span>Arr: {formatDayHHMM(t.arrival_sec)}</span>
-                  </div>
-                  <div className="text-xs text-gray-600">
-                    Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id} · Headsign: {t.trip_headsign}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-          <div className="mt-3 flex gap-2 text-sm">
-            <button onClick={handleUndo} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Undo last</button>
-            <button onClick={handleReset} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Reset</button>
-            <button onClick={handleExport} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700" disabled={selectedTrips.length === 0}>Export selection</button>
-          </div>
-        </section>
+            {/* Right: Selected shift */}
+            <section className="lg:col-span-3 p-4 rounded-2xl bg-white shadow-sm border">
+              <div className="flex items-baseline justify-between mb-3">
+                <h2 className="text-lg font-medium">Selected shift</h2>
+                <span className="text-sm text-gray-600">Click a trip on the left to append here</span>
+              </div>
+              {selectedTrips.length === 0 ? (
+                <div className="text-sm text-gray-600">Nothing selected yet.</div>
+              ) : (
+                <ol className="space-y-3">
+                  {selectedTrips.map((t, idx) => (
+                    <li key={t.id} className="p-3 border rounded-xl flex flex-col gap-1">
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium">{t.start_stop_name} → {t.end_stop_name}</div>
+                        <div className="text-xs text-gray-600">#{idx + 1}</div>
+                      </div>
+                      <div className="text-sm">
+                        <span className="inline-block mr-4">Dep: {formatDayHHMM(t.departure_sec)}</span>
+                        <span>Arr: {formatDayHHMM(t.arrival_sec)}</span>
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id} · Headsign: {t.trip_headsign}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <div className="mt-3 flex gap-2 text-sm">
+                <button onClick={handleUndo} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Undo last</button>
+                <button onClick={handleReset} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Reset</button>
+                <button onClick={handleExport} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700" disabled={selectedTrips.length === 0}>Export selection</button>
+              </div>
+            </section>
+          </>
+        ) : (
+          <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
+            <CreateDepotView
+              token={token}
+              agencyId={agencyId}
+              baseUrl={effectiveBaseUrl}
+              onCancel={() => setMode("planner")}
+              onCreated={() => {
+                setMode("planner");
+              }}
+            />
+          </section>
+        )}
       </main>
     </div>
   );
@@ -1105,4 +1139,221 @@ function TripCard({
   );
 }
 
+
+// ---------- Create Depot View ----------
+function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
+  token: string;
+  agencyId: string;
+  baseUrl: string;
+  onCancel: () => void;
+  onCreated: (dep?: any) => void;
+}) {
+  const [name, setName] = useState<string>("");
+  const [address, setAddress] = useState<string>("");
+  const [city, setCity] = useState<string>("");
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [center, setCenter] = useState<[number, number]>([46.0037, 8.9511]); // Lugano
+  const [zoom] = useState<number>(13);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [suggestions, setSuggestions] = useState<Array<{ label: string; lat: number; lon: number }>>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+  const searchTimer = useRef<number | null>(null);
+
+  function stripHtml(input: string): string {
+    try {
+      return (input || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+    } catch {
+      return input;
+    }
+  }
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    if (q.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    searchTimer.current = window.setTimeout(async () => {
+      try {
+        const url = `https://api3.geo.admin.ch/rest/services/api/SearchServer?sr=4326&type=locations&origins=address&lang=en&searchText=${encodeURIComponent(q)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        const results = Array.isArray(data?.results) ? data.results : [];
+        const mapped = results.map((r: any) => {
+          const attrs = r?.attrs || {};
+          const lat = typeof attrs.lat === "number" ? attrs.lat : (typeof attrs.y === "number" ? attrs.y : null);
+          const lon = typeof attrs.lon === "number" ? attrs.lon : (typeof attrs.x === "number" ? attrs.x : null);
+          const label = stripHtml((attrs.label || r?.label || "").toString());
+          return lat != null && lon != null ? { label, lat, lon } : null;
+        }).filter(Boolean) as Array<{ label: string; lat: number; lon: number }>;
+        setSuggestions(mapped.slice(0, 8));
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+    return () => {
+      if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    };
+  }, [searchQuery]);
+
+  function SetView({ center }: { center: [number, number] }) {
+    const map = useMap();
+    useEffect(() => {
+      map.setView(center);
+    }, [map, center]);
+    return null;
+  }
+
+  function ClickCapture() {
+    const map = useMap();
+    useEffect(() => {
+      function onClick(e: any) {
+        const lat = e.latlng?.lat;
+        const lon = e.latlng?.lng;
+        if (typeof lat === "number" && typeof lon === "number") {
+          setLatitude(lat);
+          setLongitude(lon);
+        }
+      }
+      (map as any).on("click", onClick);
+      return () => {
+        (map as any).off("click", onClick);
+      };
+    }, [map]);
+    return null;
+  }
+
+  async function submit() {
+    setError("");
+    if (!token) {
+      setError("Please login first");
+      return;
+    }
+    if (!agencyId) {
+      setError("Select an agency in the Backend panel");
+      return;
+    }
+    if (!name.trim()) {
+      setError("Name is required");
+      return;
+    }
+    if (latitude != null && (latitude < -90 || latitude > 90)) {
+      setError("Latitude must be between -90 and 90");
+      return;
+    }
+    if (longitude != null && (longitude < -180 || longitude > 180)) {
+      setError("Longitude must be between -180 and 180");
+      return;
+    }
+    try {
+      setLoading(true);
+      const payload: any = {
+        agency_id: agencyId,
+        name: name.trim(),
+      };
+      if (address.trim()) payload.address = address.trim();
+      if (city.trim()) payload.city = city.trim();
+      if (latitude != null) payload.latitude = latitude;
+      if (longitude != null) payload.longitude = longitude;
+      const res = await fetch(joinUrl(baseUrl, "/api/v1/agency/depots/"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = await res.json();
+      onCreated(data);
+      alert("Depot created successfully");
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-medium">Create depot</h2>
+        <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">Back</button>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Name</label>
+            <input className="w-full px-3 py-2 border rounded-lg" value={name} onChange={(e) => setName(e.target.value)} placeholder="Depot name" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Search address (en)</label>
+            <input className="w-full px-3 py-2 border rounded-lg" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Type at least 3 characters" />
+            {suggestions.length > 0 && (
+              <ul className="mt-1 max-h-48 overflow-auto border rounded-lg bg-white shadow text-sm">
+                {suggestions.map((s, i) => (
+                  <li
+                    key={`${s.label}-${i}`}
+                    className="px-3 py-2 hover:bg-gray-100 cursor-pointer"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setAddress(s.label);
+                      const parts = s.label.split(",");
+                      const last = parts[parts.length - 1]?.trim() || "";
+                      if (last) setCity(last);
+                      setCenter([s.lat, s.lon]);
+                      setLatitude(s.lat);
+                      setLongitude(s.lon);
+                      setSuggestions([]);
+                      setSearchQuery(s.label);
+                    }}
+                  >
+                    {s.label}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">Address</label>
+            <input className="w-full px-3 py-2 border rounded-lg" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street and number" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-700 mb-1">City</label>
+            <input className="w-full px-3 py-2 border rounded-lg" value={city} onChange={(e) => setCity(e.target.value)} placeholder="City" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Latitude</label>
+              <input className="w-full px-3 py-2 border rounded-lg" value={latitude ?? ""} onChange={(e) => setLatitude(e.target.value ? parseFloat(e.target.value) : null)} placeholder="e.g. 46.0037" />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Longitude</label>
+              <input className="w-full px-3 py-2 border rounded-lg" value={longitude ?? ""} onChange={(e) => setLongitude(e.target.value ? parseFloat(e.target.value) : null)} placeholder="e.g. 8.9511" />
+            </div>
+          </div>
+        </div>
+        <div>
+          <MapContainer {...({ className: "w-full h-[380px] rounded border", center } as any)} zoom={zoom as any}>
+            <TileLayer {...({ url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", maxZoom: 19 } as any)} />
+            <SetView center={center} />
+            <ClickCapture />
+            {latitude != null && longitude != null && <Marker position={[latitude, longitude] as any} />}
+          </MapContainer>
+          <div className="mt-1 text-xs text-gray-600">Click on the map to set the depot location. Default center is Lugano.</div>
+        </div>
+      </div>
+      {error && <div className="text-sm text-red-600">{error}</div>}
+      <div className="flex gap-2">
+        <button onClick={submit} disabled={loading || !token || !agencyId || !name.trim()} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50">
+          {loading ? "Creating…" : "Create"}
+        </button>
+        <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">Cancel</button>
+      </div>
+    </div>
+  );
+}
 
