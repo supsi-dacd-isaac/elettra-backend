@@ -261,6 +261,9 @@ export default function TripShiftPlanner() {
   const [authInfo, setAuthInfo] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [mode, setMode] = useState<"planner" | "createDepot">("planner");
+  // Export progress state
+  const [exporting, setExporting] = useState<boolean>(false);
+  const [exportMessage, setExportMessage] = useState<string>("");
   // Depots management
   type Depot = { id: string; agency_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
   const [depots, setDepots] = useState<Depot[]>([]);
@@ -269,6 +272,15 @@ export default function TripShiftPlanner() {
   const [depotsNotice, setDepotsNotice] = useState<string>("");
   const [editingDepotId, setEditingDepotId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Partial<Depot>>({});
+  // Depot flow state
+  const [hasLoadedForRouteDay, setHasLoadedForRouteDay] = useState<boolean>(false);
+  const [leaveDepotInfo, setLeaveDepotInfo] = useState<null | { depotId: string; timeHHMM: string }>(null);
+  const [returnDepotInfo, setReturnDepotInfo] = useState<null | { depotId: string; timeHHMM: string }>(null);
+  const [showDepotDialog, setShowDepotDialog] = useState<null | "leave" | "return">(null);
+  const [modalDepotId, setModalDepotId] = useState<string>("");
+  const [modalTime, setModalTime] = useState<string>("");
+  const [modalError, setModalError] = useState<string>("");
+  // Simple prompt-based input for depot/time (avoid heavy modal UI for now)
 
   // Agency/Route selection
   const [agencies, setAgencies] = useState<Agency[]>([]);
@@ -289,6 +301,14 @@ export default function TripShiftPlanner() {
   const [elevationLoadingTripId, setElevationLoadingTripId] = useState<string | null>(null);
   const [elevationErrorByTrip, setElevationErrorByTrip] = useState<Record<string, string>>({});
   const hoverTimerRef = useRef<number | null>(null);
+
+  // HH:MM -> seconds (accept >24h)
+  const parseHHMMToSec = useCallback((t: string): number => {
+    const parts = (t || "").split(":").map((x) => parseInt(x, 10));
+    const h = parts[0] || 0;
+    const m = parts[1] || 0;
+    return h * 3600 + m * 60;
+  }, []);
 
   // Precompute enriched + sorted list
   const tripsX = useMemo(() => enrichTrips(rawTrips), [rawTrips]);
@@ -317,10 +337,17 @@ export default function TripShiftPlanner() {
             .includes(textFilter.toLowerCase())
         )
       : base;
-    return onlyValidNext && lastSelected
-      ? withText.filter((t) => computeValidNext(lastSelected, t))
-      : withText;
-  }, [sortedTrips, used, hideUsed, textFilter, onlyValidNext, lastSelected]);
+    if (onlyValidNext) {
+      if (lastSelected) {
+        return withText.filter((t) => computeValidNext(lastSelected, t));
+      }
+      if (!lastSelected && leaveDepotInfo) {
+        const minDep = parseHHMMToSec(leaveDepotInfo.timeHHMM);
+        return withText.filter((t) => t.departure_sec >= minDep);
+      }
+    }
+    return withText;
+  }, [sortedTrips, used, hideUsed, textFilter, onlyValidNext, lastSelected, leaveDepotInfo, parseHHMMToSec]);
 
   // Pagination for available trips
   const [pageSize, setPageSize] = useState<number>(20);
@@ -341,6 +368,14 @@ export default function TripShiftPlanner() {
   function handlePickTrip(t: TripX) {
     // Return a click handler (curried); this fixes prior syntax error
     return () => {
+      if (returnDepotInfo) {
+        alert("Return to depot already set. Undo it to add more trips.");
+        return;
+      }
+      if (!leaveDepotInfo) {
+        alert("Set 'Leave depot' first");
+        return;
+      }
       if (selectedIds.length > 0 && !computeValidNext(lastSelected, t)) {
         alert("This trip doesn't follow the last selection (stop or time rules).");
         return;
@@ -350,35 +385,140 @@ export default function TripShiftPlanner() {
   }
 
   function handleUndo() {
-    setSelectedIds((prev) => prev.slice(0, -1));
+    // Priority: remove return depot -> remove last trip -> remove leave depot
+    if (returnDepotInfo) {
+      setReturnDepotInfo(null);
+      return;
+    }
+    if (selectedIds.length > 0) {
+      setSelectedIds((prev) => prev.slice(0, -1));
+      return;
+    }
+    if (leaveDepotInfo) {
+      setLeaveDepotInfo(null);
+      return;
+    }
   }
 
   function handleReset() {
     setSelectedIds([]);
+    setLeaveDepotInfo(null);
+    setReturnDepotInfo(null);
+    setStopsByTrip({});
+    setElevationByTrip({});
+    setHoveredTripId(null);
+    setExporting(false);
+    setExportMessage("");
   }
 
   function handleExport() {
-    if (selectedTrips.length === 0) {
-      alert("No trips selected to export.");
-      return;
-    }
-    try {
-      const data = JSON.stringify(selectedTrips, null, 2);
-      const blob = new Blob([data], { type: "application/json;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `shift_${Date.now()}.json`;
-      a.style.display = "none";
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-        if (a.parentNode) a.parentNode.removeChild(a);
-      }, 1000);
-    } catch (e: any) {
-      alert(`Export failed: ${e?.message || e}`);
-    }
+    (async () => {
+      if (!effectiveBaseUrl) {
+        alert("Base URL required");
+        return;
+      }
+      if (!token) {
+        alert("Login required");
+        return;
+      }
+      if (!leaveDepotInfo || !returnDepotInfo) {
+        alert("Please set Leave depot and Return to depot before exporting.");
+        return;
+      }
+      if (!routeDbId && !routeId) {
+        alert("Select a route in Backend panel and load trips");
+        return;
+      }
+      if (selectedTrips.length === 0) {
+        alert("Select at least one GTFS trip between depot legs.");
+        return;
+      }
+
+      const parseHHMM = (hhmm: string) => {
+        const [h, m] = (hhmm || "").split(":").map((x) => parseInt(x, 10));
+        return (isFinite(h) ? h : 0) * 3600 + (isFinite(m) ? m : 0) * 60;
+      };
+      const fetchStops = async (tripDbId: string): Promise<TripStop[]> => {
+        const url = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(tripDbId)}`);
+        const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return (await res.json()) as TripStop[];
+      };
+
+      try {
+        setExporting(true);
+        setExportMessage("Preparing export…");
+        const firstTrip = selectedTrips[0];
+        const lastTrip = selectedTrips[selectedTrips.length - 1];
+        setExportMessage("Fetching stops for the first and last selected trips…");
+        const firstStops = await fetchStops(firstTrip.id);
+        const lastStops = await fetchStops(lastTrip.id);
+        if (!Array.isArray(firstStops) || firstStops.length === 0) throw new Error("First trip has no stops");
+        if (!Array.isArray(lastStops) || lastStops.length === 0) throw new Error("Last trip has no stops");
+
+        const firstStop = firstStops[0];
+        const lastStop = lastStops[lastStops.length - 1];
+        const firstArr = (firstStop.arrival_time || firstStop.departure_time || "00:00:00").slice(0, 8);
+        const lastDep = (lastStop.departure_time || lastStop.arrival_time || "00:00:00").slice(0, 8);
+
+        const lastArrSec = lastTrip.arrival_sec;
+        if (parseHHMM(returnDepotInfo.timeHHMM) <= lastArrSec) {
+          alert(`Return time must be later than last trip arrival (${formatDayHHMM(lastArrSec)})`);
+          return;
+        }
+
+        const postDepotTrip = async (body: any, stageLabel: string) => {
+          setExportMessage(stageLabel);
+          const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/gtfs/depot-trip"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+          return (await res.json()) as Trip;
+        };
+        const routeUuid = routeDbId || routeId;
+        const depDepot = depots.find((d) => d.id === leaveDepotInfo.depotId);
+        if (!depDepot || !depDepot.stop_id) throw new Error("Selected departure depot has no stop_id");
+        const depTrip = await postDepotTrip({
+          departure_stop_id: depDepot.stop_id,
+          arrival_stop_id: firstStop.id,
+          departure_time: `${leaveDepotInfo.timeHHMM}:00`,
+          arrival_time: firstArr.length === 5 ? `${firstArr}:00` : firstArr,
+          route_id: routeUuid,
+        }, "Creating departure leg (depot → first stop)…");
+        const retDepot = depots.find((d) => d.id === returnDepotInfo.depotId);
+        if (!retDepot || !retDepot.stop_id) throw new Error("Selected return depot has no stop_id");
+        const retTrip = await postDepotTrip({
+          departure_stop_id: lastStop.id,
+          arrival_stop_id: retDepot.stop_id,
+          departure_time: lastDep.length === 5 ? `${lastDep}:00` : lastDep,
+          arrival_time: `${returnDepotInfo.timeHHMM}:00`,
+          route_id: routeUuid,
+        }, "Creating return leg (last stop → depot)…");
+
+        setExportMessage("Preparing download…");
+        const combined = [depTrip, ...selectedTrips, retTrip];
+        const data = JSON.stringify(combined, null, 2);
+        const blob = new Blob([data], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `shift_${Date.now()}.json`;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+          if (a.parentNode) a.parentNode.removeChild(a);
+        }, 1000);
+      } catch (e: any) {
+        alert(`Export failed: ${e?.message || e}`);
+      } finally {
+        setExporting(false);
+        setExportMessage("");
+      }
+    })();
   }
 
   async function performLogin(emailToUse: string, passwordToUse: string) {
@@ -457,6 +597,10 @@ export default function TripShiftPlanner() {
       alert(`Fetch failed: ${e?.message || e}`);
     } finally {
       setLoading(false);
+      setHasLoadedForRouteDay(true);
+      // reset depot flow on load
+      setLeaveDepotInfo(null);
+      setReturnDepotInfo(null);
     }
   }
 
@@ -539,7 +683,24 @@ export default function TripShiftPlanner() {
       setDepots([]);
       setEditingDepotId(null);
     }
+    // Reset depot flow completely on agency change
+    setHasLoadedForRouteDay(false);
+    setLeaveDepotInfo(null);
+    setReturnDepotInfo(null);
+    setSelectedIds([]);
+    setStopsByTrip({});
+    setElevationByTrip({});
   }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency]);
+
+  // Reset depot flow on route change
+  useEffect(() => {
+    setHasLoadedForRouteDay(false);
+    setLeaveDepotInfo(null);
+    setReturnDepotInfo(null);
+    setSelectedIds([]);
+    setStopsByTrip({});
+    setElevationByTrip({});
+  }, [routeDbId]);
 
   // Filter and sort agencies by name/id
   const filteredAgencies = useMemo(() => {
@@ -699,6 +860,47 @@ export default function TripShiftPlanner() {
                 )}
               </div>
               {authInfo && <div className="text-xs text-gray-600">{authInfo}</div>}
+
+              {/* Depot flow */}
+              <div className="mt-3 p-2 rounded-lg border">
+                <div className="text-sm font-medium mb-2">Depot flow</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="px-3 py-2 rounded-lg text-white text-sm disabled:opacity-50"
+                    style={{ backgroundColor: leaveDepotInfo ? "#6b7280" : "#2563eb" }}
+                    disabled={!token || !agencyId || !(routeDbId || routeId) || !hasLoadedForRouteDay}
+                    onClick={() => {
+                      setModalError("");
+                      setModalDepotId("");
+                      setModalTime("");
+                      setShowDepotDialog("leave");
+                    }}
+                    title={!hasLoadedForRouteDay ? "Load trips by route + day first" : "Pick depot and time"}
+                  >
+                    {leaveDepotInfo ? "Leave depot (set)" : "Leave depot"}
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded-lg text-white text-sm disabled:opacity-50"
+                    style={{ backgroundColor: returnDepotInfo ? "#6b7280" : "#059669" }}
+                    disabled={!token || !agencyId || !(routeDbId || routeId) || !leaveDepotInfo || selectedIds.length === 0}
+                    onClick={() => {
+                      setModalError("");
+                      setModalDepotId("");
+                      setModalTime("");
+                      setShowDepotDialog("return");
+                    }}
+                    title={!leaveDepotInfo ? "Set 'Leave depot' first" : selectedIds.length === 0 ? "Select at least one GTFS trip" : "Pick depot and time"}
+                  >
+                    {returnDepotInfo ? "Return to depot (set)" : "Return to depot"}
+                  </button>
+                </div>
+                {leaveDepotInfo && (
+                  <div className="mt-2 text-xs text-gray-700">Leave: depot set, time {leaveDepotInfo.timeHHMM}</div>
+                )}
+                {returnDepotInfo && (
+                  <div className="mt-1 text-xs text-gray-700">Return: depot set, time {returnDepotInfo.timeHHMM}</div>
+                )}
+              </div>
 
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <div className="relative">
@@ -986,7 +1188,11 @@ export default function TripShiftPlanner() {
                   <TripCard
                     key={t.id}
                     t={t}
-                    disabled={selectedIds.length > 0 && !computeValidNext(lastSelected, t)}
+                    disabled={
+                      !leaveDepotInfo ||
+                      (selectedIds.length === 0 && leaveDepotInfo !== null && t.departure_sec < parseHHMMToSec(leaveDepotInfo.timeHHMM)) ||
+                      (selectedIds.length > 0 && !computeValidNext(lastSelected, t))
+                    }
                     used={used.has(t.id)}
                     onPick={handlePickTrip(t)}
                     onHover={() => {
@@ -1027,32 +1233,72 @@ export default function TripShiftPlanner() {
                 <h2 className="text-lg font-medium">Selected shift</h2>
                 <span className="text-sm text-gray-600">Click a trip on the left to append here</span>
               </div>
-              {selectedTrips.length === 0 ? (
-                <div className="text-sm text-gray-600">Nothing selected yet.</div>
-              ) : (
-                <ol className="space-y-3">
-                  {selectedTrips.map((t, idx) => (
-                    <li key={t.id} className="p-3 border rounded-xl flex flex-col gap-1">
-                      <div className="flex items-center justify-between">
-                        <div className="font-medium">{t.start_stop_name} → {t.end_stop_name}</div>
-                        <div className="text-xs text-gray-600">#{idx + 1}</div>
-                      </div>
-                      <div className="text-sm">
-                        <span className="inline-block mr-4">Dep: {formatDayHHMM(t.departure_sec)}</span>
-                        <span>Arr: {formatDayHHMM(t.arrival_sec)}</span>
-                      </div>
-                      <div className="text-xs text-gray-600">
-                        Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id} · Headsign: {t.trip_headsign}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              )}
-              <div className="mt-3 flex gap-2 text-sm">
-                <button onClick={handleUndo} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Undo last</button>
-                <button onClick={handleReset} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Reset</button>
-                <button onClick={handleExport} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700" disabled={selectedTrips.length === 0}>Export selection</button>
+              <div className="space-y-3">
+                {!leaveDepotInfo && selectedTrips.length === 0 && (
+                  <div className="text-sm text-gray-600">Nothing selected yet.</div>
+                )}
+                {leaveDepotInfo && (
+                  <div className="p-3 border rounded-xl bg-blue-50">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">Depot departure</div>
+                      <div className="text-xs text-gray-600">time {leaveDepotInfo.timeHHMM}</div>
+                    </div>
+                    <div className="text-xs text-gray-600">
+                      Depot: {depots.find((d) => d.id === leaveDepotInfo.depotId)?.name || "Unknown"} (id: {leaveDepotInfo.depotId})
+                    </div>
+                  </div>
+                )}
+                {selectedTrips.length > 0 && (
+                  <ol className="space-y-3">
+                    {selectedTrips.map((t, idx) => (
+                      <li key={t.id} className="p-3 border rounded-xl flex flex-col gap-1">
+                        <div className="flex items-center justify-between">
+                          <div className="font-medium">{t.start_stop_name} → {t.end_stop_name}</div>
+                          <div className="text-xs text-gray-600">#{idx + 1}</div>
+                        </div>
+                        <div className="text-sm">
+                          <span className="inline-block mr-4">Dep: {formatDayHHMM(t.departure_sec)}</span>
+                          <span>Arr: {formatDayHHMM(t.arrival_sec)}</span>
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id} · Headsign: {t.trip_headsign}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                {returnDepotInfo && (
+                  <div className="p-3 border rounded-xl bg-emerald-50">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">Depot return</div>
+                      <div className="text-xs text-gray-600">time {returnDepotInfo.timeHHMM}</div>
+                    </div>
+                    <div className="text-xs text-gray-600">
+                      Depot: {depots.find((d) => d.id === returnDepotInfo.depotId)?.name || "Unknown"} (id: {returnDepotInfo.depotId})
+                    </div>
+                  </div>
+                )}
               </div>
+            <div className="mt-3 flex gap-2 text-sm">
+              <button onClick={handleUndo} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Undo last</button>
+              <button onClick={handleReset} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Reset</button>
+              {(() => {
+                const hasCore = selectedTrips.length > 0 && !!leaveDepotInfo && !!returnDepotInfo;
+                const lastArr = selectedTrips.length > 0 ? selectedTrips[selectedTrips.length - 1].arrival_sec : undefined;
+                const retOk = hasCore && lastArr !== undefined && parseHHMMToSec(returnDepotInfo!.timeHHMM) > lastArr;
+                const canExport = Boolean(retOk);
+                return (
+                  <button
+                    onClick={handleExport}
+                    className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                    disabled={!canExport}
+                    title={!hasCore ? "Set depot legs and select trips" : (!retOk ? "Return time must be later than last trip arrival" : "")}
+                  >
+                    {exporting ? (exportMessage || "Exporting…") : "Export selection"}
+                  </button>
+                );
+              })()}
+            </div>
             </section>
           </>
         ) : (
@@ -1074,6 +1320,60 @@ export default function TripShiftPlanner() {
           </section>
         )}
       </main>
+      {/* Depot modal */}
+      {showDepotDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-4 border">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-medium">{showDepotDialog === "leave" ? "Leave depot" : "Return to depot"}</h3>
+              <button className="text-sm px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => setShowDepotDialog(null)}>Close</button>
+            </div>
+            {modalError && <div className="mb-2 text-sm text-red-600">{modalError}</div>}
+            <div className="space-y-2">
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Depot</label>
+                <select className="w-full px-3 py-2 border rounded-lg" value={modalDepotId} onChange={(e) => setModalDepotId(e.target.value)}>
+                  <option value="">Select a depot</option>
+                  {depots.filter((d) => d.agency_id === agencyId && d.stop_id).map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Time (HH:MM)</label>
+                <input className="w-full px-3 py-2 border rounded-lg" placeholder="e.g. 08:15 or 25:10" value={modalTime} onChange={(e) => setModalTime(e.target.value)} />
+              </div>
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowDepotDialog(null)}>Cancel</button>
+              <button
+                className="px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm disabled:opacity-50"
+                disabled={!modalDepotId || !/^\d{1,2}:\d{2}$/.test(modalTime)}
+                onClick={() => {
+                  setModalError("");
+                  if (!/^\d{1,2}:\d{2}$/.test(modalTime)) { setModalError("Invalid time"); return; }
+                  if (showDepotDialog === "leave") {
+                    setLeaveDepotInfo({ depotId: modalDepotId, timeHHMM: modalTime });
+                    setShowDepotDialog(null);
+                  } else {
+                    if (selectedTrips.length > 0) {
+                      const lastArr = selectedTrips[selectedTrips.length - 1].arrival_sec;
+                      const [h, m] = modalTime.split(":").map((x) => parseInt(x, 10));
+                      const sec = (h * 3600) + (m * 60);
+                      if (sec <= lastArr) { setModalError(`Return must be later than ${formatDayHHMM(lastArr)}`); return; }
+                    }
+                    setReturnDepotInfo({ depotId: modalDepotId, timeHHMM: modalTime });
+                    setShowDepotDialog(null);
+                  }
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
