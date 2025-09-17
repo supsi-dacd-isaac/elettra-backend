@@ -387,6 +387,8 @@ class GtfsStopsRead(BaseModel):
     level_id: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
+ 
+
 class GtfsAgenciesCreate(BaseModel):
     gtfs_agency_id: str
     agency_name: str

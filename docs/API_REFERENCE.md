@@ -135,6 +135,27 @@ curl -H 'Authorization: Bearer $TOKEN' \
   http://127.0.0.1:8000/api/v1/gtfs-trips/by-route/<route_uuid>
 ```
 
+### 5.2 Create Depot Trip
+```
+POST /api/v1/gtfs/depot-trip
+```
+Body:
+```json
+{
+  "departure_stop_id": "<uuid>",
+  "arrival_stop_id": "<uuid>",
+  "departure_time": "HH:MM:SS",
+  "arrival_time": "HH:MM:SS",
+  "route_id": "<uuid>"
+}
+```
+Behavior:
+- Computes OSRM route geometry between the two stops
+- Uses SwissTopo to compute elevation profile and stores parquet in MinIO bucket `elevation-profiles` as `{shape_id}.parquet`
+- Creates a new trip with `status=depot`, `gtfs_service_id=depot`, and `service_id` referencing the `gtfs_calendar` row where `service_id='depot'`
+- Inserts two stop_times: departure (seq 1) and arrival (seq 2)
+Returns the created trip (`GtfsTripsRead`).
+
 ### 5.2 Trips by Stop
 ```
 GET /api/v1/gtfs-trips/by-stop/{stop_uuid}

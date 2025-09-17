@@ -10,6 +10,7 @@ from app.schemas.database import (
     GtfsTripsCreate, GtfsTripsUpdate,
     GtfsStopsCreate, GtfsStopsRead, GtfsStopsUpdate,
 )
+from app.schemas.requests import DepotTripCreate
 from app.schemas.trip_status import TripStatus
 from app.schemas.responses import (
     GtfsStopsReadWithTimes, VariantsReadWithRoute, GtfsRoutesReadWithVariant,
@@ -26,6 +27,7 @@ import pandas as pd
 import io
 import os
 import httpx
+from map_services import SwissTopoElevationClient
 
 try:
     # pyproj is a dependency of geopandas, but import may fail if extras not installed
@@ -848,3 +850,143 @@ async def get_elevation_profile_by_trip(trip_id: UUID, db: AsyncSession = Depend
     # 4) Return as list of dict records
     records = df.to_dict(orient="records")
     return ElevationProfileResponse(shape_id=shape_id, records=records)
+
+
+# Create a new depot trip between two stops
+@router.post("/depot-trip", response_model=GtfsTripsRead)
+async def create_depot_trip(
+    req: DepotTripCreate,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    # 1) Fetch departure and arrival stops
+    dep_stop = await db.get(GtfsStops, req.departure_stop_id)
+    arr_stop = await db.get(GtfsStops, req.arrival_stop_id)
+    if dep_stop is None or arr_stop is None:
+        raise HTTPException(status_code=404, detail="Departure or arrival stop not found")
+    if dep_stop.stop_lat is None or dep_stop.stop_lon is None:
+        raise HTTPException(status_code=400, detail="Departure stop has no coordinates")
+    if arr_stop.stop_lat is None or arr_stop.stop_lon is None:
+        raise HTTPException(status_code=400, detail="Arrival stop has no coordinates")
+
+    # 2) Call OSRM to get route geometry (polyline) between the two stops
+    start_lon, start_lat = float(dep_stop.stop_lon), float(dep_stop.stop_lat)
+    end_lon, end_lat = float(arr_stop.stop_lon), float(arr_stop.stop_lat)
+
+    osrm_base = os.getenv("OSRM_BASE_URL", "http://osrm:5000")
+    url = f"{osrm_base}/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.get(url)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"OSRM request failed: {exc}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=f"OSRM error: {resp.text}")
+    data = resp.json()
+    if data.get("code") != "Ok" or not data.get("routes"):
+        raise HTTPException(status_code=502, detail=f"OSRM routing failed: {data}")
+
+    route = data["routes"][0]
+    geometry = route.get("geometry")
+    if not geometry:
+        raise HTTPException(status_code=502, detail="OSRM response missing geometry")
+
+    # Decode polyline to list of (lat, lon), convert to (lon, lat) for elevation client
+    if polyline and isinstance(geometry, str):
+        try:
+            decoded = polyline.decode(geometry)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to decode OSRM polyline: {str(e)}")
+    else:
+        raise HTTPException(status_code=500, detail="Polyline decoder not available")
+
+    coords_lon_lat = [(lon, lat) for (lat, lon) in decoded]
+
+    # 3) Elevation profile using SwissTopoElevationClient
+    elev_client = SwissTopoElevationClient()
+    try:
+        elevations = elev_client.get_elevation_batch(coords_lon_lat)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Elevation service failed: {str(e)}")
+
+    # Build DataFrame for parquet
+    lats = [lat for (lat, lon) in decoded]
+    lons = [lon for (lat, lon) in decoded]
+    df = pd.DataFrame({
+        "segment_id": ["main"] * len(decoded),
+        "point_number": list(range(1, len(decoded) + 1)),
+        "latitude": lats,
+        "longitude": lons,
+        "altitude_m": elevations,
+    })
+
+    # 4) Store parquet to MinIO with unique shape_id
+    shape_id = f"depot-{uuid4().hex}"
+    parquet_buf = io.BytesIO()
+    try:
+        df.to_parquet(parquet_buf, index=False)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to serialize elevation parquet: {str(e)}")
+    parquet_bytes = parquet_buf.getvalue()
+
+    endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
+    access_key = os.getenv("AWS_ACCESS_KEY_ID", "minio_user")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "minio_password")
+    secure = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes", "on")
+    bucket_name = "elevation-profiles"
+    object_name = f"{shape_id}.parquet"
+
+    try:
+        mclient = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
+        # Note: bucket is created by compose; assume exists
+        mclient.put_object(bucket_name, object_name, io.BytesIO(parquet_bytes), length=len(parquet_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to upload elevation parquet to MinIO: {str(e)}")
+
+    # 5) Find service row in gtfs_calendar with service_id == 'depot'
+    result = await db.execute(select(GtfsCalendar).filter(GtfsCalendar.service_id == 'depot'))
+    svc_row = result.scalars().first()
+    if svc_row is None:
+        raise HTTPException(status_code=400, detail="Service 'depot' not found in gtfs_calendar")
+
+    # 6) Create trip row
+    trip = GtfsTrips(
+        id=uuid4(),
+        route_id=req.route_id,
+        service_id=svc_row.id,
+        gtfs_service_id='depot',
+        trip_id=f"depot-{uuid4().hex}",
+        status='depot',
+        shape_id=shape_id,
+        start_stop_name=dep_stop.stop_name,
+        end_stop_name=arr_stop.stop_name,
+        departure_time=req.departure_time,
+        arrival_time=req.arrival_time,
+    )
+    db.add(trip)
+    await db.commit()
+    await db.refresh(trip)
+
+    # 7) Create stop_times entries
+    st1 = GtfsStopsTimes(
+        id=uuid4(),
+        trip_id=trip.id,
+        stop_id=dep_stop.id,
+        arrival_time=req.departure_time,
+        departure_time=req.departure_time,
+        stop_sequence=1,
+    )
+    st2 = GtfsStopsTimes(
+        id=uuid4(),
+        trip_id=trip.id,
+        stop_id=arr_stop.id,
+        arrival_time=req.arrival_time,
+        departure_time=req.arrival_time,
+        stop_sequence=2,
+    )
+    db.add_all([st1, st2])
+    await db.commit()
+
+    return trip

@@ -48,3 +48,4 @@ tqdm>=4.67.1
 pyarrow>=21.0.0
 minio>=7.2.7
 polyline>=2.0.0
+map-services @ https://github.com/supsi-dacd-isaac/map-services/archive/refs/heads/main.zip
