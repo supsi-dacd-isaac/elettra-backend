@@ -261,6 +261,13 @@ export default function TripShiftPlanner() {
   const [authInfo, setAuthInfo] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [mode, setMode] = useState<"planner" | "createDepot">("planner");
+  // Depots management
+  type Depot = { id: string; agency_id: string; name: string; address?: string | null; city?: string | null; latitude?: number | null; longitude?: number | null };
+  const [depots, setDepots] = useState<Depot[]>([]);
+  const [depotsLoading, setDepotsLoading] = useState<boolean>(false);
+  const [depotsError, setDepotsError] = useState<string>("");
+  const [editingDepotId, setEditingDepotId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Partial<Depot>>({});
 
   // Agency/Route selection
   const [agencies, setAgencies] = useState<Agency[]>([]);
@@ -506,8 +513,28 @@ export default function TripShiftPlanner() {
     if (agencyId) {
       setRouteDbId("");
       fetchRoutesByAgency(agencyId);
+      // Load depots for selected agency
+      void (async () => {
+        if (!effectiveBaseUrl || !token) return;
+        try {
+          setDepotsError("");
+          setDepotsLoading(true);
+          const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/depots/?skip=0&limit=1000");
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+          if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+          const all = (await res.json()) as Depot[];
+          setDepots(Array.isArray(all) ? all.filter((d) => d.agency_id === agencyId) : []);
+        } catch (e: any) {
+          setDepots([]);
+          setDepotsError(e?.message || String(e));
+        } finally {
+          setDepotsLoading(false);
+        }
+      })();
     } else {
       setRoutes([]);
+      setDepots([]);
+      setEditingDepotId(null);
     }
   }, [agencyId, token, effectiveBaseUrl]);
 
@@ -776,6 +803,100 @@ export default function TripShiftPlanner() {
                 {!token ? "Authenticate to enable depot creation." : !agencyId ? "Select an agency in the Backend panel." : null}
               </div>
             ) : null}
+            {/* Depots list */}
+            {token && agencyId && (
+              <div className="mt-3 space-y-2">
+                <div className="text-sm text-gray-700 flex items-center justify-between">
+                  <span>Depots for selected agency</span>
+                  {depotsLoading && <span className="text-xs text-gray-500">loading…</span>}
+                </div>
+                {depotsError && <div className="text-sm text-red-600">{depotsError}</div>}
+                {(!depotsLoading && depots.length === 0) ? (
+                  <div className="text-sm text-gray-600">No depots yet.</div>
+                ) : (
+                  <ul className="space-y-2">
+                    {depots.map((d) => (
+                      <li key={d.id} className="border rounded-lg p-2">
+                        {editingDepotId === d.id ? (
+                          <div className="space-y-2">
+                            <input className="w-full px-2 py-1 border rounded" placeholder="Name" value={(editing.name as string) ?? d.name} onChange={(e) => setEditing((prev) => ({ ...prev, name: e.target.value }))} />
+                            <div className="grid grid-cols-2 gap-2">
+                              <input className="px-2 py-1 border rounded" placeholder="Address" value={(editing.address as string) ?? (d.address || "")} onChange={(e) => setEditing((prev) => ({ ...prev, address: e.target.value }))} />
+                              <input className="px-2 py-1 border rounded" placeholder="City" value={(editing.city as string) ?? (d.city || "")} onChange={(e) => setEditing((prev) => ({ ...prev, city: e.target.value }))} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <input className="px-2 py-1 border rounded" placeholder="Latitude" value={(editing.latitude as any) ?? (typeof d.latitude === "number" ? d.latitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, latitude: e.target.value ? parseFloat(e.target.value) : null }))} />
+                              <input className="px-2 py-1 border rounded" placeholder="Longitude" value={(editing.longitude as any) ?? (typeof d.longitude === "number" ? d.longitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, longitude: e.target.value ? parseFloat(e.target.value) : null }))} />
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                className="px-2 py-1 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700"
+                                onClick={async () => {
+                                  if (!effectiveBaseUrl || !token) return;
+                                  try {
+                                    const payload: any = {};
+                                    if (editing.name !== undefined) payload.name = editing.name;
+                                    if (editing.address !== undefined) payload.address = editing.address;
+                                    if (editing.city !== undefined) payload.city = editing.city;
+                                    if (editing.latitude !== undefined) payload.latitude = editing.latitude;
+                                    if (editing.longitude !== undefined) payload.longitude = editing.longitude;
+                                    const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), {
+                                      method: "PUT",
+                                      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                                      body: JSON.stringify(payload),
+                                    });
+                                    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                                    const updated = (await res.json()) as Depot;
+                                    setDepots((prev) => prev.map((x) => (x.id === d.id ? updated : x)));
+                                    setEditingDepotId(null);
+                                    setEditing({});
+                                  } catch (e: any) {
+                                    alert(`Save failed: ${e?.message || e}`);
+                                  }
+                                }}
+                              >
+                                Save
+                              </button>
+                              <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingDepotId(null); setEditing({}); }}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="text-sm">
+                              <div className="font-medium">{d.name}</div>
+                              <div className="text-gray-600">{[d.address, d.city].filter(Boolean).join(", ")}</div>
+                              <div className="text-xs text-gray-500">{typeof d.latitude === "number" && typeof d.longitude === "number" ? `${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}` : ""}</div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button className="px-2 py-1 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" onClick={() => { setEditingDepotId(d.id); setEditing({}); }}>Edit</button>
+                              <button
+                                className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700"
+                                onClick={async () => {
+                                  if (!effectiveBaseUrl || !token) return;
+                                  if (!window.confirm(`Delete depot "${d.name}"?`)) return;
+                                  try {
+                                    const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), {
+                                      method: "DELETE",
+                                      headers: { Authorization: `Bearer ${token}` },
+                                    });
+                                    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                                    setDepots((prev) => prev.filter((x) => x.id !== d.id));
+                                  } catch (e: any) {
+                                    alert(`Delete failed: ${e?.message || e}`);
+                                  }
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
