@@ -37,6 +37,35 @@ class GtfsStopsReadWithTimes(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DepotCreateRequest(BaseModel):
+    agency_id: UUID
+    name: str
+    address: Optional[str] = None
+    features: Optional[dict | list | None] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class DepotUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    features: Optional[dict | list | None] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
+class DepotReadWithLocation(BaseModel):
+    id: UUID
+    agency_id: UUID
+    name: str
+    address: Optional[str]
+    features: Optional[dict | list | None]
+    stop_id: Optional[UUID]
+    latitude: Optional[float]
+    longitude: Optional[float]
+    model_config = ConfigDict(from_attributes=True)
+
+
 class VariantsReadWithRoute(BaseModel):
     id: UUID
     route_id: UUID

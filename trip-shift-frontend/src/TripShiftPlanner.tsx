@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { MapContainer, TileLayer, Polyline, useMap, Marker } from "react-leaflet";
 import * as L from "leaflet";
 
@@ -262,10 +262,11 @@ export default function TripShiftPlanner() {
   const [loading, setLoading] = useState<boolean>(false);
   const [mode, setMode] = useState<"planner" | "createDepot">("planner");
   // Depots management
-  type Depot = { id: string; agency_id: string; name: string; address?: string | null; city?: string | null; latitude?: number | null; longitude?: number | null };
+  type Depot = { id: string; agency_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
   const [depots, setDepots] = useState<Depot[]>([]);
   const [depotsLoading, setDepotsLoading] = useState<boolean>(false);
   const [depotsError, setDepotsError] = useState<string>("");
+  const [depotsNotice, setDepotsNotice] = useState<string>("");
   const [editingDepotId, setEditingDepotId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Partial<Depot>>({});
 
@@ -491,6 +492,24 @@ export default function TripShiftPlanner() {
     }
   }
 
+  const loadDepotsForAgency = useCallback(async () => {
+    if (!effectiveBaseUrl || !token || !agencyId) return;
+    try {
+      setDepotsError("");
+      setDepotsLoading(true);
+      const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/depots/?skip=0&limit=1000");
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const all = (await res.json()) as Depot[];
+      setDepots(Array.isArray(all) ? all.filter((d) => d.agency_id === agencyId) : []);
+    } catch (e: any) {
+      setDepots([]);
+      setDepotsError(e?.message || String(e));
+    } finally {
+      setDepotsLoading(false);
+    }
+  }, [effectiveBaseUrl, token, agencyId]);
+
   // When token becomes available, load agencies
   useEffect(() => {
     if (token) {
@@ -514,29 +533,13 @@ export default function TripShiftPlanner() {
       setRouteDbId("");
       fetchRoutesByAgency(agencyId);
       // Load depots for selected agency
-      void (async () => {
-        if (!effectiveBaseUrl || !token) return;
-        try {
-          setDepotsError("");
-          setDepotsLoading(true);
-          const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/depots/?skip=0&limit=1000");
-          const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-          if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-          const all = (await res.json()) as Depot[];
-          setDepots(Array.isArray(all) ? all.filter((d) => d.agency_id === agencyId) : []);
-        } catch (e: any) {
-          setDepots([]);
-          setDepotsError(e?.message || String(e));
-        } finally {
-          setDepotsLoading(false);
-        }
-      })();
+      void loadDepotsForAgency();
     } else {
       setRoutes([]);
       setDepots([]);
       setEditingDepotId(null);
     }
-  }, [agencyId, token, effectiveBaseUrl]);
+  }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency]);
 
   // Filter and sort agencies by name/id
   const filteredAgencies = useMemo(() => {
@@ -676,6 +679,11 @@ export default function TripShiftPlanner() {
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">Backend</h2>
+            {depotsNotice && (
+              <div className="mb-2 text-xs px-3 py-2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                {depotsNotice}
+              </div>
+            )}
             <div className="space-y-2 text-sm">
               <div className="w-full px-3 py-2 border rounded-lg text-xs text-gray-600">Backend: auto-configured</div>
               <div className="grid grid-cols-2 gap-2">
@@ -820,9 +828,8 @@ export default function TripShiftPlanner() {
                         {editingDepotId === d.id ? (
                           <div className="space-y-2">
                             <input className="w-full px-2 py-1 border rounded" placeholder="Name" value={(editing.name as string) ?? d.name} onChange={(e) => setEditing((prev) => ({ ...prev, name: e.target.value }))} />
-                            <div className="grid grid-cols-2 gap-2">
-                              <input className="px-2 py-1 border rounded" placeholder="Address" value={(editing.address as string) ?? (d.address || "")} onChange={(e) => setEditing((prev) => ({ ...prev, address: e.target.value }))} />
-                              <input className="px-2 py-1 border rounded" placeholder="City" value={(editing.city as string) ?? (d.city || "")} onChange={(e) => setEditing((prev) => ({ ...prev, city: e.target.value }))} />
+                            <div>
+                              <input className="w-full px-2 py-1 border rounded" placeholder="Address" value={(editing.address as string) ?? (d.address || "")} onChange={(e) => setEditing((prev) => ({ ...prev, address: e.target.value }))} />
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                               <input className="px-2 py-1 border rounded" placeholder="Latitude" value={(editing.latitude as any) ?? (typeof d.latitude === "number" ? d.latitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, latitude: e.target.value ? parseFloat(e.target.value) : null }))} />
@@ -837,7 +844,6 @@ export default function TripShiftPlanner() {
                                     const payload: any = {};
                                     if (editing.name !== undefined) payload.name = editing.name;
                                     if (editing.address !== undefined) payload.address = editing.address;
-                                    if (editing.city !== undefined) payload.city = editing.city;
                                     if (editing.latitude !== undefined) payload.latitude = editing.latitude;
                                     if (editing.longitude !== undefined) payload.longitude = editing.longitude;
                                     const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), {
@@ -864,7 +870,7 @@ export default function TripShiftPlanner() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="text-sm">
                               <div className="font-medium">{d.name}</div>
-                              <div className="text-gray-600">{[d.address, d.city].filter(Boolean).join(", ")}</div>
+                              <div className="text-gray-600">{[d.address].filter(Boolean).join(", ")}</div>
                               <div className="text-xs text-gray-500">{typeof d.latitude === "number" && typeof d.longitude === "number" ? `${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}` : ""}</div>
                             </div>
                             <div className="flex gap-2">
@@ -1056,7 +1062,12 @@ export default function TripShiftPlanner() {
               agencyId={agencyId}
               baseUrl={effectiveBaseUrl}
               onCancel={() => setMode("planner")}
-              onCreated={() => {
+              onCreated={(dep?: any) => {
+                // Non-blocking success notice
+                setDepotsNotice(dep?.name ? `Depot "${dep.name}" created.` : "Depot created.");
+                setTimeout(() => setDepotsNotice(""), 3000);
+                // Reload list immediately so it appears without a page refresh
+                void loadDepotsForAgency();
                 setMode("planner");
               }}
             />
@@ -1271,7 +1282,8 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
 }) {
   const [name, setName] = useState<string>("");
   const [address, setAddress] = useState<string>("");
-  const [city, setCity] = useState<string>("");
+  // city field removed from backend; keep local for UI address search only
+  // city removed from backend; no longer collected
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
   const [center, setCenter] = useState<[number, number]>([46.0037, 8.9511]); // Lugano
@@ -1376,7 +1388,7 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
         name: name.trim(),
       };
       if (address.trim()) payload.address = address.trim();
-      if (city.trim()) payload.city = city.trim();
+      // city is not part of backend payload anymore
       if (latitude != null) payload.latitude = latitude;
       if (longitude != null) payload.longitude = longitude;
       const res = await fetch(joinUrl(baseUrl, "/api/v1/agency/depots/"), {
@@ -1390,7 +1402,6 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data = await res.json();
       onCreated(data);
-      alert("Depot created successfully");
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -1422,9 +1433,6 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setAddress(s.label);
-                      const parts = s.label.split(",");
-                      const last = parts[parts.length - 1]?.trim() || "";
-                      if (last) setCity(last);
                       setCenter([s.lat, s.lon]);
                       setLatitude(s.lat);
                       setLongitude(s.lon);
@@ -1442,10 +1450,7 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
             <label className="block text-sm text-gray-700 mb-1">Address</label>
             <input className="w-full px-3 py-2 border rounded-lg" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street and number" />
           </div>
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">City</label>
-            <input className="w-full px-3 py-2 border rounded-lg" value={city} onChange={(e) => setCity(e.target.value)} placeholder="City" />
-          </div>
+          {/* City field removed: backend no longer stores it */}
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-sm text-gray-700 mb-1">Latitude</label>

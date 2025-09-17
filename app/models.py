@@ -1,11 +1,11 @@
 from typing import Optional
+import datetime
+import decimal
+import uuid
 
 from sqlalchemy import CheckConstraint, Date, DateTime, Double, Enum, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, REAL, String, Text, UniqueConstraint, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-import datetime
-import decimal
-import uuid
 
 class Base(DeclarativeBase):
     pass
@@ -58,7 +58,9 @@ class GtfsCalendar(Base):
 class GtfsStops(Base):
     __tablename__ = 'gtfs_stops'
     __table_args__ = (
-        PrimaryKeyConstraint('id', name='gtfs_stops_pkey'),
+        CheckConstraint("stop_lat IS NULL OR stop_lat >= '-90'::integer::double precision AND stop_lat <= 90::double precision", name='stop_lat_check'),
+        CheckConstraint("stop_lon IS NULL OR stop_lon >= '-180'::integer::double precision AND stop_lon <= 180::double precision", name='stop_lon_check'),
+        PrimaryKeyConstraint('id', name='gtfs_stops_pkey')
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
@@ -77,6 +79,7 @@ class GtfsStops(Base):
     platform_code: Mapped[Optional[str]] = mapped_column(Text)
     level_id: Mapped[Optional[str]] = mapped_column(Text)
 
+    depots: Mapped[list['Depots']] = relationship('Depots', back_populates='stop')
     gtfs_stops_times: Mapped[list['GtfsStopsTimes']] = relationship('GtfsStopsTimes', back_populates='stop')
 
 
@@ -143,25 +146,21 @@ class BusModels(Base):
 class Depots(Base):
     __tablename__ = 'depots'
     __table_args__ = (
-        CheckConstraint("latitude IS NULL OR latitude >= '-90'::integer::double precision AND latitude <= 90::double precision", name='depots_latitude_check'),
-        CheckConstraint("longitude IS NULL OR longitude >= '-180'::integer::double precision AND longitude <= 180::double precision", name='depots_longitude_check'),
         ForeignKeyConstraint(['agency_id'], ['gtfs_agencies.id'], ondelete='RESTRICT', onupdate='CASCADE', name='depots_agency_fk'),
+        ForeignKeyConstraint(['stop_id'], ['gtfs_stops.id'], ondelete='CASCADE', onupdate='CASCADE', name='depots_gtfs_stops_fk'),
         PrimaryKeyConstraint('id', name='depots_pkey'),
-        Index('depots_agency_id_idx', 'agency_id'),
-        Index('depots_city_idx', 'city'),
-        Index('depots_coords_idx', 'latitude', 'longitude')
+        Index('depots_agency_id_idx', 'agency_id')
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     agency_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     address: Mapped[Optional[str]] = mapped_column(Text)
-    city: Mapped[Optional[str]] = mapped_column(Text)
-    latitude: Mapped[Optional[float]] = mapped_column(Double(53))
-    longitude: Mapped[Optional[float]] = mapped_column(Double(53))
     features: Mapped[Optional[dict]] = mapped_column(JSONB)
+    stop_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
     agency: Mapped['GtfsAgencies'] = relationship('GtfsAgencies', back_populates='depots')
+    stop: Mapped[Optional['GtfsStops']] = relationship('GtfsStops', back_populates='depots')
 
 
 class GtfsRoutes(Base):
@@ -225,6 +224,7 @@ class GtfsTrips(Base):
     service_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     gtfs_service_id: Mapped[str] = mapped_column(Text, nullable=False)
     trip_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Enum('gtfs', 'depot', 'school', 'service', 'other', name='trip_status'), nullable=False, server_default=text("'gtfs'::trip_status"))
     trip_headsign: Mapped[Optional[str]] = mapped_column(Text)
     trip_short_name: Mapped[Optional[str]] = mapped_column(Text)
     direction_id: Mapped[Optional[int]] = mapped_column(Integer)

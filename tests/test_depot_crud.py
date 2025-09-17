@@ -43,7 +43,6 @@ def create_test_depot(client: TestClient, token: str, name: str = "Test Depot") 
         "agency_id": TEST_AGENCY_ID,
         "name": name,
         "address": "123 Test Street",
-        "city": "Test City",
         "latitude": 40.7128,
         "longitude": -74.0060
     }
@@ -319,7 +318,6 @@ def test_update_depot_success(client, record):
     
     update_data = {
         "name": "Updated Depot",
-        "city": "Updated City",
         "address": "456 New Street",
         "latitude": 41.8781,
         "longitude": -87.6298
@@ -333,7 +331,7 @@ def test_update_depot_success(client, record):
     if response.status_code == 200:
         data = response.json()
         record("update_depot_name", data.get("name") == "Updated Depot", f"name={data.get('name')}")
-        record("update_depot_city", data.get("city") == "Updated City", f"city={data.get('city')}")
+        # City field removed from schema; no assertion
         record("update_depot_address", data.get("address") == "456 New Street", f"address={data.get('address')}")
     
     # Clean up - delete the test depot
@@ -365,8 +363,7 @@ def test_update_depot_partial(client, record):
     if response.status_code == 200:
         data = response.json()
         record("update_depot_partial_name", data.get("name") == "Partially Updated Depot", f"name={data.get('name')}")
-        # Verify other fields remain unchanged
-        record("update_depot_partial_city_unchanged", data.get("city") == "Test City", f"city={data.get('city')}")
+        # City field removed from schema; no assertion
     
     # Clean up - delete the test depot
     client.delete(f"{API_BASE}/depots/{depot_id}", headers=headers)
@@ -488,7 +485,6 @@ def test_depot_crud_workflow(client, record):
     create_data = {
         "agency_id": TEST_AGENCY_ID,
         "name": "Workflow Depot",
-        "city": "Workflow City",
         "latitude": 40.7128,
         "longitude": -74.0060
     }

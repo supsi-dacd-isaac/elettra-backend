@@ -2,12 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.database import get_async_session
 from app.schemas.database import (
     GtfsCalendarRead, GtfsTripsRead, GtfsRoutesCreate, GtfsRoutesRead,
+    GtfsTripsCreate, GtfsTripsUpdate,
+    GtfsStopsCreate, GtfsStopsRead, GtfsStopsUpdate,
 )
+from app.schemas.trip_status import TripStatus
 from app.schemas.responses import (
     GtfsStopsReadWithTimes, VariantsReadWithRoute, GtfsRoutesReadWithVariant,
 )
@@ -335,10 +338,14 @@ async def read_routes_by_stop(
 async def read_trips_by_route(
     route_id: UUID,
     day_of_week: Optional[str] = None,
+    status: TripStatus = TripStatus.GTFS,
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    query = select(GtfsTrips).filter(GtfsTrips.route_id == route_id)
+    query = select(GtfsTrips).filter(
+        GtfsTrips.route_id == route_id,
+        GtfsTrips.status == status.value
+    )
 
     if day_of_week is not None:
         day = day_of_week.strip().lower()
@@ -362,6 +369,52 @@ async def read_trips_by_route(
     result = await db.execute(query)
     trips = result.scalars().all()
     return trips
+
+
+# GTFS Trips CUD endpoints (authenticated users only)
+@router.post("/gtfs-trips/", response_model=GtfsTripsRead)
+async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    # Validate status against enum values to provide clear error messages
+    if trip.status not in {s.value for s in TripStatus}:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {[s.value for s in TripStatus]}")
+
+    db_trip = GtfsTrips(id=uuid4(), **trip.model_dump(exclude_unset=True))
+    db.add(db_trip)
+    await db.commit()
+    await db.refresh(db_trip)
+    return db_trip
+
+
+@router.put("/gtfs-trips/{trip_pk}", response_model=GtfsTripsRead)
+async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_trip = await db.get(GtfsTrips, trip_pk)
+    if db_trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    update_data = trip_update.model_dump(exclude_unset=True, exclude={"id"})
+
+    # Validate status if provided
+    if "status" in update_data and update_data["status"] is not None:
+        if update_data["status"] not in {s.value for s in TripStatus}:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {[s.value for s in TripStatus]}")
+
+    for field, value in update_data.items():
+        setattr(db_trip, field, value)
+
+    await db.commit()
+    await db.refresh(db_trip)
+    return db_trip
+
+
+@router.delete("/gtfs-trips/{trip_pk}")
+async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_trip = await db.get(GtfsTrips, trip_pk)
+    if db_trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    await db.delete(db_trip)
+    await db.commit()
+    return {"message": "Trip deleted successfully"}
 
 # Variants endpoints (authenticated users only)
 @router.get("/variants/by-route/{route_id}", response_model=List[VariantsReadWithRoute])
@@ -569,13 +622,69 @@ async def read_stops_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async
         for (stop, arrival_time, departure_time) in rows
     ]
 
+
+# Basic CRUD for GTFS stops (authenticated users only)
+@router.post("/gtfs-stops/", response_model=GtfsStopsRead)
+async def create_gtfs_stop(stop: GtfsStopsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_stop = GtfsStops(**stop.model_dump(exclude_unset=True))
+    db.add(db_stop)
+    await db.commit()
+    await db.refresh(db_stop)
+    return db_stop
+
+
+@router.get("/gtfs-stops/", response_model=List[GtfsStopsRead])
+async def read_gtfs_stops(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    result = await db.execute(select(GtfsStops).offset(skip).limit(limit))
+    stops = result.scalars().all()
+    return stops
+
+
+@router.get("/gtfs-stops/{stop_pk}", response_model=GtfsStopsRead)
+async def read_gtfs_stop(stop_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    stop = await db.get(GtfsStops, stop_pk)
+    if stop is None:
+        raise HTTPException(status_code=404, detail="Stop not found")
+    return stop
+
+
+@router.put("/gtfs-stops/{stop_pk}", response_model=GtfsStopsRead)
+async def update_gtfs_stop(stop_pk: UUID, stop_update: GtfsStopsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    stop = await db.get(GtfsStops, stop_pk)
+    if stop is None:
+        raise HTTPException(status_code=404, detail="Stop not found")
+    update_data = stop_update.model_dump(exclude_unset=True, exclude={"id"})
+    for field, value in update_data.items():
+        setattr(stop, field, value)
+    await db.commit()
+    await db.refresh(stop)
+    return stop
+
+
+@router.delete("/gtfs-stops/{stop_pk}")
+async def delete_gtfs_stop(stop_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    stop = await db.get(GtfsStops, stop_pk)
+    if stop is None:
+        raise HTTPException(status_code=404, detail="Stop not found")
+    await db.delete(stop)
+    await db.commit()
+    return {"message": "Stop deleted successfully"}
+
 @router.get("/gtfs-trips/by-stop/{stop_id}", response_model=List[GtfsTripsRead])
-async def read_trips_by_stop(stop_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def read_trips_by_stop(
+    stop_id: UUID, 
+    status: TripStatus = TripStatus.GTFS,
+    db: AsyncSession = Depends(get_async_session), 
+    current_user: Users = Depends(get_current_user)
+):
     """Get all GTFS trips for a given stop ID"""
     result = await db.execute(
         select(GtfsTrips)
         .join(GtfsStopsTimes, GtfsTrips.id == GtfsStopsTimes.trip_id)
-        .filter(GtfsStopsTimes.stop_id == stop_id)
+        .filter(
+            GtfsStopsTimes.stop_id == stop_id,
+            GtfsTrips.status == status.value
+        )
     )
     trips = result.scalars().all()
     return trips
