@@ -577,9 +577,8 @@ export default function TripShiftPlanner() {
 
   async function loadByRouteDay() {
     const selectedRouteId = routeDbId || routeId; // support legacy env for now
-    if (!effectiveBaseUrl || !selectedRouteId) {
-      alert("Base URL and Route selection required");
-      return;
+    if (!effectiveBaseUrl || !selectedRouteId || !day || !token) {
+      return; // Don't show alerts for automatic loading
     }
     try {
       setLoading(true);
@@ -596,7 +595,8 @@ export default function TripShiftPlanner() {
       setRawTrips(data);
       setSelectedIds([]);
     } catch (e: any) {
-      alert(`Fetch failed: ${e?.message || e}`);
+      console.error(`Failed to load trips: ${e?.message || e}`);
+      // Don't show alerts for automatic loading, just log the error
     } finally {
       setLoading(false);
       setHasLoadedForRouteDay(true);
@@ -703,6 +703,14 @@ export default function TripShiftPlanner() {
     setStopsByTrip({});
     setElevationByTrip({});
   }, [routeDbId]);
+
+  // Auto-load trips when both route and day are selected
+  useEffect(() => {
+    const selectedRouteId = routeDbId || routeId;
+    if (selectedRouteId && day && token && effectiveBaseUrl) {
+      loadByRouteDay();
+    }
+  }, [routeDbId, routeId, day, token, effectiveBaseUrl]);
 
   // Filter and sort agencies by name/id
   const filteredAgencies = useMemo(() => {
@@ -841,12 +849,7 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">Backend</h2>
-            {depotsNotice && (
-              <div className="mb-2 text-xs px-3 py-2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
-                {depotsNotice}
-              </div>
-            )}
+            <h2 className="text-lg font-medium mb-3">Authentication</h2>
             <div className="space-y-2 text-sm">
               <div className="w-full px-3 py-2 border rounded-lg text-xs text-gray-600">Backend: auto-configured</div>
               <div className="grid grid-cols-2 gap-2">
@@ -862,9 +865,19 @@ export default function TripShiftPlanner() {
                 )}
               </div>
               {authInfo && <div className="text-xs text-gray-600">{authInfo}</div>}
+            </div>
+          </div>
 
+          <div className="p-3 rounded-2xl bg-white shadow-sm border">
+            <h2 className="text-lg font-medium mb-3">Shift Planning</h2>
+            {depotsNotice && (
+              <div className="mb-2 text-xs px-3 py-2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                {depotsNotice}
+              </div>
+            )}
+            <div className="space-y-2 text-sm">
               {/* Depot flow */}
-              <div className="mt-3 p-2 rounded-lg border">
+              <div className="p-2 rounded-lg border">
                 <div className="text-sm font-medium mb-2">Depot flow</div>
                 <div className="flex items-center gap-2">
                   <button
@@ -877,7 +890,7 @@ export default function TripShiftPlanner() {
                       setModalTime("");
                       setShowDepotDialog("leave");
                     }}
-                    title={!hasLoadedForRouteDay ? "Load trips by route + day first" : "Pick depot and time"}
+                    title={!hasLoadedForRouteDay ? "Select route and day to load trips first" : "Pick depot and time"}
                   >
                     {leaveDepotInfo ? "Leave depot (set)" : "Leave depot"}
                   </button>
@@ -994,9 +1007,6 @@ export default function TripShiftPlanner() {
                   ))}
                 </select>
               </div>
-              <button onClick={loadByRouteDay} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 w-full" disabled={loading || !(routeDbId || routeId)}>
-                Load trips by route + day
-              </button>
             </div>
           </div>
 
@@ -1222,7 +1232,7 @@ export default function TripShiftPlanner() {
                   />
                 ))}
                 {rawTrips.length === 0 ? (
-                  <div className="text-sm text-gray-600">No trips loaded yet. Login and select an agency and route, then click "Load trips by route + day".</div>
+                  <div className="text-sm text-gray-600">No trips loaded yet. Login and select an agency, route, and day to automatically load trips.</div>
                 ) : pagedNextCandidates.length === 0 ? (
                   <div className="text-sm text-gray-600">No trips match the current filters. Try disabling "Only show valid next trips" or clearing the search.</div>
                 ) : null}
