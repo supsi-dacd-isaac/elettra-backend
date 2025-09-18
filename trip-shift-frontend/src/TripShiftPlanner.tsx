@@ -263,6 +263,28 @@ export default function TripShiftPlanner() {
   const [authInfo, setAuthInfo] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [mode, setMode] = useState<"planner" | "createDepot">("planner");
+  // Persist token across reloads
+  const LS_TOKEN_KEY = "elettra_jwt";
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = window.localStorage.getItem(LS_TOKEN_KEY);
+      if (saved && !token) {
+        setToken(saved);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (token) {
+        window.localStorage.setItem(LS_TOKEN_KEY, token);
+      } else {
+        window.localStorage.removeItem(LS_TOKEN_KEY);
+      }
+    } catch {}
+  }, [token]);
   // Export progress state
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportMessage, setExportMessage] = useState<string>("");
@@ -687,6 +709,7 @@ export default function TripShiftPlanner() {
     setAuthInfo("");
     setEmail("");
     setPassword("");
+    try { if (typeof window !== "undefined") window.localStorage.removeItem(LS_TOKEN_KEY); } catch {}
     setAgencyId("");
     setAgencyQuery("");
     setAgencies([]);
