@@ -7,3 +7,4 @@ class TripStatus(str, Enum):
     SCHOOL = "school"
     SERVICE = "service"
     OTHER = "other"
+    TRANSFER = "transfer"

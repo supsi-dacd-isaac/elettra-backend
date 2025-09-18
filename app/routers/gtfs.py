@@ -10,7 +10,7 @@ from app.schemas.database import (
     GtfsTripsCreate, GtfsTripsUpdate,
     GtfsStopsCreate, GtfsStopsRead, GtfsStopsUpdate,
 )
-from app.schemas.requests import DepotTripCreate
+from app.schemas.requests import AuxTripCreate
 from app.schemas.trip_status import TripStatus
 from app.schemas.responses import (
     GtfsStopsReadWithTimes, VariantsReadWithRoute, GtfsRoutesReadWithVariant,
@@ -852,10 +852,10 @@ async def get_elevation_profile_by_trip(trip_id: UUID, db: AsyncSession = Depend
     return ElevationProfileResponse(shape_id=shape_id, records=records)
 
 
-# Create a new depot trip between two stops
-@router.post("/depot-trip", response_model=GtfsTripsRead)
-async def create_depot_trip(
-    req: DepotTripCreate,
+# Create a new auxiliary trip (depot or transfer) between two stops
+@router.post("/aux-trip", response_model=GtfsTripsRead)
+async def create_aux_trip(
+    req: AuxTripCreate,
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
@@ -922,8 +922,9 @@ async def create_depot_trip(
         "altitude_m": elevations,
     })
 
-    # 4) Store parquet to MinIO with unique shape_id
-    shape_id = f"depot-{uuid4().hex}"
+    # 4) Store parquet to MinIO with unique shape_id, prefixed by status
+    prefix = req.status.value if hasattr(req.status, 'value') else str(req.status)
+    shape_id = f"{prefix}-{uuid4().hex}"
     parquet_buf = io.BytesIO()
     try:
         df.to_parquet(parquet_buf, index=False)
@@ -945,20 +946,21 @@ async def create_depot_trip(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to upload elevation parquet to MinIO: {str(e)}")
 
-    # 5) Find service row in gtfs_calendar with service_id == 'depot'
-    result = await db.execute(select(GtfsCalendar).filter(GtfsCalendar.service_id == 'depot'))
+    # 5) Find service row in gtfs_calendar with service_id == 'auxiliary' (or override)
+    calendar_key = (req.calendar_service_key or 'auxiliary')
+    result = await db.execute(select(GtfsCalendar).filter(GtfsCalendar.service_id == calendar_key))
     svc_row = result.scalars().first()
     if svc_row is None:
-        raise HTTPException(status_code=400, detail="Service 'depot' not found in gtfs_calendar")
+        raise HTTPException(status_code=400, detail=f"Service '{calendar_key}' not found in gtfs_calendar")
 
-    # 6) Create trip row
+    # 6) Create trip row (prefix trip_id by status, set status and gtfs_service_id)
     trip = GtfsTrips(
         id=uuid4(),
         route_id=req.route_id,
         service_id=svc_row.id,
-        gtfs_service_id='depot',
-        trip_id=f"depot-{uuid4().hex}",
-        status='depot',
+        gtfs_service_id=calendar_key,
+        trip_id=f"{prefix}-{uuid4().hex}",
+        status=prefix,
         shape_id=shape_id,
         start_stop_name=dep_stop.stop_name,
         end_stop_name=arr_stop.stop_name,

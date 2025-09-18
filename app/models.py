@@ -40,7 +40,7 @@ class GtfsCalendar(Base):
         PrimaryKeyConstraint('id', name='gtfs_calendar_pkey'),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     service_id: Mapped[str] = mapped_column(Text, nullable=False)
     monday: Mapped[int] = mapped_column(Integer, nullable=False)
     tuesday: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -224,7 +224,7 @@ class GtfsTrips(Base):
     service_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     gtfs_service_id: Mapped[str] = mapped_column(Text, nullable=False)
     trip_id: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(Enum('gtfs', 'depot', 'school', 'service', 'other', name='trip_status'), nullable=False, server_default=text("'gtfs'::trip_status"))
+    status: Mapped[str] = mapped_column(Enum('gtfs', 'depot', 'school', 'service', 'other', 'transfer', name='trip_status'), nullable=False, server_default=text("'gtfs'::trip_status"))
     trip_headsign: Mapped[Optional[str]] = mapped_column(Text)
     trip_short_name: Mapped[Optional[str]] = mapped_column(Text)
     direction_id: Mapped[Optional[int]] = mapped_column(Integer)

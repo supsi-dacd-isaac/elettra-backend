@@ -469,7 +469,7 @@ export default function TripShiftPlanner() {
 
         const postDepotTrip = async (body: any, stageLabel: string) => {
           setExportMessage(stageLabel);
-          const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/gtfs/depot-trip"), {
+          const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/gtfs/aux-trip"), {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
             body: JSON.stringify(body),
@@ -486,6 +486,7 @@ export default function TripShiftPlanner() {
           departure_time: `${leaveDepotInfo.timeHHMM}:00`,
           arrival_time: firstArr.length === 5 ? `${firstArr}:00` : firstArr,
           route_id: routeUuid,
+          status: "depot",
         }, "Creating departure leg (depot → first stop)…");
         const retDepot = depots.find((d) => d.id === returnDepotInfo.depotId);
         if (!retDepot || !retDepot.stop_id) throw new Error("Selected return depot has no stop_id");
@@ -495,6 +496,7 @@ export default function TripShiftPlanner() {
           departure_time: lastDep.length === 5 ? `${lastDep}:00` : lastDep,
           arrival_time: `${returnDepotInfo.timeHHMM}:00`,
           route_id: routeUuid,
+          status: "depot",
         }, "Creating return leg (last stop → depot)…");
 
         setExportMessage("Preparing download…");

@@ -53,7 +53,9 @@ def test_create_depot_trip(client, record, monkeypatch):
         "route_id": route_id,
     }
     headers = _auth_headers(client)
-    r = client.post(f"{API_BASE}/depot-trip", json=payload, headers=headers)
+    # Use aux-trip endpoint, explicitly setting depot status for same behavior
+    payload["status"] = "depot"
+    r = client.post(f"{API_BASE}/aux-trip", json=payload, headers=headers)
     ok = r.status_code == 200
     record("create_depot_trip_status", ok, f"status={r.status_code} body={r.text[:200]}")
     if ok:
@@ -66,5 +68,45 @@ def test_create_depot_trip(client, record, monkeypatch):
         if trip_id:
             r2 = client.get(f"{API_BASE}/elevation-profile/by-trip/{trip_id}", headers=headers)
             record("elevation_profile_fetch", r2.status_code == 200, f"status={r2.status_code}")
+
+
+@pytest.mark.skipif(
+    not (
+        os.getenv("OSRM_BASE_URL")
+        and os.getenv("TEST_ROUTE_ID")
+        and os.getenv("TEST_TRANSFER_DEPARTURE_STOP_ID")
+        and os.getenv("TEST_TRANSFER_ARRIVAL_STOP_ID")
+        and (
+            os.getenv("TEST_API_TOKEN")
+            or (
+                os.getenv("TEST_LOGIN_EMAIL") and os.getenv("TEST_LOGIN_PASSWORD")
+            )
+        )
+    ),
+    reason="Requires OSRM_BASE_URL, auth, TEST_ROUTE_ID and transfer stop ids",
+)
+def test_create_transfer_trip(client, record, monkeypatch):
+    monkeypatch.setenv("MINIO_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9002"))
+
+    dep_stop_id = os.getenv("TEST_TRANSFER_DEPARTURE_STOP_ID")
+    arr_stop_id = os.getenv("TEST_TRANSFER_ARRIVAL_STOP_ID")
+    route_id = os.getenv("TEST_ROUTE_ID")
+
+    payload = {
+        "departure_stop_id": dep_stop_id,
+        "arrival_stop_id": arr_stop_id,
+        "departure_time": "09:00:00",
+        "arrival_time": "09:10:00",
+        "route_id": route_id,
+        "status": "transfer",
+    }
+    headers = _auth_headers(client)
+    r = client.post(f"{API_BASE}/aux-trip", json=payload, headers=headers)
+    ok = r.status_code == 200
+    record("create_transfer_trip_status", ok, f"status={r.status_code} body={r.text[:200]}")
+    if ok:
+        data = r.json()
+        record("created_status_transfer", data.get("status") == "transfer", f"status={data.get('status')}")
+        record("gtfs_service_auxiliary", data.get("gtfs_service_id") == "auxiliary", f"gtfs_service_id={data.get('gtfs_service_id')}")
 
 

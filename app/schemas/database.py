@@ -6,6 +6,18 @@ from decimal import Decimal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
+class ShiftsCreate(BaseModel):
+    name: str
+
+class ShiftsUpdate(BaseModel):
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+
+class ShiftsRead(BaseModel):
+    id: UUID
+    name: str
+    model_config = ConfigDict(from_attributes=True)
+
 class DepotsCreate(BaseModel):
     agency_id: UUID
     name: str
@@ -28,6 +40,60 @@ class DepotsRead(BaseModel):
     address: Optional[str]
     features: Optional[dict | list | None]
     stop_id: Optional[UUID]
+    model_config = ConfigDict(from_attributes=True)
+
+class GtfsAgenciesCreate(BaseModel):
+    gtfs_agency_id: str
+    agency_name: str
+    agency_url: str
+    agency_timezone: str
+    agency_lang: Optional[str] = None
+    agency_phone: Optional[str] = None
+    agency_fare_url: Optional[str] = None
+    agency_email: Optional[str] = None
+
+class GtfsAgenciesUpdate(BaseModel):
+    id: Optional[UUID] = None
+    gtfs_agency_id: Optional[str] = None
+    agency_name: Optional[str] = None
+    agency_url: Optional[str] = None
+    agency_timezone: Optional[str] = None
+    agency_lang: Optional[str] = None
+    agency_phone: Optional[str] = None
+    agency_fare_url: Optional[str] = None
+    agency_email: Optional[str] = None
+
+class GtfsAgenciesRead(BaseModel):
+    id: UUID
+    gtfs_agency_id: str
+    agency_name: str
+    agency_url: str
+    agency_timezone: str
+    agency_lang: Optional[str]
+    agency_phone: Optional[str]
+    agency_fare_url: Optional[str]
+    agency_email: Optional[str]
+    model_config = ConfigDict(from_attributes=True)
+
+class BusModelsCreate(BaseModel):
+    company_id: UUID
+    name: str
+    specs: dict | list | None
+    manufacturer: Optional[str] = None
+
+class BusModelsUpdate(BaseModel):
+    id: Optional[UUID] = None
+    company_id: Optional[UUID] = None
+    name: Optional[str] = None
+    specs: Optional[dict | list | None] = None
+    manufacturer: Optional[str] = None
+
+class BusModelsRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    name: str
+    specs: dict | list | None
+    manufacturer: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
 class WeatherMeasurementsCreate(BaseModel):
@@ -75,70 +141,22 @@ class WeatherMeasurementsRead(BaseModel):
     pressure: Optional[int]
     model_config = ConfigDict(from_attributes=True)
 
-class ShiftsCreate(BaseModel):
-    name: str
+class ShiftsStructuresCreate(BaseModel):
+    trip_id: UUID
+    shift_id: UUID
+    sequence_number: int
 
-class ShiftsUpdate(BaseModel):
+class ShiftsStructuresUpdate(BaseModel):
     id: Optional[UUID] = None
-    name: Optional[str] = None
+    trip_id: Optional[UUID] = None
+    shift_id: Optional[UUID] = None
+    sequence_number: Optional[int] = None
 
-class ShiftsRead(BaseModel):
+class ShiftsStructuresRead(BaseModel):
     id: UUID
-    name: str
-    model_config = ConfigDict(from_attributes=True)
-
-class SimulationRunsCreate(BaseModel):
-    user_id: UUID
-    input_params: dict | list | None
-    status: str
-    created_at: datetime
-    variant_id: UUID
-    optimal_battery_kwh: Optional[Decimal] = None
-    output_results: Optional[dict | list | None] = None
-    completed_at: Optional[datetime] = None
-
-class SimulationRunsUpdate(BaseModel):
-    id: Optional[UUID] = None
-    user_id: Optional[UUID] = None
-    input_params: Optional[dict | list | None] = None
-    status: Optional[str] = None
-    created_at: Optional[datetime] = None
-    variant_id: Optional[UUID] = None
-    optimal_battery_kwh: Optional[Decimal] = None
-    output_results: Optional[dict | list | None] = None
-    completed_at: Optional[datetime] = None
-
-class SimulationRunsRead(BaseModel):
-    id: UUID
-    user_id: UUID
-    input_params: dict | list | None
-    status: str
-    created_at: datetime
-    variant_id: UUID
-    optimal_battery_kwh: Optional[Decimal]
-    output_results: Optional[dict | list | None]
-    completed_at: Optional[datetime]
-    model_config = ConfigDict(from_attributes=True)
-
-class BusModelsCreate(BaseModel):
-    company_id: UUID
-    name: str
-    specs: dict | list | None
-    manufacturer: Optional[str] = None
-
-class BusModelsUpdate(BaseModel):
-    id: Optional[UUID] = None
-    company_id: Optional[UUID] = None
-    name: Optional[str] = None
-    specs: Optional[dict | list | None] = None
-    manufacturer: Optional[str] = None
-
-class BusModelsRead(BaseModel):
-    id: UUID
-    company_id: UUID
-    name: str
-    specs: dict | list | None
-    manufacturer: Optional[str]
+    trip_id: UUID
+    shift_id: UUID
+    sequence_number: int
     model_config = ConfigDict(from_attributes=True)
 
 class GtfsTripsCreate(BaseModel):
@@ -196,6 +214,39 @@ class GtfsTripsRead(BaseModel):
     end_stop_name: Optional[str]
     departure_time: Optional[str]
     arrival_time: Optional[str]
+    model_config = ConfigDict(from_attributes=True)
+
+class SimulationRunsCreate(BaseModel):
+    user_id: UUID
+    input_params: dict | list | None
+    status: str
+    created_at: datetime
+    variant_id: UUID
+    optimal_battery_kwh: Optional[Decimal] = None
+    output_results: Optional[dict | list | None] = None
+    completed_at: Optional[datetime] = None
+
+class SimulationRunsUpdate(BaseModel):
+    id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
+    input_params: Optional[dict | list | None] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
+    variant_id: Optional[UUID] = None
+    optimal_battery_kwh: Optional[Decimal] = None
+    output_results: Optional[dict | list | None] = None
+    completed_at: Optional[datetime] = None
+
+class SimulationRunsRead(BaseModel):
+    id: UUID
+    user_id: UUID
+    input_params: dict | list | None
+    status: str
+    created_at: datetime
+    variant_id: UUID
+    optimal_battery_kwh: Optional[Decimal]
+    output_results: Optional[dict | list | None]
+    completed_at: Optional[datetime]
     model_config = ConfigDict(from_attributes=True)
 
 class GtfsStopsTimesCreate(BaseModel):
@@ -309,6 +360,45 @@ class VariantsRead(BaseModel):
     shape_id: str
     model_config = ConfigDict(from_attributes=True)
 
+class GtfsCalendarCreate(BaseModel):
+    service_id: str
+    monday: int
+    tuesday: int
+    wednesday: int
+    thursday: int
+    friday: int
+    saturday: int
+    sunday: int
+    start_date: date
+    end_date: date
+
+class GtfsCalendarUpdate(BaseModel):
+    id: Optional[UUID] = None
+    service_id: Optional[str] = None
+    monday: Optional[int] = None
+    tuesday: Optional[int] = None
+    wednesday: Optional[int] = None
+    thursday: Optional[int] = None
+    friday: Optional[int] = None
+    saturday: Optional[int] = None
+    sunday: Optional[int] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+
+class GtfsCalendarRead(BaseModel):
+    id: UUID
+    service_id: str
+    monday: int
+    tuesday: int
+    wednesday: int
+    thursday: int
+    friday: int
+    saturday: int
+    sunday: int
+    start_date: date
+    end_date: date
+    model_config = ConfigDict(from_attributes=True)
+
 class UsersCreate(BaseModel):
     company_id: UUID
     email: str
@@ -385,96 +475,4 @@ class GtfsStopsRead(BaseModel):
     wheelchair_boarding: Optional[int]
     platform_code: Optional[str]
     level_id: Optional[str]
-    model_config = ConfigDict(from_attributes=True)
-
- 
-
-class GtfsAgenciesCreate(BaseModel):
-    gtfs_agency_id: str
-    agency_name: str
-    agency_url: str
-    agency_timezone: str
-    agency_lang: Optional[str] = None
-    agency_phone: Optional[str] = None
-    agency_fare_url: Optional[str] = None
-    agency_email: Optional[str] = None
-
-class GtfsAgenciesUpdate(BaseModel):
-    id: Optional[UUID] = None
-    gtfs_agency_id: Optional[str] = None
-    agency_name: Optional[str] = None
-    agency_url: Optional[str] = None
-    agency_timezone: Optional[str] = None
-    agency_lang: Optional[str] = None
-    agency_phone: Optional[str] = None
-    agency_fare_url: Optional[str] = None
-    agency_email: Optional[str] = None
-
-class GtfsAgenciesRead(BaseModel):
-    id: UUID
-    gtfs_agency_id: str
-    agency_name: str
-    agency_url: str
-    agency_timezone: str
-    agency_lang: Optional[str]
-    agency_phone: Optional[str]
-    agency_fare_url: Optional[str]
-    agency_email: Optional[str]
-    model_config = ConfigDict(from_attributes=True)
-
-class GtfsCalendarCreate(BaseModel):
-    service_id: str
-    monday: int
-    tuesday: int
-    wednesday: int
-    thursday: int
-    friday: int
-    saturday: int
-    sunday: int
-    start_date: date
-    end_date: date
-
-class GtfsCalendarUpdate(BaseModel):
-    id: Optional[UUID] = None
-    service_id: Optional[str] = None
-    monday: Optional[int] = None
-    tuesday: Optional[int] = None
-    wednesday: Optional[int] = None
-    thursday: Optional[int] = None
-    friday: Optional[int] = None
-    saturday: Optional[int] = None
-    sunday: Optional[int] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-
-class GtfsCalendarRead(BaseModel):
-    id: UUID
-    service_id: str
-    monday: int
-    tuesday: int
-    wednesday: int
-    thursday: int
-    friday: int
-    saturday: int
-    sunday: int
-    start_date: date
-    end_date: date
-    model_config = ConfigDict(from_attributes=True)
-
-class ShiftsStructuresCreate(BaseModel):
-    trip_id: UUID
-    shift_id: UUID
-    sequence_number: int
-
-class ShiftsStructuresUpdate(BaseModel):
-    id: Optional[UUID] = None
-    trip_id: Optional[UUID] = None
-    shift_id: Optional[UUID] = None
-    sequence_number: Optional[int] = None
-
-class ShiftsStructuresRead(BaseModel):
-    id: UUID
-    trip_id: UUID
-    shift_id: UUID
-    sequence_number: int
     model_config = ConfigDict(from_attributes=True)

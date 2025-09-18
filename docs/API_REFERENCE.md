@@ -135,9 +135,9 @@ curl -H 'Authorization: Bearer $TOKEN' \
   http://127.0.0.1:8000/api/v1/gtfs-trips/by-route/<route_uuid>
 ```
 
-### 5.2 Create Depot Trip
+### 5.2 Create Auxiliary Trip (Depot or Transfer)
 ```
-POST /api/v1/gtfs/depot-trip
+POST /api/v1/gtfs/aux-trip
 ```
 Body:
 ```json
@@ -146,13 +146,16 @@ Body:
   "arrival_stop_id": "<uuid>",
   "departure_time": "HH:MM:SS",
   "arrival_time": "HH:MM:SS",
-  "route_id": "<uuid>"
+  "route_id": "<uuid>",
+  "status": "depot | transfer | service | school | other",
+  "calendar_service_key": "auxiliary" // optional override
 }
 ```
 Behavior:
 - Computes OSRM route geometry between the two stops
 - Uses SwissTopo to compute elevation profile and stores parquet in MinIO bucket `elevation-profiles` as `{shape_id}.parquet`
-- Creates a new trip with `status=depot`, `gtfs_service_id=depot`, and `service_id` referencing the `gtfs_calendar` row where `service_id='depot'`
+- Looks up `gtfs_calendar.service_id` using `calendar_service_key` (default `auxiliary`)
+- Creates a new trip with `status` set from the request, `gtfs_service_id` set to the calendar key, and `trip_id`/`shape_id` prefixed by the status
 - Inserts two stop_times: departure (seq 1) and arrival (seq 2)
 Returns the created trip (`GtfsTripsRead`).
 
