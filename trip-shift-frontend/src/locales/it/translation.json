@@ -28,6 +28,11 @@
     "loggedIn": "Accesso eseguito. Token {{token}}",
     "loginFailed": "Accesso non riuscito: {{error}}",
     "provideCredentials": "Inserisci email e password oppure incolla un token",
+    "userInfoTitle": "Utente",
+    "userName": "Nome",
+    "userEmail": "Email",
+    "agencyName": "Agenzia",
+    "userRole": "Ruolo",
     "errors": {
       "noToken": "Nessun access_token nella risposta"
     }
@@ -64,7 +69,8 @@
     "perPage": "Per pagina",
     "pageStatus": "Pagina {{current}} / {{total}}",
     "noTripsLoaded": "Nessuna corsa caricata. Accedi e seleziona agenzia, linea e giorno per caricare automaticamente le corse.",
-    "noMatches": "Nessuna corsa corrisponde ai filtri. Prova ad attivare \"{{filterLabel}}\" o cancella la ricerca."
+    "noMatches": "Nessuna corsa corrisponde ai filtri. Prova ad attivare \"{{filterLabel}}\" o cancella la ricerca.",
+    "leaveDepotOverlay": "Le corse sono disabilitate finché non imposti 'Partenza dal deposito'."
   },
   "shift": {
     "title": "Pianificazione turno",

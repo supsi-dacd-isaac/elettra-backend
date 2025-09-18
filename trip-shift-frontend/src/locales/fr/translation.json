@@ -28,6 +28,11 @@
     "loggedIn": "Connecté. Jeton {{token}}",
     "loginFailed": "Échec de la connexion : {{error}}",
     "provideCredentials": "Saisissez e-mail et mot de passe ou collez un jeton",
+    "userInfoTitle": "Utilisateur",
+    "userName": "Nom",
+    "userEmail": "E-mail",
+    "agencyName": "Agence",
+    "userRole": "Rôle",
     "errors": {
       "noToken": "Aucun access_token dans la réponse"
     }
@@ -64,7 +69,8 @@
     "perPage": "Par page",
     "pageStatus": "Page {{current}} / {{total}}",
     "noTripsLoaded": "Aucune course chargée. Connectez-vous et sélectionnez agence, ligne et jour pour charger automatiquement les courses.",
-    "noMatches": "Aucune course ne correspond aux filtres. Essayez d'activer \"{{filterLabel}}\" ou de vider la recherche."
+    "noMatches": "Aucune course ne correspond aux filtres. Essayez d'activer \"{{filterLabel}}\" ou de vider la recherche.",
+    "leaveDepotOverlay": "Les courses sont désactivées tant que 'Sortie du dépôt' n'est pas défini."
   },
   "shift": {
     "title": "Planification de service",

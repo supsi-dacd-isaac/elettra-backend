@@ -28,6 +28,11 @@
     "loggedIn": "Logged in. Token {{token}}",
     "loginFailed": "Login failed: {{error}}",
     "provideCredentials": "Provide email and password or paste a token",
+    "userInfoTitle": "User",
+    "userName": "Name",
+    "userEmail": "Email",
+    "agencyName": "Agency",
+    "userRole": "Role",
     "errors": {
       "noToken": "No access_token in response"
     }
@@ -64,7 +69,8 @@
     "perPage": "Per page",
     "pageStatus": "Page {{current}} / {{total}}",
     "noTripsLoaded": "No trips loaded yet. Login and select an agency, route, and day to automatically load trips.",
-    "noMatches": "No trips match the current filters. Try enabling \"{{filterLabel}}\" or clearing the search."
+    "noMatches": "No trips match the current filters. Try enabling \"{{filterLabel}}\" or clearing the search.",
+    "leaveDepotOverlay": "Trips are disabled until you set 'Leave depot'."
   },
   "shift": {
     "title": "Shift Planning",

@@ -49,6 +49,15 @@ type Agency = {
   agency_name: string;
 };
 
+type CurrentUser = {
+  id: string;
+  company_id?: string;
+  email: string;
+  full_name: string;
+  role: string;
+  created_at?: string;
+};
+
 type RouteRead = {
   id: string; // database UUID for route
   route_id: string; // GTFS route_id
@@ -269,9 +278,10 @@ export default function TripShiftPlanner() {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [token, setToken] = useState<string>(ENV_TOKEN);
-  const [authInfo, setAuthInfo] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [mode, setMode] = useState<"planner" | "createDepot">("planner");
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [currentAgencyName, setCurrentAgencyName] = useState<string>("");
 
   useEffect(() => {
     const handleLanguageChange = (lng: string) => {
@@ -311,6 +321,56 @@ export default function TripShiftPlanner() {
       }
     } catch {}
   }, [token]);
+
+  // Load current user and agency name whenever token changes
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMeAndAgency() {
+      if (!token || !effectiveBaseUrl) {
+        setCurrentUser(null);
+        setCurrentAgencyName("");
+        return;
+      }
+      try {
+        const meRes = await fetch(joinUrl(effectiveBaseUrl, "/auth/me"), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!meRes.ok) throw new Error("me failed");
+        const me: CurrentUser = await meRes.json();
+        if (cancelled) return;
+        setCurrentUser(me);
+        if (me?.company_id) {
+          setAgencyId((prev) => prev || me.company_id!);
+          try {
+            const agRes = await fetch(
+              joinUrl(effectiveBaseUrl, `/api/v1/agency/agencies/${me.company_id}`),
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (cancelled) return;
+            if (agRes.ok) {
+              const agency: Agency = await agRes.json();
+              if (!cancelled) setCurrentAgencyName(agency?.agency_name || "");
+            } else {
+              setCurrentAgencyName("");
+            }
+          } catch {
+            if (!cancelled) setCurrentAgencyName("");
+          }
+        } else {
+          setCurrentAgencyName("");
+        }
+      } catch {
+        if (!cancelled) {
+          setCurrentUser(null);
+          setCurrentAgencyName("");
+        }
+      }
+    }
+    void loadMeAndAgency();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, effectiveBaseUrl]);
   // Export progress state
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportMessage, setExportMessage] = useState<string>("");
@@ -699,7 +759,6 @@ export default function TripShiftPlanner() {
       const tok = data?.access_token;
       if (!tok) throw new Error(t("auth.errors.noToken"));
       setToken(tok);
-      setAuthInfo(t("auth.loggedIn", { token: `${tok.slice(0, 12)}…` }));
       // After successful login, fetch current user
       try {
         const meRes = await fetch(joinUrl(effectiveBaseUrl, "/auth/me"), { headers: { Authorization: `Bearer ${tok}` } });
@@ -728,7 +787,6 @@ export default function TripShiftPlanner() {
 
   function logout() {
     setToken("");
-    setAuthInfo("");
     setEmail("");
     setPassword("");
     try { if (typeof window !== "undefined") window.localStorage.removeItem(LS_TOKEN_KEY); } catch {}
@@ -736,6 +794,8 @@ export default function TripShiftPlanner() {
     setAgencyQuery("");
     setAgencies([]);
     setRoutes([]);
+    setCurrentUser(null);
+    setCurrentAgencyName("");
   }
 
   async function loadByRouteDay() {
@@ -977,9 +1037,12 @@ export default function TripShiftPlanner() {
     <div className="min-h-screen w-full bg-gray-50 text-gray-900">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="mx-auto max-w-7xl px-4 py-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">{t("header.title")}</h1>
-            <p className="text-sm text-gray-600">{t("header.subtitle")}</p>
+          <div className="flex items-center gap-3">
+              <img src="/elettra_icon.svg" alt="Elettra" className="w-12 h-12" />
+            <div>
+              <h1 className="text-2xl font-semibold">{t("header.title")}</h1>
+              <p className="text-sm text-gray-600">{t("header.subtitle")}</p>
+            </div>
           </div>
 
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
@@ -1023,7 +1086,7 @@ export default function TripShiftPlanner() {
                 </label>
               </div>
               {!onlyValidNext && (
-                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+                <div className="text-xs px-2 py-1 rounded" style={{color: '#3B3C48', backgroundColor: '#f8f9fa', borderColor: '#dee2e6', border: '1px solid'}}>
                   {t("filters.disconnectedHint")}
                 </div>
               )}
@@ -1042,26 +1105,36 @@ export default function TripShiftPlanner() {
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">{t("auth.title")}</h2>
             <div className="space-y-2 text-sm">
-              <div className="w-full px-3 py-2 border rounded-lg text-xs text-gray-600">{t("auth.backendAuto")}</div>
-              <div className="grid grid-cols-2 gap-2">
-                <input className="px-3 py-2 border rounded-lg" placeholder={t("auth.emailPlaceholder")} value={email} onChange={(e) => setEmail(e.target.value)} />
-                <input className="px-3 py-2 border rounded-lg" type="password" placeholder={t("auth.passwordPlaceholder")} value={password} onChange={(e) => setPassword(e.target.value)} />
-              </div>
+              {!token ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <input className="px-3 py-2 border rounded-lg" placeholder={t("auth.emailPlaceholder")} value={email} onChange={(e) => setEmail(e.target.value)} />
+                  <input className="px-3 py-2 border rounded-lg" type="password" placeholder={t("auth.passwordPlaceholder")} value={password} onChange={(e) => setPassword(e.target.value)} />
+                </div>
+              ) : (
+                <div className="p-2 rounded-lg border bg-gray-50">
+                  <div className="text-sm font-medium mb-1">{t("auth.userInfoTitle")}</div>
+                  <div className="text-xs text-gray-700">
+                    <div><span className="font-semibold">{t("auth.userName")}:</span> {currentUser?.full_name || "—"}</div>
+                    <div><span className="font-semibold">{t("auth.userEmail")}:</span> {currentUser?.email || "—"}</div>
+                    <div><span className="font-semibold">{t("auth.agencyName")}:</span> {currentAgencyName || "—"}</div>
+                    <div><span className="font-semibold">{t("auth.userRole")}:</span> {currentUser?.role || "—"}</div>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-2">
                 {token ? (
-                  <button onClick={logout} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>{t("auth.logout")}</button>
+                  <button onClick={logout} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} disabled={loading}>{t("auth.logout")}</button>
                 ) : (
-                  <button onClick={login} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>{t(loading ? "auth.loggingIn" : "auth.login")}</button>
+                  <button onClick={login} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} disabled={loading}>{t(loading ? "auth.loggingIn" : "auth.login")}</button>
                 )}
               </div>
-              {authInfo && <div className="text-xs text-gray-600">{authInfo}</div>}
             </div>
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">{t("shift.title")}</h2>
             {depotsNotice && (
-              <div className="mb-2 text-xs px-3 py-2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+              <div className="mb-2 text-xs px-3 py-2 rounded" style={{backgroundColor: '#f0f9ff', color: '#74C244', borderColor: '#74C244', border: '1px solid'}}>
                 {depotsNotice}
               </div>
             )}
@@ -1071,8 +1144,8 @@ export default function TripShiftPlanner() {
                 <div className="text-sm font-medium mb-2">{t("shift.depotFlow")}</div>
                 <div className="flex items-center gap-2">
                   <button
-                    className="px-3 py-2 rounded-lg text-white text-sm disabled:opacity-50"
-                    style={{ backgroundColor: leaveDepotInfo ? "#6b7280" : "#2563eb" }}
+                    className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                    style={{backgroundColor: '#002AA7'}}
                     disabled={!token || !agencyId || !(routeDbId || routeId) || !hasLoadedForRouteDay}
                     onClick={() => {
                       setModalError("");
@@ -1085,8 +1158,8 @@ export default function TripShiftPlanner() {
                     {leaveDepotInfo ? t("shift.leaveDepotSet") : t("shift.leaveDepot")}
                   </button>
                   <button
-                    className="px-3 py-2 rounded-lg text-white text-sm disabled:opacity-50"
-                    style={{ backgroundColor: returnDepotInfo ? "#6b7280" : "#059669" }}
+                    className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                    style={{ backgroundColor: returnDepotInfo ? "#6b7280" : "#74C244" }}
                     disabled={!token || !agencyId || !(routeDbId || routeId) || !leaveDepotInfo || selectedIds.length === 0}
                     onClick={() => {
                       setModalError("");
@@ -1163,8 +1236,9 @@ export default function TripShiftPlanner() {
                           key={a.id}
                           className={
                             "px-3 py-2 cursor-pointer text-sm " +
-                            (idx === agencyHighlight ? "bg-blue-600 text-white" : "hover:bg-gray-100")
+                            (idx === agencyHighlight ? "text-white" : "hover:bg-gray-100")
                           }
+                          style={idx === agencyHighlight ? {backgroundColor: '#002AA7'} : {}}
                           onMouseEnter={() => setAgencyHighlight(idx)}
                           onMouseDown={(e) => {
                             e.preventDefault();
@@ -1209,7 +1283,8 @@ export default function TripShiftPlanner() {
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">{t("depots.title")}</h2>
             <button
-              className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 w-full disabled:opacity-50"
+              className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 w-full disabled:opacity-50"
+              style={{backgroundColor: '#002AA7'}}
               disabled={!token || !agencyId}
               onClick={() => setMode("createDepot")}
               title={!token ? t("depots.loginFirst") : !agencyId ? t("depots.selectAgencyFirst") : t("depots.createNewHint")}
@@ -1247,7 +1322,8 @@ export default function TripShiftPlanner() {
                             </div>
                             <div className="flex gap-2">
                               <button
-                                className="px-2 py-1 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700"
+                                className="px-2 py-1 rounded text-white text-sm hover:opacity-90"
+                                style={{backgroundColor: '#74C244'}}
                                 onClick={async () => {
                                   if (!effectiveBaseUrl || !token) return;
                                   try {
@@ -1284,7 +1360,7 @@ export default function TripShiftPlanner() {
                               <div className="text-xs text-gray-500">{typeof d.latitude === "number" && typeof d.longitude === "number" ? `${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}` : ""}</div>
                             </div>
                             <div className="flex gap-2">
-                              <button className="px-2 py-1 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" onClick={() => { setEditingDepotId(d.id); setEditing({}); }}>{t("common.edit")}</button>
+                              <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} onClick={() => { setEditingDepotId(d.id); setEditing({}); }}>{t("common.edit")}</button>
                               <button
                                 className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700"
                                 onClick={async () => {
@@ -1339,7 +1415,7 @@ export default function TripShiftPlanner() {
             <h2 className="text-lg font-medium mb-3">{t("selfTests.title")}</h2>
             <ul className="text-xs space-y-1">
               {tests.map((t, i) => (
-                <li key={i} className={t.pass ? "text-emerald-700" : "text-red-700"}>
+                <li key={i} style={{color: '#000'}}>
                   {t.pass ? "✔" : "✘"} {t.name}{t.msg ? ` — ${t.msg}` : ""}
                 </li>
               ))}
@@ -1350,7 +1426,7 @@ export default function TripShiftPlanner() {
         {mode === "planner" ? (
           <>
             {/* Middle: Available trips */}
-            <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
+            <section className="relative lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
               <div className="flex items-baseline justify-between mb-3">
                 <h2 className="text-lg font-medium">{t("available.title")}</h2>
                 <span className="text-sm text-gray-600">
@@ -1398,6 +1474,14 @@ export default function TripShiftPlanner() {
                 </div>
               </div>
 
+              {/* Overlay hint when trips are loaded but Leave depot not set */}
+              {rawTrips.length > 0 && !leaveDepotInfo && (
+                <div className="absolute inset-0 z-10 flex items-start justify-center pointer-events-none">
+                  <div className="mt-12 px-4 py-2 rounded-lg text-sm shadow" style={{color: '#3B3C48', backgroundColor: '#f8f9fa', borderColor: '#dee2e6', border: '1px solid'}}>
+                    {t("available.leaveDepotOverlay")}
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-1 overflow-auto pr-1">
                 {rawTrips.length > 0 && pagedNextCandidates.map((trip) => (
                   <TripCard
@@ -1498,7 +1582,7 @@ export default function TripShiftPlanner() {
                   </ol>
                 )}
                 {returnDepotInfo && (
-                  <div className="p-3 border rounded-xl bg-emerald-50">
+                  <div className="p-3 border rounded-xl" style={{backgroundColor: '#f0f9ff', borderColor: '#74C244'}}>
                     <div className="flex items-center justify-between">
                       <div className="font-medium">{t("selected.depotReturnTitle")}</div>
                       <div className="text-xs text-gray-600">{t("selected.timeLabel", { time: returnDepotInfo.timeHHMM })}</div>
@@ -1523,7 +1607,8 @@ export default function TripShiftPlanner() {
                 return (
                   <button
                     onClick={handleExport}
-                    className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                    className="px-3 py-2 rounded-lg text-white hover:opacity-90 disabled:opacity-50"
+                    style={{backgroundColor: '#74C244'}}
                     disabled={!canExport}
                     title={!hasCore ? t("selected.exportHintIncomplete") : (!retOk ? t("selected.exportHintReturn") : "")}
                   >
@@ -1580,7 +1665,8 @@ export default function TripShiftPlanner() {
             <div className="mt-3 flex justify-end gap-2">
               <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowDepotDialog(null)}>{t("common.cancel")}</button>
               <button
-                className="px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm disabled:opacity-50"
+                className="px-3 py-2 rounded text-white text-sm hover:opacity-90 disabled:opacity-50"
+                style={{backgroundColor: '#002AA7'}}
                 disabled={!modalDepotId || !/^\d{1,2}:\d{2}$/.test(modalTime)}
                 onClick={() => {
                   setModalError("");
@@ -1641,7 +1727,8 @@ export default function TripShiftPlanner() {
             <div className="mt-3 flex justify-end gap-2">
               <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowTransferDialog(null)}>{t("common.cancel")}</button>
               <button
-                className="px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm disabled:opacity-50"
+                className="px-3 py-2 rounded text-white text-sm hover:opacity-90 disabled:opacity-50"
+                style={{backgroundColor: '#002AA7'}}
                 disabled={!/^\d{1,2}:\d{2}$/.test(transferDepHHMM) || !/^\d{1,2}:\d{2}$/.test(transferArrHHMM)}
                 onClick={() => {
                   setTransferModalError("");
@@ -2074,7 +2161,7 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
       </div>
       {error && <div className="text-sm text-red-600">{error}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} disabled={loading || !token || !agencyId || !name.trim()} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50">
+        <button onClick={submit} disabled={loading || !token || !agencyId || !name.trim()} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#74C244'}}>
           {loading ? t("createDepot.creating") : t("createDepot.create")}
         </button>
         <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">{t("common.cancel")}</button>

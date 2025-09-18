@@ -28,6 +28,11 @@
     "loggedIn": "Angemeldet. Token {{token}}",
     "loginFailed": "Anmeldung fehlgeschlagen: {{error}}",
     "provideCredentials": "E-Mail und Passwort eingeben oder ein Token einfügen",
+    "userInfoTitle": "Benutzer",
+    "userName": "Name",
+    "userEmail": "E-Mail",
+    "agencyName": "Agentur",
+    "userRole": "Rolle",
     "errors": {
       "noToken": "Kein access_token in der Antwort"
     }
@@ -64,7 +69,8 @@
     "perPage": "Pro Seite",
     "pageStatus": "Seite {{current}} / {{total}}",
     "noTripsLoaded": "Noch keine Fahrten geladen. Melden Sie sich an und wählen Sie Agentur, Linie und Tag, um Fahrten automatisch zu laden.",
-    "noMatches": "Keine Fahrten entsprechen den Filtern. Aktivieren Sie \"{{filterLabel}}\" oder löschen Sie die Suche."
+    "noMatches": "Keine Fahrten entsprechen den Filtern. Aktivieren Sie \"{{filterLabel}}\" oder löschen Sie die Suche.",
+    "leaveDepotOverlay": "Fahrten sind deaktiviert, bis Sie 'Ausfahrt aus dem Depot' setzen."
   },
   "shift": {
     "title": "Schichtplanung",
