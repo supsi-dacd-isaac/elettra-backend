@@ -44,12 +44,16 @@ services:
       args:
         VITE_TEST_LOGIN_EMAIL: ${VITE_TEST_LOGIN_EMAIL:-}
         VITE_TEST_LOGIN_PASSWORD: ${VITE_TEST_LOGIN_PASSWORD:-}
+        VITE_AUTO_LOGIN: ${VITE_AUTO_LOGIN:-true}
     ports:
       - "55557:80"
     environment:
       - VITE_API_BASE_URL=${API_BASE_URL:-http://elettra-api:8000}
       - VITE_TEST_ROUTE_ID=${TEST_ROUTE_ID:-55f151ad-63f8-40dc-85e7-330becb51c75}
       - VITE_DAY=${TEST_DAY:-monday}
+      - VITE_TEST_LOGIN_EMAIL=${VITE_TEST_LOGIN_EMAIL:-}
+      - VITE_TEST_LOGIN_PASSWORD=${VITE_TEST_LOGIN_PASSWORD:-}
+      - VITE_AUTO_LOGIN=${VITE_AUTO_LOGIN:-true}
       # - VITE_API_TOKEN=${TEST_API_TOKEN}
     depends_on:
       - app

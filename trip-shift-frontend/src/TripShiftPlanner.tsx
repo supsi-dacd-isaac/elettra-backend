@@ -228,6 +228,7 @@ const ENV_ROUTE_ID: string = VITE.VITE_TEST_ROUTE_ID || "";
 const ENV_DAY: string = VITE.VITE_DAY || "monday";
 const ENV_LOGIN_EMAIL: string = VITE.VITE_TEST_LOGIN_EMAIL || VITE.TEST_LOGIN_EMAIL || "";
 const ENV_LOGIN_PASSWORD: string = VITE.VITE_TEST_LOGIN_PASSWORD || VITE.TEST_LOGIN_PASSWORD || "";
+const ENV_AUTO_LOGIN: boolean = VITE.VITE_AUTO_LOGIN === "true" || VITE.VITE_AUTO_LOGIN === true;
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
 
@@ -651,6 +652,17 @@ export default function TripShiftPlanner() {
       if (!tok) throw new Error("No access_token in response");
       setToken(tok);
       setAuthInfo(`Logged in. Token ${tok.slice(0, 12)}…`);
+      // After successful login, fetch current user
+      try {
+        const meRes = await fetch(joinUrl(effectiveBaseUrl, "/auth/me"), { headers: { Authorization: `Bearer ${tok}` } });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          // If user has a company_id and no agency selected yet, preselect it
+          if (me?.company_id && !agencyId) {
+            setAgencyId(me.company_id);
+          }
+        }
+      } catch {}
     } catch (e: any) {
       alert(`Login failed: ${e?.message || e}`);
     } finally {
@@ -765,9 +777,25 @@ export default function TripShiftPlanner() {
     }
   }, [token, effectiveBaseUrl]);
 
-  // Attempt auto-login on first load using env credentials
+  // When token is set (pasted or from env), fetch current user and preselect agency
   useEffect(() => {
-    if (!token && ENV_LOGIN_EMAIL && ENV_LOGIN_PASSWORD && effectiveBaseUrl) {
+    (async () => {
+      if (!effectiveBaseUrl || !token) return;
+      try {
+        const meRes = await fetch(joinUrl(effectiveBaseUrl, "/auth/me"), { headers: { Authorization: `Bearer ${token}` } });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (me?.company_id && !agencyId) {
+            setAgencyId(me.company_id);
+          }
+        }
+      } catch {}
+    })();
+  }, [token, effectiveBaseUrl]);
+
+  // Attempt auto-login on first load using env credentials (if enabled)
+  useEffect(() => {
+    if (!token && ENV_AUTO_LOGIN && ENV_LOGIN_EMAIL && ENV_LOGIN_PASSWORD && effectiveBaseUrl) {
       setEmail(ENV_LOGIN_EMAIL);
       setPassword(ENV_LOGIN_PASSWORD);
       performLogin(ENV_LOGIN_EMAIL, ENV_LOGIN_PASSWORD);
@@ -829,7 +857,7 @@ export default function TripShiftPlanner() {
     if (!agencyId) return; // do not overwrite user typing when nothing selected
     const sel = agencies.find((x) => x.id === agencyId);
     if (sel) setAgencyQuery(agencyLabel(sel));
-  }, [agencyId]);
+  }, [agencyId, agencies]);
 
   async function ensureStopsForTrip(tripDbId: string) {
     if (!tripDbId) return;
