@@ -697,10 +697,6 @@ export default function TripShiftPlanner() {
       alert("Base URL required");
       return;
     }
-    if (token) {
-      setAuthInfo(`Using pasted token (${token.slice(0, 8)}… )`);
-      return;
-    }
     await performLogin(email, password);
   }
 
@@ -1013,9 +1009,8 @@ export default function TripShiftPlanner() {
                 <input className="px-3 py-2 border rounded-lg" type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
               </div>
               <div className="flex gap-2">
-                <input className="flex-1 px-3 py-2 border rounded-lg" placeholder="Paste Bearer token (optional)" value={token} onChange={(e) => setToken(e.target.value)} />
                 {token ? (
-                  <button onClick={logout} className="px-3 py-2 rounded-lg bg-gray-200 text-gray-900 text-sm hover:bg-gray-300" disabled={loading}>Logout</button>
+                  <button onClick={logout} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>Logout</button>
                 ) : (
                   <button onClick={login} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>Login</button>
                 )}
