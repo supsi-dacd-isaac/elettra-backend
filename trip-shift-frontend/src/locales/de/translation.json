@@ -1,0 +1,229 @@
+{
+  "languageNames": {
+    "en": "Englisch",
+    "it": "Italienisch",
+    "de": "Deutsch",
+    "fr": "Französisch"
+  },
+  "header": {
+    "title": "Trip Shift Planner",
+    "subtitle": "Wählen Sie Fahrten der Reihe nach aus, um einen Busdienstplan zu erstellen. Zeiten unterstützen GTFS-Stunden > 24.",
+    "languageLabel": "Sprache"
+  },
+  "filters": {
+    "title": "Filter",
+    "showDisconnected": "Nicht verbundene Fahrten anzeigen",
+    "hideUsed": "Bereits ausgewählte ausblenden",
+    "disconnectedHint": "Nicht verbundene Fahrten werden angezeigt. Die zeitliche Reihenfolge bleibt dennoch erhalten. Beim Auswählen einer nicht verbundenen Fahrt werden Sie nach Transferzeiten gefragt.",
+    "searchPlaceholder": "Text suchen"
+  },
+  "auth": {
+    "title": "Authentifizierung",
+    "backendAuto": "Backend: automatisch konfiguriert",
+    "emailPlaceholder": "E-Mail",
+    "passwordPlaceholder": "Passwort",
+    "login": "Anmelden",
+    "loggingIn": "Anmeldung läuft...",
+    "logout": "Abmelden",
+    "loggedIn": "Angemeldet. Token {{token}}",
+    "loginFailed": "Anmeldung fehlgeschlagen: {{error}}",
+    "provideCredentials": "E-Mail und Passwort eingeben oder ein Token einfügen",
+    "errors": {
+      "noToken": "Kein access_token in der Antwort"
+    }
+  },
+  "alerts": {
+    "returnDepotSet": "Rückfahrt zum Depot bereits gesetzt. Machen Sie den letzten Schritt rückgängig, um weitere Fahrten hinzuzufügen.",
+    "leaveDepotFirst": "Setzen Sie zuerst 'Ausfahrt aus dem Depot'.",
+    "invalidSequence": "Diese Fahrt entspricht nicht der vorherigen Auswahl (Regeln für Haltestelle und Zeit).",
+    "departBeforeLastArrival": "Diese Fahrt fährt vor der letzten Ankunft ab.",
+    "departBeforeLeave": "Diese Fahrt fährt vor der Depot-Ausfahrt ab.",
+    "loginRequired": "Anmeldung erforderlich.",
+    "setDepotLegs": "Legen Sie vor dem Export die Fahrten vom und zum Depot fest.",
+    "selectRouteFirst": "Wählen Sie zuerst eine Linie im Backend aus und laden Sie die Fahrten.",
+    "selectTrips": "Wählen Sie mindestens eine GTFS-Fahrt zwischen den Depotfahrten.",
+    "returnTimeTooEarly": "Die Rückfahrtszeit muss nach der letzten Ankunft {{time}} liegen.",
+    "missingTransferTimes": "Es fehlen Transferzeiten für eine nicht verbundene Sequenz. Entfernen Sie die Fahrt und fügen Sie sie erneut hinzu, um Zeiten anzugeben."
+  },
+  "common": {
+    "loading": "wird geladen...",
+    "prev": "Zurück",
+    "next": "Weiter",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "close": "Schließen",
+    "back": "Zurück",
+    "baseUrlRequired": "Basis-URL erforderlich"
+  },
+  "available": {
+    "title": "Verfügbare Fahrten",
+    "subtitle": "(nach Abfahrtszeit sortiert)",
+    "showingRange": "Zeige {{from}}–{{to}} von {{total}}",
+    "perPage": "Pro Seite",
+    "pageStatus": "Seite {{current}} / {{total}}",
+    "noTripsLoaded": "Noch keine Fahrten geladen. Melden Sie sich an und wählen Sie Agentur, Linie und Tag, um Fahrten automatisch zu laden.",
+    "noMatches": "Keine Fahrten entsprechen den Filtern. Aktivieren Sie \"{{filterLabel}}\" oder löschen Sie die Suche."
+  },
+  "shift": {
+    "title": "Schichtplanung",
+    "depotFlow": "Depotablauf",
+    "leaveDepot": "Ausfahrt aus dem Depot",
+    "leaveDepotSet": "Ausfahrt aus dem Depot (gesetzt)",
+    "leaveDisabledHint": "Wählen Sie zuerst Linie und Tag, um Fahrten zu laden",
+    "pickDepotAndTime": "Depot und Zeit wählen",
+    "returnDepot": "Rückfahrt zum Depot",
+    "returnDepotSet": "Rückfahrt zum Depot (gesetzt)",
+    "returnDisabledNoLeave": "Setzen Sie zuerst 'Ausfahrt aus dem Depot'",
+    "returnDisabledNoTrips": "Wählen Sie mindestens eine GTFS-Fahrt",
+    "leaveSummary": "Ausfahrt: Depot gesetzt, Zeit {{time}}",
+    "returnSummary": "Rückfahrt: Depot gesetzt, Zeit {{time}}",
+    "selectAgencyPlaceholder": "Agentur auswählen",
+    "loginFirstPlaceholder": "Anmelden oder Token einfügen",
+    "selectRoutePlaceholder": "Linie auswählen",
+    "loadingRoutes": "Linien werden geladen...",
+    "selectAgencyFirst": "Zuerst eine Agentur auswählen"
+  },
+  "depots": {
+    "title": "Depots",
+    "createButton": "Depot erstellen",
+    "loginFirst": "Anmelden oder Token einfügen",
+    "selectAgencyFirst": "Zuerst eine Agentur auswählen",
+    "createNewHint": "Neues Depot erstellen",
+    "authRequired": "Zum Erstellen von Depots anmelden.",
+    "selectAgencyBackend": "Eine Agentur im Backend auswählen.",
+    "listTitle": "Depots für die ausgewählte Agentur",
+    "empty": "Noch keine Depots.",
+    "form": {
+      "namePlaceholder": "Name",
+      "addressPlaceholder": "Adresse",
+      "latitudePlaceholder": "Breitengrad",
+      "longitudePlaceholder": "Längengrad"
+    },
+    "saveFailed": "Speichern fehlgeschlagen: {{error}}",
+    "deleteFailed": "Löschen fehlgeschlagen: {{error}}",
+    "confirmDelete": "Depot \"{{name}}\" löschen?",
+    "created": "Depot erstellt.",
+    "createdWithName": "Depot \"{{name}}\" erstellt."
+  },
+  "depotModal": {
+    "leaveTitle": "Ausfahrt aus dem Depot",
+    "returnTitle": "Rückfahrt zum Depot",
+    "depotLabel": "Depot",
+    "selectDepot": "Depot auswählen",
+    "timeLabel": "Zeit (HH:MM)",
+    "timePlaceholder": "z. B. 08:15 oder 25:10",
+    "invalidTime": "Ungültige Zeit",
+    "returnLater": "Die Rückfahrt muss nach {{time}} liegen"
+  },
+  "transferModal": {
+    "title": "Transfer zwischen Haltestellen",
+    "summary": "Von \"{{from}}\" nach \"{{to}}\"",
+    "departureLabel": "Transfer-Abfahrt (HH:MM)",
+    "departurePlaceholder": "z. B. 05:52",
+    "arrivalLabel": "Transfer-Ankunft (HH:MM)",
+    "arrivalPlaceholder": "z. B. 06:05",
+    "constraints": "Muss gelten: Abfahrt ≥ {{depMin}}, Ankunft ≤ {{arrMax}} und Ankunft ≥ Abfahrt.",
+    "invalidFormat": "Ungültiges Zeitformat",
+    "departureBeforePrev": "Abfahrt liegt vor der vorherigen Ankunft",
+    "arrivalBeforeDep": "Ankunft liegt vor der Abfahrt",
+    "arrivalAfterNext": "Ankunft liegt nach der nächsten Abfahrt"
+  },
+  "tripCard": {
+    "disabledHint": "Verstößt gegen die Auswahlregeln",
+    "addHint": "Zur Schicht hinzufügen",
+    "transferRequired": "Transfer zwischen End- und Starthaltestelle erforderlich",
+    "headsign": "Ziel: {{headsign}}",
+    "routeTrip": "Linie: {{route}} · Fahrt: {{trip}}",
+    "stopsTitle": "Haltestellen (Ank · Abf)",
+    "loadingStops": "Haltestellen werden geladen...",
+    "stopTimes": "Ank {{arrival}} · Abf {{departure}}",
+    "noStops": "Keine Haltestellen gefunden",
+    "mapTitle": "Routenkarte · Höhenprofil",
+    "loadingElevation": "Höhenprofil wird geladen..."
+  },
+  "createDepot": {
+    "title": "Depot erstellen",
+    "form": {
+      "nameLabel": "Name",
+      "namePlaceholder": "Depotname",
+      "searchLabel": "Adresse suchen",
+      "searchPlaceholder": "Mindestens 3 Zeichen eingeben",
+      "addressLabel": "Adresse",
+      "addressPlaceholder": "Straße und Nummer",
+      "latitudeLabel": "Breitengrad",
+      "latitudePlaceholder": "z. B. 46.0037",
+      "longitudeLabel": "Längengrad",
+      "longitudePlaceholder": "z. B. 8.9511"
+    },
+    "mapHelp": "Klicken Sie auf die Karte, um die Depotposition festzulegen. Standardzentrum ist Lugano.",
+    "create": "Erstellen",
+    "creating": "Erstellung läuft...",
+    "errors": {
+      "loginFirst": "Bitte zuerst anmelden",
+      "selectAgency": "Wählen Sie eine Agentur im Backend aus",
+      "nameRequired": "Name ist erforderlich",
+      "latitudeRange": "Breitengrad muss zwischen -90 und 90 liegen",
+      "longitudeRange": "Längengrad muss zwischen -180 und 180 liegen"
+    }
+  },
+  "selected": {
+    "title": "Ausgewählte Schicht",
+    "subtitle": "Klicken Sie links auf eine Fahrt, um sie hier anzufügen",
+    "empty": "Noch keine Auswahl.",
+    "depotDepartureTitle": "Ausfahrt aus dem Depot",
+    "depotReturnTitle": "Rückfahrt zum Depot",
+    "timeLabel": "Zeit {{time}}",
+    "depotDetails": "Depot: {{name}} (ID: {{id}})",
+    "unknownDepot": "Unbekannt",
+    "tripNumber": "#{{index}}",
+    "departure": "Abfahrt: {{time}}",
+    "arrival": "Ankunft: {{time}}",
+    "routeDetails": "Linie: {{route}} (ID: {{id}}) · Fahrt: {{trip}} · Ziel: {{headsign}}",
+    "undo": "Letzte rückgängig",
+    "reset": "Zurücksetzen",
+    "export": "Auswahl exportieren",
+    "exporting": "Export wird ausgeführt...",
+    "exportHintIncomplete": "Depotfahrten festlegen und Fahrten auswählen",
+    "exportHintReturn": "Rückfahrtszeit muss nach der letzten Ankunft liegen"
+  },
+  "summary": {
+    "title": "Auswahlübersicht",
+    "tripsLoaded": "Geladene Fahrten:",
+    "selected": "Ausgewählt:",
+    "nextCandidates": "Nächste Kandidaten:",
+    "lastArrival": "Letzte Ankunft:",
+    "atStop": "an {{stop}}"
+  },
+  "selfTests": {
+    "title": "Selbsttest",
+    "parse": "Parsing 25:13:00",
+    "parseMsg": "Ergebnis {{value}}",
+    "validNext": "Gültige Folgefahrt B nach A->B",
+    "invalidNext": "Ungültige Folgefahrt mit anderer Haltestelle"
+  },
+  "export": {
+    "preparing": "Export wird vorbereitet...",
+    "fetchingStops": "Haltestellen für Randfahrten werden geladen...",
+    "creatingTransfer": "Transferfahrt wird erstellt...",
+    "creatingDeparture": "Depotfahrt (Depot → erste Haltestelle) wird erstellt...",
+    "creatingReturn": "Depotfahrt (letzte Haltestelle → Depot) wird erstellt...",
+    "preparingDownload": "Download wird vorbereitet...",
+    "failed": "Export fehlgeschlagen: {{error}}",
+    "errors": {
+      "tripHasNoStops": "Fahrt hat keine Haltestellen",
+      "departDepotMissing": "Ausgewähltes Abfahrtsdepot hat keine stop_id",
+      "returnDepotMissing": "Ausgewähltes Rückfahrtsdepot hat keine stop_id"
+    }
+  },
+  "days": {
+    "monday": "Montag",
+    "tuesday": "Dienstag",
+    "wednesday": "Mittwoch",
+    "thursday": "Donnerstag",
+    "friday": "Freitag",
+    "saturday": "Samstag",
+    "sunday": "Sonntag"
+  }
+}

@@ -1,0 +1,229 @@
+{
+  "languageNames": {
+    "en": "English",
+    "it": "Italiano",
+    "de": "Deutsch",
+    "fr": "Français"
+  },
+  "header": {
+    "title": "Trip Shift Planner",
+    "subtitle": "Select trips sequentially to build a bus shift. Times support GTFS hours > 24.",
+    "languageLabel": "Language"
+  },
+  "filters": {
+    "title": "Filters",
+    "showDisconnected": "Show non connected trips",
+    "hideUsed": "Hide already selected",
+    "disconnectedHint": "Non-connecting trips are shown. Time order is still enforced. You'll be asked transfer times when selecting a non-connected trip.",
+    "searchPlaceholder": "Search text"
+  },
+  "auth": {
+    "title": "Authentication",
+    "backendAuto": "Backend: auto-configured",
+    "emailPlaceholder": "Email",
+    "passwordPlaceholder": "Password",
+    "login": "Login",
+    "loggingIn": "Logging in...",
+    "logout": "Logout",
+    "loggedIn": "Logged in. Token {{token}}",
+    "loginFailed": "Login failed: {{error}}",
+    "provideCredentials": "Provide email and password or paste a token",
+    "errors": {
+      "noToken": "No access_token in response"
+    }
+  },
+  "alerts": {
+    "returnDepotSet": "Return to depot already set. Undo it to add more trips.",
+    "leaveDepotFirst": "Set 'Leave depot' first.",
+    "invalidSequence": "This trip doesn't follow the last selection (stop and time rules).",
+    "departBeforeLastArrival": "This trip departs before the last arrival time.",
+    "departBeforeLeave": "This trip departs before the leave depot time.",
+    "loginRequired": "Login required.",
+    "setDepotLegs": "Please set Leave depot and Return to depot before exporting.",
+    "selectRouteFirst": "Select a route in the Backend panel and load trips.",
+    "selectTrips": "Select at least one GTFS trip between depot legs.",
+    "returnTimeTooEarly": "Return time must be later than last trip arrival {{time}}.",
+    "missingTransferTimes": "Missing transfer times for a non-connected sequence. Please remove and re-add the trip to provide times."
+  },
+  "common": {
+    "loading": "loading...",
+    "prev": "Prev",
+    "next": "Next",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "back": "Back",
+    "baseUrlRequired": "Base URL required"
+  },
+  "available": {
+    "title": "Available trips",
+    "subtitle": "(sorted by departure time)",
+    "showingRange": "Showing {{from}}–{{to}} of {{total}}",
+    "perPage": "Per page",
+    "pageStatus": "Page {{current}} / {{total}}",
+    "noTripsLoaded": "No trips loaded yet. Login and select an agency, route, and day to automatically load trips.",
+    "noMatches": "No trips match the current filters. Try enabling \"{{filterLabel}}\" or clearing the search."
+  },
+  "shift": {
+    "title": "Shift Planning",
+    "depotFlow": "Depot flow",
+    "leaveDepot": "Leave depot",
+    "leaveDepotSet": "Leave depot (set)",
+    "leaveDisabledHint": "Select route and day to load trips first",
+    "pickDepotAndTime": "Pick depot and time",
+    "returnDepot": "Return to depot",
+    "returnDepotSet": "Return to depot (set)",
+    "returnDisabledNoLeave": "Set 'Leave depot' first",
+    "returnDisabledNoTrips": "Select at least one GTFS trip",
+    "leaveSummary": "Leave: depot set, time {{time}}",
+    "returnSummary": "Return: depot set, time {{time}}",
+    "selectAgencyPlaceholder": "Select agency",
+    "loginFirstPlaceholder": "Login or paste token first",
+    "selectRoutePlaceholder": "Select route",
+    "loadingRoutes": "Loading routes...",
+    "selectAgencyFirst": "Select agency first"
+  },
+  "depots": {
+    "title": "Depots",
+    "createButton": "Create depot",
+    "loginFirst": "Login or paste token first",
+    "selectAgencyFirst": "Select an agency first",
+    "createNewHint": "Create a new depot",
+    "authRequired": "Authenticate to enable depot creation.",
+    "selectAgencyBackend": "Select an agency in the Backend panel.",
+    "listTitle": "Depots for selected agency",
+    "empty": "No depots yet.",
+    "form": {
+      "namePlaceholder": "Name",
+      "addressPlaceholder": "Address",
+      "latitudePlaceholder": "Latitude",
+      "longitudePlaceholder": "Longitude"
+    },
+    "saveFailed": "Save failed: {{error}}",
+    "deleteFailed": "Delete failed: {{error}}",
+    "confirmDelete": "Delete depot \"{{name}}\"?",
+    "created": "Depot created.",
+    "createdWithName": "Depot \"{{name}}\" created."
+  },
+  "depotModal": {
+    "leaveTitle": "Leave depot",
+    "returnTitle": "Return to depot",
+    "depotLabel": "Depot",
+    "selectDepot": "Select a depot",
+    "timeLabel": "Time (HH:MM)",
+    "timePlaceholder": "e.g. 08:15 or 25:10",
+    "invalidTime": "Invalid time",
+    "returnLater": "Return must be later than {{time}}"
+  },
+  "transferModal": {
+    "title": "Transfer between stops",
+    "summary": "From \"{{from}}\" to \"{{to}}\"",
+    "departureLabel": "Departure time (HH:MM)",
+    "departurePlaceholder": "e.g. 05:52",
+    "arrivalLabel": "Arrival time (HH:MM)",
+    "arrivalPlaceholder": "e.g. 06:05",
+    "constraints": "Must satisfy: dep ≥ {{depMin}}, arr ≤ {{arrMax}}, and arr ≥ dep.",
+    "invalidFormat": "Invalid time format",
+    "departureBeforePrev": "Departure earlier than previous arrival",
+    "arrivalBeforeDep": "Arrival earlier than departure",
+    "arrivalAfterNext": "Arrival later than next departure"
+  },
+  "tripCard": {
+    "disabledHint": "Doesn't follow selection rules",
+    "addHint": "Add to shift",
+    "transferRequired": "Transfer required between end/start stops",
+    "headsign": "Headsign: {{headsign}}",
+    "routeTrip": "Route: {{route}} · Trip: {{trip}}",
+    "stopsTitle": "Stops (Arr · Dep)",
+    "loadingStops": "Loading stops...",
+    "stopTimes": "Arr {{arrival}} · Dep {{departure}}",
+    "noStops": "No stops found",
+    "mapTitle": "Route map · Elevation",
+    "loadingElevation": "Loading elevation..."
+  },
+  "createDepot": {
+    "title": "Create depot",
+    "form": {
+      "nameLabel": "Name",
+      "namePlaceholder": "Depot name",
+      "searchLabel": "Search address",
+      "searchPlaceholder": "Type at least 3 characters",
+      "addressLabel": "Address",
+      "addressPlaceholder": "Street and number",
+      "latitudeLabel": "Latitude",
+      "latitudePlaceholder": "e.g. 46.0037",
+      "longitudeLabel": "Longitude",
+      "longitudePlaceholder": "e.g. 8.9511"
+    },
+    "mapHelp": "Click on the map to set the depot location. Default center is Lugano.",
+    "create": "Create",
+    "creating": "Creating...",
+    "errors": {
+      "loginFirst": "Please login first",
+      "selectAgency": "Select an agency in the Backend panel",
+      "nameRequired": "Name is required",
+      "latitudeRange": "Latitude must be between -90 and 90",
+      "longitudeRange": "Longitude must be between -180 and 180"
+    }
+  },
+  "selected": {
+    "title": "Selected shift",
+    "subtitle": "Click a trip on the left to append here",
+    "empty": "Nothing selected yet.",
+    "depotDepartureTitle": "Depot departure",
+    "depotReturnTitle": "Depot return",
+    "timeLabel": "time {{time}}",
+    "depotDetails": "Depot: {{name}} (id: {{id}})",
+    "unknownDepot": "Unknown",
+    "tripNumber": "#{{index}}",
+    "departure": "Dep: {{time}}",
+    "arrival": "Arr: {{time}}",
+    "routeDetails": "Route: {{route}} (id: {{id}}) · Trip: {{trip}} · Headsign: {{headsign}}",
+    "undo": "Undo last",
+    "reset": "Reset",
+    "export": "Export selection",
+    "exporting": "Exporting...",
+    "exportHintIncomplete": "Set depot legs and select trips",
+    "exportHintReturn": "Return time must be later than last trip arrival"
+  },
+  "summary": {
+    "title": "Selection summary",
+    "tripsLoaded": "Trips loaded:",
+    "selected": "Selected:",
+    "nextCandidates": "Next candidates:",
+    "lastArrival": "Last arrival:",
+    "atStop": "at {{stop}}"
+  },
+  "selfTests": {
+    "title": "Self-tests",
+    "parse": "Parse 25:13:00",
+    "parseMsg": "got {{value}}",
+    "validNext": "Valid next B after A->B",
+    "invalidNext": "Invalid next with different stop"
+  },
+  "export": {
+    "preparing": "Preparing export...",
+    "fetchingStops": "Fetching stops for boundary trips...",
+    "creatingTransfer": "Creating transfer leg...",
+    "creatingDeparture": "Creating departure leg (depot → first stop)...",
+    "creatingReturn": "Creating return leg (last stop → depot)...",
+    "preparingDownload": "Preparing download...",
+    "failed": "Export failed: {{error}}",
+    "errors": {
+      "tripHasNoStops": "Trip has no stops",
+      "departDepotMissing": "Selected departure depot has no stop_id",
+      "returnDepotMissing": "Selected return depot has no stop_id"
+    }
+  },
+  "days": {
+    "monday": "Monday",
+    "tuesday": "Tuesday",
+    "wednesday": "Wednesday",
+    "thursday": "Thursday",
+    "friday": "Friday",
+    "saturday": "Saturday",
+    "sunday": "Sunday"
+  }
+}

@@ -1,6 +1,9 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { MapContainer, TileLayer, Polyline, useMap, Marker } from "react-leaflet";
 import * as L from "leaflet";
+import { useTranslation } from "react-i18next";
+
+import { SUPPORTED_LANGUAGES, setAppLanguage, type SupportedLanguage } from "./i18n";
 
 /**
  * Trip Shift Planner — single‑file React demo (TypeScript + Tailwind)
@@ -234,6 +237,12 @@ const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sun
 
 // ---------- Main Component ----------
 export default function TripShiftPlanner() {
+  const { t, i18n } = useTranslation();
+  const [language, setLanguage] = useState<SupportedLanguage>(() => {
+    const current = i18n.language as SupportedLanguage;
+    return SUPPORTED_LANGUAGES.includes(current) ? current : "en";
+  });
+
   const [rawTrips, setRawTrips] = useState<Trip[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [onlyValidNext, setOnlyValidNext] = useState<boolean>(true);
@@ -263,6 +272,23 @@ export default function TripShiftPlanner() {
   const [authInfo, setAuthInfo] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [mode, setMode] = useState<"planner" | "createDepot">("planner");
+
+  useEffect(() => {
+    const handleLanguageChange = (lng: string) => {
+      if (SUPPORTED_LANGUAGES.includes(lng as SupportedLanguage)) {
+        setLanguage(lng as SupportedLanguage);
+      }
+    };
+    i18n.on("languageChanged", handleLanguageChange);
+    return () => {
+      i18n.off("languageChanged", handleLanguageChange);
+    };
+  }, [i18n]);
+
+  const handleLanguageSelect = useCallback((lng: SupportedLanguage) => {
+    if (lng === language) return;
+    setAppLanguage(lng);
+  }, [language]);
   // Persist token across reloads
   const LS_TOKEN_KEY = "elettra_jwt";
   useEffect(() => {
@@ -425,46 +451,46 @@ export default function TripShiftPlanner() {
   }, [onlyValidNext, hideUsed, textFilter, lastSelected, pageSize]);
 
   // --- Actions ---
-  function handlePickTrip(t: TripX) {
+  function handlePickTrip(trip: TripX) {
     // Return a click handler (curried); this fixes prior syntax error
     return () => {
       if (returnDepotInfo) {
-        alert("Return to depot already set. Undo it to add more trips.");
+        alert(t("alerts.returnDepotSet"));
         return;
       }
       if (!leaveDepotInfo) {
-        alert("Set 'Leave depot' first");
+        alert(t("alerts.leaveDepotFirst"));
         return;
       }
       if (selectedIds.length > 0) {
         if (onlyValidNext) {
-          if (!computeValidNext(lastSelected, t)) {
-            alert("This trip doesn't follow the last selection (stop and time rules).");
+          if (!computeValidNext(lastSelected, trip)) {
+            alert(t("alerts.invalidSequence"));
             return;
           }
         } else {
-          if (t.departure_sec < (lastSelected?.arrival_sec ?? 0)) {
-            alert("This trip departs before the last arrival time.");
+          if (trip.departure_sec < (lastSelected?.arrival_sec ?? 0)) {
+            alert(t("alerts.departBeforeLastArrival"));
             return;
           }
         }
       } else {
         // first selection must not be before leave depot time
-        if (t.departure_sec < parseHHMMToSec(leaveDepotInfo.timeHHMM)) {
-          alert("This trip departs before the leave depot time.");
+        if (trip.departure_sec < parseHHMMToSec(leaveDepotInfo.timeHHMM)) {
+          alert(t("alerts.departBeforeLeave"));
           return;
         }
       }
       // If non-connected selection (when relaxed mode), open transfer modal to collect times now
-      const needTransfer = !onlyValidNext && !!lastSelected && normalizeStop(t.start_stop_name) !== normalizeStop(lastSelected.end_stop_name);
+      const needTransfer = !onlyValidNext && !!lastSelected && normalizeStop(trip.start_stop_name) !== normalizeStop(lastSelected.end_stop_name);
       if (needTransfer) {
         setTransferModalError("");
         setTransferDepHHMM("");
         setTransferArrHHMM("");
-        setShowTransferDialog({ prev: lastSelected!, next: t });
+        setShowTransferDialog({ prev: lastSelected!, next: trip });
         return;
       }
-      setSelectedIds((prev) => (prev.includes(t.id) ? prev : [...prev, t.id]));
+      setSelectedIds((prev) => (prev.includes(trip.id) ? prev : [...prev, trip.id]));
     };
   }
 
@@ -498,23 +524,23 @@ export default function TripShiftPlanner() {
   function handleExport() {
     (async () => {
       if (!effectiveBaseUrl) {
-        alert("Base URL required");
+        alert(t("common.baseUrlRequired"));
         return;
       }
       if (!token) {
-        alert("Login required");
+        alert(t("alerts.loginRequired"));
         return;
       }
       if (!leaveDepotInfo || !returnDepotInfo) {
-        alert("Please set Leave depot and Return to depot before exporting.");
+        alert(t("alerts.setDepotLegs"));
         return;
       }
       if (!routeDbId && !routeId) {
-        alert("Select a route in Backend panel and load trips");
+        alert(t("alerts.selectRouteFirst"));
         return;
       }
       if (selectedTrips.length === 0) {
-        alert("Select at least one GTFS trip between depot legs.");
+        alert(t("alerts.selectTrips"));
         return;
       }
 
@@ -530,16 +556,16 @@ export default function TripShiftPlanner() {
       };
       const getEdgeStops = async (tripDbId: string): Promise<{ first: TripStop; last: TripStop }> => {
         const stops = await fetchStops(tripDbId);
-        if (!Array.isArray(stops) || stops.length === 0) throw new Error("Trip has no stops");
+        if (!Array.isArray(stops) || stops.length === 0) throw new Error(t("export.errors.tripHasNoStops"));
         return { first: stops[0], last: stops[stops.length - 1] };
       };
 
       try {
         setExporting(true);
-        setExportMessage("Preparing export…");
+        setExportMessage(t("export.preparing"));
         const firstTrip = selectedTrips[0];
         const lastTrip = selectedTrips[selectedTrips.length - 1];
-        setExportMessage("Fetching stops for boundary trips…");
+        setExportMessage(t("export.fetchingStops"));
         const { first: firstStop } = await getEdgeStops(firstTrip.id);
         const { last: lastStop } = await getEdgeStops(lastTrip.id);
         const firstArr = (firstStop.arrival_time || firstStop.departure_time || "00:00:00").slice(0, 8);
@@ -547,7 +573,7 @@ export default function TripShiftPlanner() {
 
         const lastArrSec = lastTrip.arrival_sec;
         if (parseHHMM(returnDepotInfo.timeHHMM) <= lastArrSec) {
-          alert(`Return time must be later than last trip arrival (${formatDayHHMM(lastArrSec)})`);
+          alert(t("alerts.returnTimeTooEarly", { time: formatDayHHMM(lastArrSec) }));
           return;
         }
 
@@ -589,7 +615,7 @@ export default function TripShiftPlanner() {
           const key = `${prev.id}__${curr.id}`;
           const saved = transfersByEdge[key];
           if (!saved) {
-            alert("Missing transfer times for a non-connected sequence. Please remove and re-add the trip to provide times.");
+            alert(t("alerts.missingTransferTimes"));
             setExportMessage(""); setExporting(false); return;
           }
           const transferDep = saved.depHHMM;
@@ -603,12 +629,12 @@ export default function TripShiftPlanner() {
             arrival_time: `${transferArr}:00`,
             route_id: curr.route_id,
             status: "transfer",
-          }, "Creating transfer leg…");
+          }, t("export.creatingTransfer"));
           withTransfers.push(transferTrip);
           withTransfers.push(curr);
         }
         const depDepot = depots.find((d) => d.id === leaveDepotInfo.depotId);
-        if (!depDepot || !depDepot.stop_id) throw new Error("Selected departure depot has no stop_id");
+        if (!depDepot || !depDepot.stop_id) throw new Error(t("export.errors.departDepotMissing"));
         const depTrip = await postDepotTrip({
           departure_stop_id: depDepot.stop_id,
           arrival_stop_id: firstStop.id,
@@ -616,9 +642,9 @@ export default function TripShiftPlanner() {
           arrival_time: firstArr.length === 5 ? `${firstArr}:00` : firstArr,
           route_id: routeUuid,
           status: "depot",
-        }, "Creating departure leg (depot → first stop)…");
+        }, t("export.creatingDeparture"));
         const retDepot = depots.find((d) => d.id === returnDepotInfo.depotId);
-        if (!retDepot || !retDepot.stop_id) throw new Error("Selected return depot has no stop_id");
+        if (!retDepot || !retDepot.stop_id) throw new Error(t("export.errors.returnDepotMissing"));
         const retTrip = await postDepotTrip({
           departure_stop_id: lastStop.id,
           arrival_stop_id: retDepot.stop_id,
@@ -626,9 +652,9 @@ export default function TripShiftPlanner() {
           arrival_time: `${returnDepotInfo.timeHHMM}:00`,
           route_id: routeUuid,
           status: "depot",
-        }, "Creating return leg (last stop → depot)…");
+        }, t("export.creatingReturn"));
 
-        setExportMessage("Preparing download…");
+        setExportMessage(t("export.preparingDownload"));
         const combined = [depTrip, ...withTransfers, retTrip];
         const data = JSON.stringify(combined, null, 2);
         const blob = new Blob([data], { type: "application/json;charset=utf-8" });
@@ -644,7 +670,7 @@ export default function TripShiftPlanner() {
           if (a.parentNode) a.parentNode.removeChild(a);
         }, 1000);
       } catch (e: any) {
-        alert(`Export failed: ${e?.message || e}`);
+        alert(t("export.failed", { error: e?.message || e }));
       } finally {
         setExporting(false);
         setExportMessage("");
@@ -654,11 +680,11 @@ export default function TripShiftPlanner() {
 
   async function performLogin(emailToUse: string, passwordToUse: string) {
     if (!effectiveBaseUrl) {
-      alert("Base URL required");
+      alert(t("common.baseUrlRequired"));
       return;
     }
     if (!emailToUse || !passwordToUse) {
-      alert("Provide email and password or paste a token");
+      alert(t("auth.provideCredentials"));
       return;
     }
     try {
@@ -671,9 +697,9 @@ export default function TripShiftPlanner() {
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data: any = await res.json();
       const tok = data?.access_token;
-      if (!tok) throw new Error("No access_token in response");
+      if (!tok) throw new Error(t("auth.errors.noToken"));
       setToken(tok);
-      setAuthInfo(`Logged in. Token ${tok.slice(0, 12)}…`);
+      setAuthInfo(t("auth.loggedIn", { token: `${tok.slice(0, 12)}…` }));
       // After successful login, fetch current user
       try {
         const meRes = await fetch(joinUrl(effectiveBaseUrl, "/auth/me"), { headers: { Authorization: `Bearer ${tok}` } });
@@ -686,7 +712,7 @@ export default function TripShiftPlanner() {
         }
       } catch {}
     } catch (e: any) {
-      alert(`Login failed: ${e?.message || e}`);
+      alert(t("auth.loginFailed", { error: e?.message || e }));
     } finally {
       setLoading(false);
     }
@@ -694,7 +720,7 @@ export default function TripShiftPlanner() {
 
   async function login() {
     if (!effectiveBaseUrl) {
-      alert("Base URL required");
+      alert(t("common.baseUrlRequired"));
       return;
     }
     await performLogin(email, password);
@@ -921,10 +947,10 @@ export default function TripShiftPlanner() {
   type TestResult = { name: string; pass: boolean; msg?: string };
   const [tests, setTests] = useState<TestResult[]>([]);
   useEffect(() => {
-    const out: TestResult[] = [];
+    const results: TestResult[] = [];
     // 1) GTFS time parsing
-    const t = parseGtfsTimeToSeconds("25:13:00");
-    out.push({ name: "parse 25:13:00", pass: t === (25 * 3600 + 13 * 60), msg: `got ${t}` });
+    const parsed = parseGtfsTimeToSeconds("25:13:00");
+    results.push({ name: t("selfTests.parse"), pass: parsed === (25 * 3600 + 13 * 60), msg: t("selfTests.parseMsg", { value: parsed }) });
     // 2) Valid next rule — same end/start stop and time ordering
     const a: TripX = {
       ...(SAMPLE_TRIPS[0] as Trip),
@@ -940,11 +966,11 @@ export default function TripShiftPlanner() {
       start_stop_name: "B",
       end_stop_name: "C",
     } as TripX;
-    out.push({ name: "valid next B after A->B", pass: computeValidNext(a, b) === true });
+    results.push({ name: t("selfTests.validNext"), pass: computeValidNext(a, b) === true });
     const c: TripX = { ...b, start_stop_name: "X" };
-    out.push({ name: "invalid next different stop", pass: computeValidNext(a, c) === false });
-    setTests(out);
-  }, []);
+    results.push({ name: t("selfTests.invalidNext"), pass: computeValidNext(a, c) === false });
+    setTests(results);
+  }, [t]);
 
   // ---------- UI ----------
   return (
@@ -952,12 +978,25 @@ export default function TripShiftPlanner() {
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="mx-auto max-w-7xl px-4 py-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">Trip Shift Planner</h1>
-            <p className="text-sm text-gray-600">Select trips sequentially to build a bus shift. Times support GTFS hours &gt; 24.</p>
+            <h1 className="text-2xl font-semibold">{t("header.title")}</h1>
+            <p className="text-sm text-gray-600">{t("header.subtitle")}</p>
           </div>
 
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
-            {/* Removed file upload, sample load, and free URL fetch UI */}
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <span className="font-medium text-gray-700">{t("header.languageLabel")}</span>
+              <select
+                className="px-3 py-2 border rounded-lg bg-white text-gray-900"
+                value={language}
+                onChange={(e) => handleLanguageSelect(e.target.value as SupportedLanguage)}
+              >
+                {SUPPORTED_LANGUAGES.map((lng) => (
+                  <option key={lng} value={lng}>
+                    {t(`languageNames.${lng}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         </div>
       </header>
@@ -966,7 +1005,7 @@ export default function TripShiftPlanner() {
         {/* Left: Controls */}
         <section className="lg:col-span-1 space-y-4">
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">Filters</h2>
+            <h2 className="text-lg font-medium mb-3">{t("filters.title")}</h2>
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -975,23 +1014,23 @@ export default function TripShiftPlanner() {
                     checked={!onlyValidNext}
                     onChange={(e) => setOnlyValidNext(!e.target.checked)}
                   />
-                  Show non connected trips
+                  {t("filters.showDisconnected")}
                 </label>
               </div>
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={hideUsed} onChange={(e) => setHideUsed(e.target.checked)} /> Hide already selected
+                  <input type="checkbox" checked={hideUsed} onChange={(e) => setHideUsed(e.target.checked)} /> {t("filters.hideUsed")}
                 </label>
               </div>
               {!onlyValidNext && (
                 <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
-                  Non-connecting trips are shown. Time order is still enforced. You'll be asked transfer times when selecting a non-connected trip.
+                  {t("filters.disconnectedHint")}
                 </div>
               )}
               <div>
                 <input
                   type="text"
-                  placeholder="Search text"
+                  placeholder={t("filters.searchPlaceholder")}
                   value={textFilter}
                   onChange={(e) => setTextFilter(e.target.value)}
                   className="w-full px-3 py-2 border rounded-lg"
@@ -1001,18 +1040,18 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">Authentication</h2>
+            <h2 className="text-lg font-medium mb-3">{t("auth.title")}</h2>
             <div className="space-y-2 text-sm">
-              <div className="w-full px-3 py-2 border rounded-lg text-xs text-gray-600">Backend: auto-configured</div>
+              <div className="w-full px-3 py-2 border rounded-lg text-xs text-gray-600">{t("auth.backendAuto")}</div>
               <div className="grid grid-cols-2 gap-2">
-                <input className="px-3 py-2 border rounded-lg" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-                <input className="px-3 py-2 border rounded-lg" type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+                <input className="px-3 py-2 border rounded-lg" placeholder={t("auth.emailPlaceholder")} value={email} onChange={(e) => setEmail(e.target.value)} />
+                <input className="px-3 py-2 border rounded-lg" type="password" placeholder={t("auth.passwordPlaceholder")} value={password} onChange={(e) => setPassword(e.target.value)} />
               </div>
               <div className="flex gap-2">
                 {token ? (
-                  <button onClick={logout} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>Logout</button>
+                  <button onClick={logout} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>{t("auth.logout")}</button>
                 ) : (
-                  <button onClick={login} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>Login</button>
+                  <button onClick={login} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700" disabled={loading}>{t(loading ? "auth.loggingIn" : "auth.login")}</button>
                 )}
               </div>
               {authInfo && <div className="text-xs text-gray-600">{authInfo}</div>}
@@ -1020,7 +1059,7 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">Shift Planning</h2>
+            <h2 className="text-lg font-medium mb-3">{t("shift.title")}</h2>
             {depotsNotice && (
               <div className="mb-2 text-xs px-3 py-2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
                 {depotsNotice}
@@ -1029,7 +1068,7 @@ export default function TripShiftPlanner() {
             <div className="space-y-2 text-sm">
               {/* Depot flow */}
               <div className="p-2 rounded-lg border">
-                <div className="text-sm font-medium mb-2">Depot flow</div>
+                <div className="text-sm font-medium mb-2">{t("shift.depotFlow")}</div>
                 <div className="flex items-center gap-2">
                   <button
                     className="px-3 py-2 rounded-lg text-white text-sm disabled:opacity-50"
@@ -1041,9 +1080,9 @@ export default function TripShiftPlanner() {
                       setModalTime("");
                       setShowDepotDialog("leave");
                     }}
-                    title={!hasLoadedForRouteDay ? "Select route and day to load trips first" : "Pick depot and time"}
+                    title={!hasLoadedForRouteDay ? t("shift.leaveDisabledHint") : t("shift.pickDepotAndTime")}
                   >
-                    {leaveDepotInfo ? "Leave depot (set)" : "Leave depot"}
+                    {leaveDepotInfo ? t("shift.leaveDepotSet") : t("shift.leaveDepot")}
                   </button>
                   <button
                     className="px-3 py-2 rounded-lg text-white text-sm disabled:opacity-50"
@@ -1055,16 +1094,20 @@ export default function TripShiftPlanner() {
                       setModalTime("");
                       setShowDepotDialog("return");
                     }}
-                    title={!leaveDepotInfo ? "Set 'Leave depot' first" : selectedIds.length === 0 ? "Select at least one GTFS trip" : "Pick depot and time"}
+                    title={!leaveDepotInfo
+                      ? t("shift.returnDisabledNoLeave")
+                      : selectedIds.length === 0
+                      ? t("shift.returnDisabledNoTrips")
+                      : t("shift.pickDepotAndTime")}
                   >
-                    {returnDepotInfo ? "Return to depot (set)" : "Return to depot"}
+                    {returnDepotInfo ? t("shift.returnDepotSet") : t("shift.returnDepot")}
                   </button>
                 </div>
                 {leaveDepotInfo && (
-                  <div className="mt-2 text-xs text-gray-700">Leave: depot set, time {leaveDepotInfo.timeHHMM}</div>
+                  <div className="mt-2 text-xs text-gray-700">{t("shift.leaveSummary", { time: leaveDepotInfo.timeHHMM })}</div>
                 )}
                 {returnDepotInfo && (
-                  <div className="mt-1 text-xs text-gray-700">Return: depot set, time {returnDepotInfo.timeHHMM}</div>
+                  <div className="mt-1 text-xs text-gray-700">{t("shift.returnSummary", { time: returnDepotInfo.timeHHMM })}</div>
                 )}
               </div>
 
@@ -1072,7 +1115,7 @@ export default function TripShiftPlanner() {
                 <div className="relative">
                   <input
                     className="w-full px-3 py-2 border rounded-lg"
-                    placeholder={token ? "Select agency" : "Login or paste token first"}
+                    placeholder={token ? t("shift.selectAgencyPlaceholder") : t("shift.loginFirstPlaceholder")}
                     value={agencyQuery}
                     disabled={!token}
                     onFocus={() => token && setAgencyOpen(true)}
@@ -1143,7 +1186,9 @@ export default function TripShiftPlanner() {
                   onChange={(e) => setRouteDbId(e.target.value)}
                   disabled={!agencyId || routes.length === 0}
                 >
-                  <option value="">{agencyId ? (routes.length ? "Select route" : "Loading routes…") : "Select agency first"}</option>
+                  <option value="">{agencyId
+                    ? (routes.length ? t("shift.selectRoutePlaceholder") : t("shift.loadingRoutes"))
+                    : t("shift.selectAgencyFirst")}</option>
                   {routes.map((r) => (
                     <option key={r.id} value={r.id}>
                       {(r.route_short_name || r.route_long_name || r.route_id) as string}
@@ -1154,7 +1199,7 @@ export default function TripShiftPlanner() {
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <select className="px-3 py-2 border rounded-lg" value={day} onChange={(e) => setDay(e.target.value)}>
                   {DAYS.map((d) => (
-                    <option key={d} value={d}>{d}</option>
+                    <option key={d} value={d}>{t(`days.${d}`)}</option>
                   ))}
                 </select>
               </div>
@@ -1162,43 +1207,43 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">Depots</h2>
+            <h2 className="text-lg font-medium mb-3">{t("depots.title")}</h2>
             <button
               className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 w-full disabled:opacity-50"
               disabled={!token || !agencyId}
               onClick={() => setMode("createDepot")}
-              title={!token ? "Login or paste token first" : !agencyId ? "Select an agency first" : "Create a new depot"}
+              title={!token ? t("depots.loginFirst") : !agencyId ? t("depots.selectAgencyFirst") : t("depots.createNewHint")}
             >
-              Create depot
+              {t("depots.createButton")}
             </button>
             {!token || !agencyId ? (
               <div className="mt-2 text-xs text-gray-600">
-                {!token ? "Authenticate to enable depot creation." : !agencyId ? "Select an agency in the Backend panel." : null}
+                {!token ? t("depots.authRequired") : !agencyId ? t("depots.selectAgencyBackend") : null}
               </div>
             ) : null}
             {/* Depots list */}
             {token && agencyId && (
               <div className="mt-3 space-y-2">
                 <div className="text-sm text-gray-700 flex items-center justify-between">
-                  <span>Depots for selected agency</span>
-                  {depotsLoading && <span className="text-xs text-gray-500">loading…</span>}
+                  <span>{t("depots.listTitle")}</span>
+                  {depotsLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
                 </div>
                 {depotsError && <div className="text-sm text-red-600">{depotsError}</div>}
                 {(!depotsLoading && depots.length === 0) ? (
-                  <div className="text-sm text-gray-600">No depots yet.</div>
+                  <div className="text-sm text-gray-600">{t("depots.empty")}</div>
                 ) : (
                   <ul className="space-y-2">
                     {depots.map((d) => (
                       <li key={d.id} className="border rounded-lg p-2">
                         {editingDepotId === d.id ? (
                           <div className="space-y-2">
-                            <input className="w-full px-2 py-1 border rounded" placeholder="Name" value={(editing.name as string) ?? d.name} onChange={(e) => setEditing((prev) => ({ ...prev, name: e.target.value }))} />
+                            <input className="w-full px-2 py-1 border rounded" placeholder={t("depots.form.namePlaceholder")} value={(editing.name as string) ?? d.name} onChange={(e) => setEditing((prev) => ({ ...prev, name: e.target.value }))} />
                             <div>
-                              <input className="w-full px-2 py-1 border rounded" placeholder="Address" value={(editing.address as string) ?? (d.address || "")} onChange={(e) => setEditing((prev) => ({ ...prev, address: e.target.value }))} />
+                              <input className="w-full px-2 py-1 border rounded" placeholder={t("depots.form.addressPlaceholder")} value={(editing.address as string) ?? (d.address || "")} onChange={(e) => setEditing((prev) => ({ ...prev, address: e.target.value }))} />
                             </div>
                             <div className="grid grid-cols-2 gap-2">
-                              <input className="px-2 py-1 border rounded" placeholder="Latitude" value={(editing.latitude as any) ?? (typeof d.latitude === "number" ? d.latitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, latitude: e.target.value ? parseFloat(e.target.value) : null }))} />
-                              <input className="px-2 py-1 border rounded" placeholder="Longitude" value={(editing.longitude as any) ?? (typeof d.longitude === "number" ? d.longitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, longitude: e.target.value ? parseFloat(e.target.value) : null }))} />
+                              <input className="px-2 py-1 border rounded" placeholder={t("depots.form.latitudePlaceholder")} value={(editing.latitude as any) ?? (typeof d.latitude === "number" ? d.latitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, latitude: e.target.value ? parseFloat(e.target.value) : null }))} />
+                              <input className="px-2 py-1 border rounded" placeholder={t("depots.form.longitudePlaceholder")} value={(editing.longitude as any) ?? (typeof d.longitude === "number" ? d.longitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, longitude: e.target.value ? parseFloat(e.target.value) : null }))} />
                             </div>
                             <div className="flex gap-2">
                               <button
@@ -1222,13 +1267,13 @@ export default function TripShiftPlanner() {
                                     setEditingDepotId(null);
                                     setEditing({});
                                   } catch (e: any) {
-                                    alert(`Save failed: ${e?.message || e}`);
+                                    alert(t("depots.saveFailed", { error: e?.message || e }));
                                   }
                                 }}
                               >
-                                Save
+                                {t("common.save")}
                               </button>
-                              <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingDepotId(null); setEditing({}); }}>Cancel</button>
+                              <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingDepotId(null); setEditing({}); }}>{t("common.cancel")}</button>
                             </div>
                           </div>
                         ) : (
@@ -1239,12 +1284,12 @@ export default function TripShiftPlanner() {
                               <div className="text-xs text-gray-500">{typeof d.latitude === "number" && typeof d.longitude === "number" ? `${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}` : ""}</div>
                             </div>
                             <div className="flex gap-2">
-                              <button className="px-2 py-1 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" onClick={() => { setEditingDepotId(d.id); setEditing({}); }}>Edit</button>
+                              <button className="px-2 py-1 rounded bg-blue-600 text-white text-sm hover:bg-blue-700" onClick={() => { setEditingDepotId(d.id); setEditing({}); }}>{t("common.edit")}</button>
                               <button
                                 className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700"
                                 onClick={async () => {
                                   if (!effectiveBaseUrl || !token) return;
-                                  if (!window.confirm(`Delete depot "${d.name}"?`)) return;
+                                  if (!window.confirm(t("depots.confirmDelete", { name: d.name }))) return;
                                   try {
                                     const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), {
                                       method: "DELETE",
@@ -1253,11 +1298,11 @@ export default function TripShiftPlanner() {
                                     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                                     setDepots((prev) => prev.filter((x) => x.id !== d.id));
                                   } catch (e: any) {
-                                    alert(`Delete failed: ${e?.message || e}`);
+                                    alert(t("depots.deleteFailed", { error: e?.message || e }));
                                   }
                                 }}
                               >
-                                Delete
+                                {t("common.delete")}
                               </button>
                             </div>
                           </div>
@@ -1271,27 +1316,27 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">Selection summary</h2>
+            <h2 className="text-lg font-medium mb-3">{t("summary.title")}</h2>
             <ul className="space-y-2 text-sm">
               <li>
-                <span className="text-gray-600">Trips loaded:</span> {sortedTrips.length}
+                <span className="text-gray-600">{t("summary.tripsLoaded")}</span> {sortedTrips.length}
               </li>
               <li>
-                <span className="text-gray-600">Selected:</span> {selectedTrips.length}
+                <span className="text-gray-600">{t("summary.selected")}</span> {selectedTrips.length}
               </li>
               <li>
-                <span className="text-gray-600">Next candidates:</span> {nextCandidates.length}
+                <span className="text-gray-600">{t("summary.nextCandidates")}</span> {nextCandidates.length}
               </li>
               {lastSelected && (
                 <li>
-                  <span className="text-gray-600">Last arrival:</span> {formatDayHHMM(lastSelected.arrival_sec)} at {normalizeStop(lastSelected.end_stop_name)}
+                  <span className="text-gray-600">{t("summary.lastArrival")}</span> {formatDayHHMM(lastSelected.arrival_sec)} {t("summary.atStop", { stop: normalizeStop(lastSelected.end_stop_name) })}
                 </li>
               )}
             </ul>
           </div>
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">Self‑tests</h2>
+            <h2 className="text-lg font-medium mb-3">{t("selfTests.title")}</h2>
             <ul className="text-xs space-y-1">
               {tests.map((t, i) => (
                 <li key={i} className={t.pass ? "text-emerald-700" : "text-red-700"}>
@@ -1307,15 +1352,22 @@ export default function TripShiftPlanner() {
             {/* Middle: Available trips */}
             <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
               <div className="flex items-baseline justify-between mb-3">
-                <h2 className="text-lg font-medium">Available trips</h2>
-                <span className="text-sm text-gray-600">(sorted by departure time){loading ? " · loading…" : ""}</span>
+                <h2 className="text-lg font-medium">{t("available.title")}</h2>
+                <span className="text-sm text-gray-600">
+                  {t("available.subtitle")}
+                  {loading ? ` · ${t("common.loading")}` : ""}
+                </span>
               </div>
               <div className="flex items-center justify-between mb-2 text-sm">
                 <div>
-                  Showing {nextCandidates.length === 0 ? 0 : startIndex + 1}–{endIndex} of {nextCandidates.length}
+                  {t("available.showingRange", {
+                    from: nextCandidates.length === 0 ? 0 : startIndex + 1,
+                    to: endIndex,
+                    total: nextCandidates.length,
+                  })}
                 </div>
                 <div className="flex items-center gap-2">
-                  <label className="text-gray-600">Per page</label>
+                  <label className="text-gray-600">{t("available.perPage")}</label>
                   <select
                     className="px-2 py-1 border rounded"
                     value={pageSize}
@@ -1332,39 +1384,39 @@ export default function TripShiftPlanner() {
                       onClick={() => setPage((p) => Math.max(1, p - 1))}
                       disabled={currentPage <= 1}
                     >
-                      Prev
+                      {t("common.prev")}
                     </button>
-                    <span className="text-gray-600">Page {currentPage} / {totalPages}</span>
+                    <span className="text-gray-600">{t("available.pageStatus", { current: currentPage, total: totalPages })}</span>
                     <button
                       className="px-2 py-1 border rounded disabled:opacity-50"
                       onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                       disabled={currentPage >= totalPages}
                     >
-                      Next
+                      {t("common.next")}
                     </button>
                   </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 gap-1 overflow-auto pr-1">
-                {rawTrips.length > 0 && pagedNextCandidates.map((t) => (
+                {rawTrips.length > 0 && pagedNextCandidates.map((trip) => (
                   <TripCard
-                    key={t.id}
-                    t={t}
+                    key={trip.id}
+                    trip={trip}
                     disabled={
                       !leaveDepotInfo ||
-                      (selectedIds.length === 0 && leaveDepotInfo !== null && t.departure_sec < parseHHMMToSec(leaveDepotInfo.timeHHMM)) ||
-                      (selectedIds.length > 0 && (onlyValidNext ? !computeValidNext(lastSelected, t) : (t.departure_sec < (lastSelected?.arrival_sec ?? 0))))
+                      (selectedIds.length === 0 && leaveDepotInfo !== null && trip.departure_sec < parseHHMMToSec(leaveDepotInfo.timeHHMM)) ||
+                      (selectedIds.length > 0 && (onlyValidNext ? !computeValidNext(lastSelected, trip) : (trip.departure_sec < (lastSelected?.arrival_sec ?? 0))))
                     }
-                    used={used.has(t.id)}
-                    transferNeeded={(!onlyValidNext && !!lastSelected && normalizeStop(t.start_stop_name) !== normalizeStop(lastSelected.end_stop_name))}
-                    onPick={handlePickTrip(t)}
+                    used={used.has(trip.id)}
+                    transferNeeded={(!onlyValidNext && !!lastSelected && normalizeStop(trip.start_stop_name) !== normalizeStop(lastSelected.end_stop_name))}
+                    onPick={handlePickTrip(trip)}
                     onHover={() => {
                       if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
                       hoverTimerRef.current = window.setTimeout(() => {
-                        setHoveredTripId(t.id); // use database id (UUID)
-                        ensureStopsForTrip(t.id);
-                        ensureElevationForTrip(t.id);
+                        setHoveredTripId(trip.id); // use database id (UUID)
+                        ensureStopsForTrip(trip.id);
+                        ensureElevationForTrip(trip.id);
                       }, 1000);
                     }}
                     onLeave={() => {
@@ -1372,21 +1424,21 @@ export default function TripShiftPlanner() {
                         window.clearTimeout(hoverTimerRef.current);
                         hoverTimerRef.current = null;
                       }
-                      setHoveredTripId((prev) => (prev === t.id ? null : prev));
+                      setHoveredTripId((prev) => (prev === trip.id ? null : prev));
                     }}
-                    hovered={hoveredTripId === t.id}
-                    stops={stopsByTrip[t.id]}
-                    stopsLoading={stopsLoadingTripId === t.id}
-                    stopsError={stopsErrorByTrip[t.id]}
-                    elevation={elevationByTrip[t.id]}
-                    elevationLoading={elevationLoadingTripId === t.id}
-                    elevationError={elevationErrorByTrip[t.id]}
+                    hovered={hoveredTripId === trip.id}
+                    stops={stopsByTrip[trip.id]}
+                    stopsLoading={stopsLoadingTripId === trip.id}
+                    stopsError={stopsErrorByTrip[trip.id]}
+                    elevation={elevationByTrip[trip.id]}
+                    elevationLoading={elevationLoadingTripId === trip.id}
+                    elevationError={elevationErrorByTrip[trip.id]}
                   />
                 ))}
                 {rawTrips.length === 0 ? (
-                  <div className="text-sm text-gray-600">No trips loaded yet. Login and select an agency, route, and day to automatically load trips.</div>
+                  <div className="text-sm text-gray-600">{t("available.noTripsLoaded")}</div>
                 ) : pagedNextCandidates.length === 0 ? (
-                  <div className="text-sm text-gray-600">No trips match the current filters. Try enabling "Show non connected trips" or clearing the search.</div>
+                  <div className="text-sm text-gray-600">{t("available.noMatches", { filterLabel: t("filters.showDisconnected") })}</div>
                 ) : null}
               </div>
             </section>
@@ -1394,42 +1446,50 @@ export default function TripShiftPlanner() {
             {/* Right: Selected shift */}
             <section className="lg:col-span-3 p-4 rounded-2xl bg-white shadow-sm border">
               <div className="flex items-baseline justify-between mb-3">
-                <h2 className="text-lg font-medium">Selected shift</h2>
-                <span className="text-sm text-gray-600">Click a trip on the left to append here</span>
+                <h2 className="text-lg font-medium">{t("selected.title")}</h2>
+                <span className="text-sm text-gray-600">{t("selected.subtitle")}</span>
               </div>
               <div className="space-y-3">
                 {!leaveDepotInfo && selectedTrips.length === 0 && (
-                  <div className="text-sm text-gray-600">Nothing selected yet.</div>
+                  <div className="text-sm text-gray-600">{t("selected.empty")}</div>
                 )}
                 {leaveDepotInfo && (
                   <div className="p-3 border rounded-xl bg-blue-50">
                     <div className="flex items-center justify-between">
-                      <div className="font-medium">Depot departure</div>
-                      <div className="text-xs text-gray-600">time {leaveDepotInfo.timeHHMM}</div>
+                      <div className="font-medium">{t("selected.depotDepartureTitle")}</div>
+                      <div className="text-xs text-gray-600">{t("selected.timeLabel", { time: leaveDepotInfo.timeHHMM })}</div>
                     </div>
                     <div className="text-xs text-gray-600">
-                      Depot: {depots.find((d) => d.id === leaveDepotInfo.depotId)?.name || "Unknown"} (id: {leaveDepotInfo.depotId})
+                      {t("selected.depotDetails", {
+                        name: depots.find((d) => d.id === leaveDepotInfo.depotId)?.name || t("selected.unknownDepot"),
+                        id: leaveDepotInfo.depotId,
+                      })}
                     </div>
                   </div>
                 )}
                 {selectedTrips.length > 0 && (
                   <ol className="space-y-3">
-                    {selectedTrips.map((t, idx) => (
-                      <li key={t.id} className="p-3 border rounded-xl flex flex-col gap-1">
+                    {selectedTrips.map((trip, idx) => (
+                      <li key={trip.id} className="p-3 border rounded-xl flex flex-col gap-1">
                         <div className="flex items-center justify-between">
-                          <div className="font-medium">{t.start_stop_name} → {t.end_stop_name}</div>
-                          <div className="text-xs text-gray-600">#{idx + 1}</div>
+                          <div className="font-medium">{trip.start_stop_name} → {trip.end_stop_name}</div>
+                          <div className="text-xs text-gray-600">{t("selected.tripNumber", { index: idx + 1 })}</div>
                         </div>
                         <div className="text-sm">
-                          <span className="inline-block mr-4">Dep: {formatDayHHMM(t.departure_sec)}</span>
-                          <span>Arr: {formatDayHHMM(t.arrival_sec)}</span>
+                          <span className="inline-block mr-4">{t("selected.departure", { time: formatDayHHMM(trip.departure_sec) })}</span>
+                          <span>{t("selected.arrival", { time: formatDayHHMM(trip.arrival_sec) })}</span>
                         </div>
                         <div className="text-xs text-gray-600">
                           {(() => {
-                            const r = routes.find((x) => x.id === t.route_id);
-                            const rLabel = (r?.route_short_name || r?.route_long_name || r?.route_id || t.route_id) as string;
+                            const r = routes.find((x) => x.id === trip.route_id);
+                            const rLabel = (r?.route_short_name || r?.route_long_name || r?.route_id || trip.route_id) as string;
                             return (
-                              <>Route: {rLabel} (id: {t.route_id}) · Trip: {t.trip_short_name || t.trip_id} · Headsign: {t.trip_headsign}</>
+                              <>{t("selected.routeDetails", {
+                                route: rLabel,
+                                id: trip.route_id,
+                                trip: trip.trip_short_name || trip.trip_id,
+                                headsign: trip.trip_headsign,
+                              })}</>
                             );
                           })()}
                         </div>
@@ -1440,18 +1500,21 @@ export default function TripShiftPlanner() {
                 {returnDepotInfo && (
                   <div className="p-3 border rounded-xl bg-emerald-50">
                     <div className="flex items-center justify-between">
-                      <div className="font-medium">Depot return</div>
-                      <div className="text-xs text-gray-600">time {returnDepotInfo.timeHHMM}</div>
+                      <div className="font-medium">{t("selected.depotReturnTitle")}</div>
+                      <div className="text-xs text-gray-600">{t("selected.timeLabel", { time: returnDepotInfo.timeHHMM })}</div>
                     </div>
                     <div className="text-xs text-gray-600">
-                      Depot: {depots.find((d) => d.id === returnDepotInfo.depotId)?.name || "Unknown"} (id: {returnDepotInfo.depotId})
+                      {t("selected.depotDetails", {
+                        name: depots.find((d) => d.id === returnDepotInfo.depotId)?.name || t("selected.unknownDepot"),
+                        id: returnDepotInfo.depotId,
+                      })}
                     </div>
                   </div>
                 )}
               </div>
             <div className="mt-3 flex gap-2 text-sm">
-              <button onClick={handleUndo} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Undo last</button>
-              <button onClick={handleReset} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">Reset</button>
+              <button onClick={handleUndo} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">{t("selected.undo")}</button>
+              <button onClick={handleReset} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">{t("selected.reset")}</button>
               {(() => {
                 const hasCore = selectedTrips.length > 0 && !!leaveDepotInfo && !!returnDepotInfo;
                 const lastArr = selectedTrips.length > 0 ? selectedTrips[selectedTrips.length - 1].arrival_sec : undefined;
@@ -1462,9 +1525,9 @@ export default function TripShiftPlanner() {
                     onClick={handleExport}
                     className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                     disabled={!canExport}
-                    title={!hasCore ? "Set depot legs and select trips" : (!retOk ? "Return time must be later than last trip arrival" : "")}
+                    title={!hasCore ? t("selected.exportHintIncomplete") : (!retOk ? t("selected.exportHintReturn") : "")}
                   >
-                    {exporting ? (exportMessage || "Exporting…") : "Export selection"}
+                    {exporting ? (exportMessage || t("selected.exporting")) : t("selected.export")}
                   </button>
                 );
               })()}
@@ -1480,7 +1543,7 @@ export default function TripShiftPlanner() {
               onCancel={() => setMode("planner")}
               onCreated={(dep?: any) => {
                 // Non-blocking success notice
-                setDepotsNotice(dep?.name ? `Depot "${dep.name}" created.` : "Depot created.");
+                setDepotsNotice(dep?.name ? t("depots.createdWithName", { name: dep.name }) : t("depots.created"));
                 setTimeout(() => setDepotsNotice(""), 3000);
                 // Reload list immediately so it appears without a page refresh
                 void loadDepotsForAgency();
@@ -1495,33 +1558,33 @@ export default function TripShiftPlanner() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-4 border">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-medium">{showDepotDialog === "leave" ? "Leave depot" : "Return to depot"}</h3>
-              <button className="text-sm px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => setShowDepotDialog(null)}>Close</button>
+              <h3 className="text-lg font-medium">{showDepotDialog === "leave" ? t("depotModal.leaveTitle") : t("depotModal.returnTitle")}</h3>
+              <button className="text-sm px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => setShowDepotDialog(null)}>{t("common.close")}</button>
             </div>
             {modalError && <div className="mb-2 text-sm text-red-600">{modalError}</div>}
             <div className="space-y-2">
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Depot</label>
+                <label className="block text-sm text-gray-700 mb-1">{t("depotModal.depotLabel")}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={modalDepotId} onChange={(e) => setModalDepotId(e.target.value)}>
-                  <option value="">Select a depot</option>
+                  <option value="">{t("depotModal.selectDepot")}</option>
                   {depots.filter((d) => d.agency_id === agencyId && d.stop_id).map((d) => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Time (HH:MM)</label>
-                <input className="w-full px-3 py-2 border rounded-lg" placeholder="e.g. 08:15 or 25:10" value={modalTime} onChange={(e) => setModalTime(e.target.value)} />
+                <label className="block text-sm text-gray-700 mb-1">{t("depotModal.timeLabel")}</label>
+                <input className="w-full px-3 py-2 border rounded-lg" placeholder={t("depotModal.timePlaceholder")} value={modalTime} onChange={(e) => setModalTime(e.target.value)} />
               </div>
             </div>
             <div className="mt-3 flex justify-end gap-2">
-              <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowDepotDialog(null)}>Cancel</button>
+              <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowDepotDialog(null)}>{t("common.cancel")}</button>
               <button
                 className="px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm disabled:opacity-50"
                 disabled={!modalDepotId || !/^\d{1,2}:\d{2}$/.test(modalTime)}
                 onClick={() => {
                   setModalError("");
-                  if (!/^\d{1,2}:\d{2}$/.test(modalTime)) { setModalError("Invalid time"); return; }
+                  if (!/^\d{1,2}:\d{2}$/.test(modalTime)) { setModalError(t("depotModal.invalidTime")); return; }
                   if (showDepotDialog === "leave") {
                     setLeaveDepotInfo({ depotId: modalDepotId, timeHHMM: modalTime });
                     setShowDepotDialog(null);
@@ -1530,14 +1593,14 @@ export default function TripShiftPlanner() {
                       const lastArr = selectedTrips[selectedTrips.length - 1].arrival_sec;
                       const [h, m] = modalTime.split(":").map((x) => parseInt(x, 10));
                       const sec = (h * 3600) + (m * 60);
-                      if (sec <= lastArr) { setModalError(`Return must be later than ${formatDayHHMM(lastArr)}`); return; }
+                      if (sec <= lastArr) { setModalError(t("depotModal.returnLater", { time: formatDayHHMM(lastArr) })); return; }
                     }
                     setReturnDepotInfo({ depotId: modalDepotId, timeHHMM: modalTime });
                     setShowDepotDialog(null);
                   }
                 }}
               >
-                Save
+                {t("common.save")}
               </button>
             </div>
           </div>
@@ -1549,41 +1612,47 @@ export default function TripShiftPlanner() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-4 border">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-medium">Transfer between stops</h3>
-              <button className="text-sm px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => setShowTransferDialog(null)}>Close</button>
+              <h3 className="text-lg font-medium">{t("transferModal.title")}</h3>
+              <button className="text-sm px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => setShowTransferDialog(null)}>{t("common.close")}</button>
             </div>
             {transferModalError && <div className="mb-2 text-sm text-red-600">{transferModalError}</div>}
             <div className="text-sm text-gray-700 mb-2">
-              From "{normalizeStop(showTransferDialog.prev.end_stop_name)}" to "{normalizeStop(showTransferDialog.next.start_stop_name)}"
+              {t("transferModal.summary", {
+                from: normalizeStop(showTransferDialog.prev.end_stop_name),
+                to: normalizeStop(showTransferDialog.next.start_stop_name),
+              })}
             </div>
             <div className="space-y-2">
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Departure time (HH:MM)</label>
-                <input className="w-full px-3 py-2 border rounded-lg" placeholder="e.g. 05:52" value={transferDepHHMM} onChange={(e) => setTransferDepHHMM(e.target.value)} />
+                <label className="block text-sm text-gray-700 mb-1">{t("transferModal.departureLabel")}</label>
+                <input className="w-full px-3 py-2 border rounded-lg" placeholder={t("transferModal.departurePlaceholder")} value={transferDepHHMM} onChange={(e) => setTransferDepHHMM(e.target.value)} />
               </div>
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Arrival time (HH:MM)</label>
-                <input className="w-full px-3 py-2 border rounded-lg" placeholder="e.g. 06:05" value={transferArrHHMM} onChange={(e) => setTransferArrHHMM(e.target.value)} />
+                <label className="block text-sm text-gray-700 mb-1">{t("transferModal.arrivalLabel")}</label>
+                <input className="w-full px-3 py-2 border rounded-lg" placeholder={t("transferModal.arrivalPlaceholder")} value={transferArrHHMM} onChange={(e) => setTransferArrHHMM(e.target.value)} />
               </div>
               <div className="text-xs text-gray-600">
-                Must satisfy: dep ≥ {formatDayHHMM(showTransferDialog.prev.arrival_sec)} and arr ≤ {formatDayHHMM(showTransferDialog.next.departure_sec)} and arr ≥ dep.
+                {t("transferModal.constraints", {
+                  depMin: formatDayHHMM(showTransferDialog.prev.arrival_sec),
+                  arrMax: formatDayHHMM(showTransferDialog.next.departure_sec),
+                })}
               </div>
             </div>
             <div className="mt-3 flex justify-end gap-2">
-              <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowTransferDialog(null)}>Cancel</button>
+              <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowTransferDialog(null)}>{t("common.cancel")}</button>
               <button
                 className="px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm disabled:opacity-50"
                 disabled={!/^\d{1,2}:\d{2}$/.test(transferDepHHMM) || !/^\d{1,2}:\d{2}$/.test(transferArrHHMM)}
                 onClick={() => {
                   setTransferModalError("");
-                  if (!/^\d{1,2}:\d{2}$/.test(transferDepHHMM) || !/^\d{1,2}:\d{2}$/.test(transferArrHHMM)) { setTransferModalError("Invalid time format"); return; }
+                  if (!/^\d{1,2}:\d{2}$/.test(transferDepHHMM) || !/^\d{1,2}:\d{2}$/.test(transferArrHHMM)) { setTransferModalError(t("transferModal.invalidFormat")); return; }
                   const [dh, dm] = transferDepHHMM.split(":").map((x) => parseInt(x, 10));
                   const [ah, am] = transferArrHHMM.split(":").map((x) => parseInt(x, 10));
                   const depSec = dh * 3600 + dm * 60;
                   const arrSec = ah * 3600 + am * 60;
-                  if (depSec < showTransferDialog.prev.arrival_sec) { setTransferModalError("Departure earlier than previous arrival"); return; }
-                  if (arrSec < depSec) { setTransferModalError("Arrival earlier than departure"); return; }
-                  if (arrSec > showTransferDialog.next.departure_sec) { setTransferModalError("Arrival later than next departure"); return; }
+                  if (depSec < showTransferDialog.prev.arrival_sec) { setTransferModalError(t("transferModal.departureBeforePrev")); return; }
+                  if (arrSec < depSec) { setTransferModalError(t("transferModal.arrivalBeforeDep")); return; }
+                  if (arrSec > showTransferDialog.next.departure_sec) { setTransferModalError(t("transferModal.arrivalAfterNext")); return; }
                   const key = `${showTransferDialog.prev.id}__${showTransferDialog.next.id}`;
                   setTransfersByEdge((prev) => ({ ...prev, [key]: { depHHMM: transferDepHHMM, arrHHMM: transferArrHHMM } }));
                   // Append the selected trip now that transfer has been collected
@@ -1591,7 +1660,7 @@ export default function TripShiftPlanner() {
                   setShowTransferDialog(null);
                 }}
               >
-                Save
+                {t("common.save")}
               </button>
             </div>
           </div>
@@ -1604,7 +1673,7 @@ export default function TripShiftPlanner() {
 
 // ---------- Card ----------
 function TripCard({
-  t,
+  trip,
   disabled,
   used,
   transferNeeded,
@@ -1619,7 +1688,7 @@ function TripCard({
   elevationLoading,
   elevationError,
 }: {
-  t: TripX;
+  trip: TripX;
   disabled?: boolean;
   used?: boolean;
   transferNeeded?: boolean;
@@ -1634,6 +1703,7 @@ function TripCard({
   elevationLoading?: boolean;
   elevationError?: string;
 }) {
+  const { t: tr } = useTranslation();
   function renderMiniElevationChart(profile?: ElevationProfile) {
     if (!profile || !profile.records || profile.records.length === 0) return null;
     const pts = profile.records;
@@ -1748,44 +1818,44 @@ function TripCard({
           ? "bg-yellow-50 hover:bg-yellow-100"
           : "bg-white hover:bg-blue-50")
       }
-      title={disabled ? "Doesn't follow selection rules" : "Add to shift"}
+      title={disabled ? tr("tripCard.disabledHint") : tr("tripCard.addHint")}
     >
       <div className="flex items-center justify-between gap-2">
-        <div className="font-medium truncate">{t.start_stop_name} → {t.end_stop_name}</div>
+        <div className="font-medium truncate">{trip.start_stop_name} → {trip.end_stop_name}</div>
         <div className="text-xs whitespace-nowrap text-gray-700">
-          {formatDayHHMM(t.departure_sec)} → {formatDayHHMM(t.arrival_sec)}
+          {formatDayHHMM(trip.departure_sec)} → {formatDayHHMM(trip.arrival_sec)}
         </div>
       </div>
       {!disabled && transferNeeded && hovered && (
-        <div className="text-[11px] text-amber-700">Transfer required between end/start stops</div>
+        <div className="text-[11px] text-amber-700">{tr("tripCard.transferRequired")}</div>
       )}
       <div className="mt-0.5 text-[11px] text-gray-600 truncate">
-        Headsign: {t.trip_headsign}
+        {tr("tripCard.headsign", { headsign: trip.trip_headsign })}
       </div>
       <div className="text-[11px] text-gray-600 truncate">
-        Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id}
+        {tr("tripCard.routeTrip", { route: trip.route_id, trip: trip.trip_short_name || trip.trip_id })}
       </div>
       {hovered && (
         <div className="mt-2 border-t pt-2">
-          <div className="text-[11px] font-medium text-gray-700 mb-1">Stops (Arr · Dep)</div>
-          {stopsLoading && <div className="text-[11px] text-gray-500">Loading stops…</div>}
+          <div className="text-[11px] font-medium text-gray-700 mb-1">{tr("tripCard.stopsTitle")}</div>
+          {stopsLoading && <div className="text-[11px] text-gray-500">{tr("tripCard.loadingStops")}</div>}
           {stopsError && <div className="text-[11px] text-red-600">{stopsError}</div>}
           {!stopsLoading && !stopsError && stops && stops.length > 0 && (
             <ul className="max-h-32 overflow-auto space-y-1 pr-1">
               {stops.map((s, i) => (
                 <li key={s.id || i} className="text-[11px] text-gray-700 flex items-center justify-between gap-2">
                   <span className="truncate">{s.stop_name}</span>
-                  <span className="whitespace-nowrap text-gray-600">Arr {(s.arrival_time || "").slice(0,5)} · Dep {(s.departure_time || "").slice(0,5)}</span>
+                  <span className="whitespace-nowrap text-gray-600">{tr("tripCard.stopTimes", { arrival: (s.arrival_time || "").slice(0, 5), departure: (s.departure_time || "").slice(0, 5) })}</span>
                 </li>
               ))}
             </ul>
           )}
           {!stopsLoading && !stopsError && (!stops || stops.length === 0) && (
-            <div className="text-[11px] text-gray-500">No stops found</div>
+            <div className="text-[11px] text-gray-500">{tr("tripCard.noStops")}</div>
           )}
           <div className="mt-2">
-            <div className="text-[11px] font-medium text-gray-700 mb-1">Route map · Elevation</div>
-            {elevationLoading && <div className="text-[11px] text-gray-500">Loading elevation…</div>}
+            <div className="text-[11px] font-medium text-gray-700 mb-1">{tr("tripCard.mapTitle")}</div>
+            {elevationLoading && <div className="text-[11px] text-gray-500">{tr("tripCard.loadingElevation")}</div>}
             {elevationError && <div className="text-[11px] text-red-600">{elevationError}</div>}
             {!elevationLoading && !elevationError && elevation && (
               <div className="flex items-start gap-3">
@@ -1809,6 +1879,7 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
   onCancel: () => void;
   onCreated: (dep?: any) => void;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState<string>("");
   const [address, setAddress] = useState<string>("");
   // city field removed from backend; keep local for UI address search only
@@ -1891,23 +1962,23 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
   async function submit() {
     setError("");
     if (!token) {
-      setError("Please login first");
+      setError(t("createDepot.errors.loginFirst"));
       return;
     }
     if (!agencyId) {
-      setError("Select an agency in the Backend panel");
+      setError(t("createDepot.errors.selectAgency"));
       return;
     }
     if (!name.trim()) {
-      setError("Name is required");
+      setError(t("createDepot.errors.nameRequired"));
       return;
     }
     if (latitude != null && (latitude < -90 || latitude > 90)) {
-      setError("Latitude must be between -90 and 90");
+      setError(t("createDepot.errors.latitudeRange"));
       return;
     }
     if (longitude != null && (longitude < -180 || longitude > 180)) {
-      setError("Longitude must be between -180 and 180");
+      setError(t("createDepot.errors.longitudeRange"));
       return;
     }
     try {
@@ -1941,18 +2012,18 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium">Create depot</h2>
-        <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">Back</button>
+        <h2 className="text-lg font-medium">{t("createDepot.title")}</h2>
+        <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">{t("common.back")}</button>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div className="space-y-2">
           <div>
-            <label className="block text-sm text-gray-700 mb-1">Name</label>
-            <input className="w-full px-3 py-2 border rounded-lg" value={name} onChange={(e) => setName(e.target.value)} placeholder="Depot name" />
+            <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.nameLabel")}</label>
+            <input className="w-full px-3 py-2 border rounded-lg" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("createDepot.form.namePlaceholder")} />
           </div>
           <div>
-            <label className="block text-sm text-gray-700 mb-1">Search address (en)</label>
-            <input className="w-full px-3 py-2 border rounded-lg" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Type at least 3 characters" />
+            <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.searchLabel")}</label>
+            <input className="w-full px-3 py-2 border rounded-lg" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={t("createDepot.form.searchPlaceholder")} />
             {suggestions.length > 0 && (
               <ul className="mt-1 max-h-48 overflow-auto border rounded-lg bg-white shadow text-sm">
                 {suggestions.map((s, i) => (
@@ -1976,18 +2047,18 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
             )}
           </div>
           <div>
-            <label className="block text-sm text-gray-700 mb-1">Address</label>
-            <input className="w-full px-3 py-2 border rounded-lg" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street and number" />
+            <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.addressLabel")}</label>
+            <input className="w-full px-3 py-2 border rounded-lg" value={address} onChange={(e) => setAddress(e.target.value)} placeholder={t("createDepot.form.addressPlaceholder")} />
           </div>
           {/* City field removed: backend no longer stores it */}
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-sm text-gray-700 mb-1">Latitude</label>
-              <input className="w-full px-3 py-2 border rounded-lg" value={latitude ?? ""} onChange={(e) => setLatitude(e.target.value ? parseFloat(e.target.value) : null)} placeholder="e.g. 46.0037" />
+              <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.latitudeLabel")}</label>
+              <input className="w-full px-3 py-2 border rounded-lg" value={latitude ?? ""} onChange={(e) => setLatitude(e.target.value ? parseFloat(e.target.value) : null)} placeholder={t("createDepot.form.latitudePlaceholder")} />
             </div>
             <div>
-              <label className="block text-sm text-gray-700 mb-1">Longitude</label>
-              <input className="w-full px-3 py-2 border rounded-lg" value={longitude ?? ""} onChange={(e) => setLongitude(e.target.value ? parseFloat(e.target.value) : null)} placeholder="e.g. 8.9511" />
+              <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.longitudeLabel")}</label>
+              <input className="w-full px-3 py-2 border rounded-lg" value={longitude ?? ""} onChange={(e) => setLongitude(e.target.value ? parseFloat(e.target.value) : null)} placeholder={t("createDepot.form.longitudePlaceholder")} />
             </div>
           </div>
         </div>
@@ -1998,17 +2069,16 @@ function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
             <ClickCapture />
             {latitude != null && longitude != null && <Marker position={[latitude, longitude] as any} />}
           </MapContainer>
-          <div className="mt-1 text-xs text-gray-600">Click on the map to set the depot location. Default center is Lugano.</div>
+          <div className="mt-1 text-xs text-gray-600">{t("createDepot.mapHelp")}</div>
         </div>
       </div>
       {error && <div className="text-sm text-red-600">{error}</div>}
       <div className="flex gap-2">
         <button onClick={submit} disabled={loading || !token || !agencyId || !name.trim()} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50">
-          {loading ? "Creating…" : "Create"}
+          {loading ? t("createDepot.creating") : t("createDepot.create")}
         </button>
-        <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">Cancel</button>
+        <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">{t("common.cancel")}</button>
       </div>
     </div>
   );
 }
-

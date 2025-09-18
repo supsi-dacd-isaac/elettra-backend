@@ -1,0 +1,229 @@
+{
+  "languageNames": {
+    "en": "Inglese",
+    "it": "Italiano",
+    "de": "Tedesco",
+    "fr": "Francese"
+  },
+  "header": {
+    "title": "Trip Shift Planner",
+    "subtitle": "Seleziona le corse in sequenza per costruire un turno macchina. Gli orari supportano valori GTFS superiori a 24 ore.",
+    "languageLabel": "Lingua"
+  },
+  "filters": {
+    "title": "Filtri",
+    "showDisconnected": "Mostra corse non collegate",
+    "hideUsed": "Nascondi quelle già selezionate",
+    "disconnectedHint": "Sono mostrate le corse non collegate. L'ordine temporale è comunque rispettato. Verranno richiesti gli orari di trasferimento quando scegli una corsa non collegata.",
+    "searchPlaceholder": "Cerca testo"
+  },
+  "auth": {
+    "title": "Autenticazione",
+    "backendAuto": "Backend: configurato automaticamente",
+    "emailPlaceholder": "Email",
+    "passwordPlaceholder": "Password",
+    "login": "Accedi",
+    "loggingIn": "Accesso in corso...",
+    "logout": "Esci",
+    "loggedIn": "Accesso eseguito. Token {{token}}",
+    "loginFailed": "Accesso non riuscito: {{error}}",
+    "provideCredentials": "Inserisci email e password oppure incolla un token",
+    "errors": {
+      "noToken": "Nessun access_token nella risposta"
+    }
+  },
+  "alerts": {
+    "returnDepotSet": "Rientro in deposito già impostato. Annulla l'ultimo passo per aggiungere altre corse.",
+    "leaveDepotFirst": "Imposta prima 'Partenza dal deposito'.",
+    "invalidSequence": "Questa corsa non rispetta l'ultima selezione (regole su fermata e orario).",
+    "departBeforeLastArrival": "Questa corsa parte prima dell'ultimo orario di arrivo.",
+    "departBeforeLeave": "Questa corsa parte prima dell'orario di uscita dal deposito.",
+    "loginRequired": "È necessario effettuare l'accesso.",
+    "setDepotLegs": "Imposta le tratte di uscita e rientro dal deposito prima di esportare.",
+    "selectRouteFirst": "Seleziona prima una linea nel pannello Backend e carica le corse.",
+    "selectTrips": "Seleziona almeno una corsa GTFS tra le tratte da/per deposito.",
+    "returnTimeTooEarly": "L'orario di rientro deve essere successivo all'ultimo arrivo {{time}}.",
+    "missingTransferTimes": "Mancano gli orari di trasferimento per una sequenza non collegata. Rimuovi e aggiungi di nuovo la corsa per inserirli."
+  },
+  "common": {
+    "loading": "caricamento...",
+    "prev": "Prec",
+    "next": "Succ",
+    "save": "Salva",
+    "cancel": "Annulla",
+    "delete": "Elimina",
+    "edit": "Modifica",
+    "close": "Chiudi",
+    "back": "Indietro",
+    "baseUrlRequired": "Base URL richiesto"
+  },
+  "available": {
+    "title": "Corse disponibili",
+    "subtitle": "(ordinate per orario di partenza)",
+    "showingRange": "Mostra {{from}}–{{to}} di {{total}}",
+    "perPage": "Per pagina",
+    "pageStatus": "Pagina {{current}} / {{total}}",
+    "noTripsLoaded": "Nessuna corsa caricata. Accedi e seleziona agenzia, linea e giorno per caricare automaticamente le corse.",
+    "noMatches": "Nessuna corsa corrisponde ai filtri. Prova ad attivare \"{{filterLabel}}\" o cancella la ricerca."
+  },
+  "shift": {
+    "title": "Pianificazione turno",
+    "depotFlow": "Flusso deposito",
+    "leaveDepot": "Partenza dal deposito",
+    "leaveDepotSet": "Partenza dal deposito (impostata)",
+    "leaveDisabledHint": "Seleziona prima linea e giorno per caricare le corse",
+    "pickDepotAndTime": "Scegli deposito e orario",
+    "returnDepot": "Rientro in deposito",
+    "returnDepotSet": "Rientro in deposito (impostato)",
+    "returnDisabledNoLeave": "Imposta prima 'Partenza dal deposito'",
+    "returnDisabledNoTrips": "Seleziona almeno una corsa GTFS",
+    "leaveSummary": "Uscita: deposito impostato, ora {{time}}",
+    "returnSummary": "Rientro: deposito impostato, ora {{time}}",
+    "selectAgencyPlaceholder": "Seleziona agenzia",
+    "loginFirstPlaceholder": "Accedi o incolla un token",
+    "selectRoutePlaceholder": "Seleziona linea",
+    "loadingRoutes": "Caricamento linee...",
+    "selectAgencyFirst": "Seleziona prima un'agenzia"
+  },
+  "depots": {
+    "title": "Depositi",
+    "createButton": "Crea deposito",
+    "loginFirst": "Accedi o incolla un token",
+    "selectAgencyFirst": "Seleziona prima un'agenzia",
+    "createNewHint": "Crea un nuovo deposito",
+    "authRequired": "Autenticati per abilitare la creazione di depositi.",
+    "selectAgencyBackend": "Seleziona un'agenzia nel pannello Backend.",
+    "listTitle": "Depositi per l'agenzia selezionata",
+    "empty": "Ancora nessun deposito.",
+    "form": {
+      "namePlaceholder": "Nome",
+      "addressPlaceholder": "Indirizzo",
+      "latitudePlaceholder": "Latitudine",
+      "longitudePlaceholder": "Longitudine"
+    },
+    "saveFailed": "Salvataggio non riuscito: {{error}}",
+    "deleteFailed": "Eliminazione non riuscita: {{error}}",
+    "confirmDelete": "Eliminare il deposito \"{{name}}\"?",
+    "created": "Deposito creato.",
+    "createdWithName": "Deposito \"{{name}}\" creato."
+  },
+  "depotModal": {
+    "leaveTitle": "Partenza dal deposito",
+    "returnTitle": "Rientro in deposito",
+    "depotLabel": "Deposito",
+    "selectDepot": "Seleziona un deposito",
+    "timeLabel": "Orario (HH:MM)",
+    "timePlaceholder": "es. 08:15 oppure 25:10",
+    "invalidTime": "Orario non valido",
+    "returnLater": "Il rientro deve essere successivo a {{time}}"
+  },
+  "transferModal": {
+    "title": "Trasferimento tra fermate",
+    "summary": "Da \"{{from}}\" a \"{{to}}\"",
+    "departureLabel": "Partenza trasferimento (HH:MM)",
+    "departurePlaceholder": "es. 05:52",
+    "arrivalLabel": "Arrivo trasferimento (HH:MM)",
+    "arrivalPlaceholder": "es. 06:05",
+    "constraints": "Deve rispettare: partenza ≥ {{depMin}}, arrivo ≤ {{arrMax}} e arrivo ≥ partenza.",
+    "invalidFormat": "Formato orario non valido",
+    "departureBeforePrev": "Partenza precedente all'arrivo precedente",
+    "arrivalBeforeDep": "Arrivo precedente alla partenza",
+    "arrivalAfterNext": "Arrivo successivo alla partenza della corsa seguente"
+  },
+  "tripCard": {
+    "disabledHint": "Non rispetta le regole di selezione",
+    "addHint": "Aggiungi al turno",
+    "transferRequired": "Trasferimento richiesto tra fermate finali/iniziali",
+    "headsign": "Direzione: {{headsign}}",
+    "routeTrip": "Linea: {{route}} · Corsa: {{trip}}",
+    "stopsTitle": "Fermate (Arr · Part)",
+    "loadingStops": "Caricamento fermate...",
+    "stopTimes": "Arr {{arrival}} · Part {{departure}}",
+    "noStops": "Nessuna fermata trovata",
+    "mapTitle": "Mappa percorso · Altimetria",
+    "loadingElevation": "Caricamento altimetria..."
+  },
+  "createDepot": {
+    "title": "Crea deposito",
+    "form": {
+      "nameLabel": "Nome",
+      "namePlaceholder": "Nome deposito",
+      "searchLabel": "Cerca indirizzo",
+      "searchPlaceholder": "Digita almeno 3 caratteri",
+      "addressLabel": "Indirizzo",
+      "addressPlaceholder": "Via e numero",
+      "latitudeLabel": "Latitudine",
+      "latitudePlaceholder": "es. 46.0037",
+      "longitudeLabel": "Longitudine",
+      "longitudePlaceholder": "es. 8.9511"
+    },
+    "mapHelp": "Clicca sulla mappa per impostare la posizione del deposito. Il centro predefinito è Lugano.",
+    "create": "Crea",
+    "creating": "Creazione in corso...",
+    "errors": {
+      "loginFirst": "Effettua prima l'accesso",
+      "selectAgency": "Seleziona un'agenzia nel pannello Backend",
+      "nameRequired": "Il nome è obbligatorio",
+      "latitudeRange": "La latitudine deve essere compresa tra -90 e 90",
+      "longitudeRange": "La longitudine deve essere compresa tra -180 e 180"
+    }
+  },
+  "selected": {
+    "title": "Turno selezionato",
+    "subtitle": "Clicca una corsa a sinistra per aggiungerla qui",
+    "empty": "Nessuna selezione al momento.",
+    "depotDepartureTitle": "Uscita dal deposito",
+    "depotReturnTitle": "Rientro al deposito",
+    "timeLabel": "ora {{time}}",
+    "depotDetails": "Deposito: {{name}} (id: {{id}})",
+    "unknownDepot": "Sconosciuto",
+    "tripNumber": "n°{{index}}",
+    "departure": "Part: {{time}}",
+    "arrival": "Arr: {{time}}",
+    "routeDetails": "Linea: {{route}} (id: {{id}}) · Corsa: {{trip}} · Direzione: {{headsign}}",
+    "undo": "Annulla ultima",
+    "reset": "Azzera",
+    "export": "Esporta selezione",
+    "exporting": "Esportazione in corso...",
+    "exportHintIncomplete": "Imposta le tratte da/per deposito e seleziona le corse",
+    "exportHintReturn": "L'orario di rientro deve essere successivo all'ultimo arrivo"
+  },
+  "summary": {
+    "title": "Riepilogo selezione",
+    "tripsLoaded": "Corse caricate:",
+    "selected": "Selezionate:",
+    "nextCandidates": "Candidati successivi:",
+    "lastArrival": "Ultimo arrivo:",
+    "atStop": "a {{stop}}"
+  },
+  "selfTests": {
+    "title": "Auto-test",
+    "parse": "Parsing 25:13:00",
+    "parseMsg": "ottenuto {{value}}",
+    "validNext": "Successivo valido B dopo A->B",
+    "invalidNext": "Successivo non valido con fermata diversa"
+  },
+  "export": {
+    "preparing": "Preparazione export...",
+    "fetchingStops": "Recupero fermate per le corse di confine...",
+    "creatingTransfer": "Creazione tratta di trasferimento...",
+    "creatingDeparture": "Creazione tratta deposito → prima fermata...",
+    "creatingReturn": "Creazione tratta ultima fermata → deposito...",
+    "preparingDownload": "Preparazione download...",
+    "failed": "Esportazione non riuscita: {{error}}",
+    "errors": {
+      "tripHasNoStops": "La corsa non ha fermate",
+      "departDepotMissing": "Il deposito di partenza selezionato non ha stop_id",
+      "returnDepotMissing": "Il deposito di rientro selezionato non ha stop_id"
+    }
+  },
+  "days": {
+    "monday": "Lunedì",
+    "tuesday": "Martedì",
+    "wednesday": "Mercoledì",
+    "thursday": "Giovedì",
+    "friday": "Venerdì",
+    "saturday": "Sabato",
+    "sunday": "Domenica"
+  }
+}
