@@ -238,6 +238,7 @@ export default function TripShiftPlanner() {
   const [onlyValidNext, setOnlyValidNext] = useState<boolean>(true);
   const [hideUsed, setHideUsed] = useState<boolean>(true);
   const [textFilter, setTextFilter] = useState<string>("");
+  const [allTripsMap, setAllTripsMap] = useState<Map<string, TripX>>(new Map());
 
   // Removed outdated file upload and free-URL fetch
 
@@ -282,6 +283,13 @@ export default function TripShiftPlanner() {
   const [modalError, setModalError] = useState<string>("");
   // Simple prompt-based input for depot/time (avoid heavy modal UI for now)
 
+  // Transfer flow state (collect immediately when picking non-connected trips)
+  const [showTransferDialog, setShowTransferDialog] = useState<null | { prev: TripX; next: TripX }>(null);
+  const [transferDepHHMM, setTransferDepHHMM] = useState<string>("");
+  const [transferArrHHMM, setTransferArrHHMM] = useState<string>("");
+  const [transferModalError, setTransferModalError] = useState<string>("");
+  const [transfersByEdge, setTransfersByEdge] = useState<Record<string, { depHHMM: string; arrHHMM: string }>>({});
+
   // Agency/Route selection
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [agencyId, setAgencyId] = useState<string>(""); // database UUID for agency
@@ -310,6 +318,23 @@ export default function TripShiftPlanner() {
     return h * 3600 + m * 60;
   }, []);
 
+  // Persist toggle and settings per session
+  useEffect(() => {
+    try {
+      const v = typeof window !== "undefined" ? window.sessionStorage.getItem("ts_onlyValidNext") : null;
+      if (v !== null) setOnlyValidNext(v !== "0");
+      const h = typeof window !== "undefined" ? window.sessionStorage.getItem("ts_hideUsed") : null;
+      if (h !== null) setHideUsed(h !== "0");
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    try { if (typeof window !== "undefined") window.sessionStorage.setItem("ts_onlyValidNext", onlyValidNext ? "1" : "0"); } catch {}
+  }, [onlyValidNext]);
+  useEffect(() => {
+    try { if (typeof window !== "undefined") window.sessionStorage.setItem("ts_hideUsed", hideUsed ? "1" : "0"); } catch {}
+  }, [hideUsed]);
+
   // Precompute enriched + sorted list
   const tripsX = useMemo(() => enrichTrips(rawTrips), [rawTrips]);
   const sortedTrips = useMemo(() => {
@@ -319,10 +344,21 @@ export default function TripShiftPlanner() {
     });
   }, [tripsX]);
 
+  // Merge newly loaded trips into a persistent map so selections survive route changes
+  useEffect(() => {
+    if (!tripsX || tripsX.length === 0) return;
+    setAllTripsMap((prev) => {
+      const next = new Map(prev);
+      for (const t of tripsX) next.set(t.id, t);
+      return next;
+    });
+  }, [tripsX]);
+
   const selectedTrips = useMemo(() => {
-    const map = new Map(sortedTrips.map((t) => [t.id, t] as const));
-    return selectedIds.map((id) => map.get(id)).filter((x): x is TripX => Boolean(x));
-  }, [selectedIds, sortedTrips]);
+    return selectedIds
+      .map((id) => allTripsMap.get(id))
+      .filter((x): x is TripX => Boolean(x));
+  }, [selectedIds, allTripsMap]);
 
   const lastSelected: TripX | null = selectedTrips.length > 0 ? selectedTrips[selectedTrips.length - 1] : null;
 
@@ -337,16 +373,17 @@ export default function TripShiftPlanner() {
             .includes(textFilter.toLowerCase())
         )
       : base;
-    if (onlyValidNext) {
-      if (lastSelected) {
-        return withText.filter((t) => computeValidNext(lastSelected, t));
-      }
-      if (!lastSelected && leaveDepotInfo) {
-        const minDep = parseHHMMToSec(leaveDepotInfo.timeHHMM);
-        return withText.filter((t) => t.departure_sec >= minDep);
-      }
-    }
-    return withText;
+    // Always enforce time filter
+    const minDep = !lastSelected && leaveDepotInfo ? parseHHMMToSec(leaveDepotInfo.timeHHMM) : null;
+    const timeFiltered = withText.filter((t) => {
+      if (lastSelected) return t.departure_sec >= lastSelected.arrival_sec;
+      if (minDep != null) return t.departure_sec >= minDep;
+      return true;
+    });
+    if (!onlyValidNext) return timeFiltered;
+    // additionally enforce same-stop continuity when toggle is on
+    if (lastSelected) return timeFiltered.filter((t) => computeValidNext(lastSelected, t));
+    return timeFiltered;
   }, [sortedTrips, used, hideUsed, textFilter, onlyValidNext, lastSelected, leaveDepotInfo, parseHHMMToSec]);
 
   // Pagination for available trips
@@ -376,8 +413,32 @@ export default function TripShiftPlanner() {
         alert("Set 'Leave depot' first");
         return;
       }
-      if (selectedIds.length > 0 && !computeValidNext(lastSelected, t)) {
-        alert("This trip doesn't follow the last selection (stop or time rules).");
+      if (selectedIds.length > 0) {
+        if (onlyValidNext) {
+          if (!computeValidNext(lastSelected, t)) {
+            alert("This trip doesn't follow the last selection (stop and time rules).");
+            return;
+          }
+        } else {
+          if (t.departure_sec < (lastSelected?.arrival_sec ?? 0)) {
+            alert("This trip departs before the last arrival time.");
+            return;
+          }
+        }
+      } else {
+        // first selection must not be before leave depot time
+        if (t.departure_sec < parseHHMMToSec(leaveDepotInfo.timeHHMM)) {
+          alert("This trip departs before the leave depot time.");
+          return;
+        }
+      }
+      // If non-connected selection (when relaxed mode), open transfer modal to collect times now
+      const needTransfer = !onlyValidNext && !!lastSelected && normalizeStop(t.start_stop_name) !== normalizeStop(lastSelected.end_stop_name);
+      if (needTransfer) {
+        setTransferModalError("");
+        setTransferDepHHMM("");
+        setTransferArrHHMM("");
+        setShowTransferDialog({ prev: lastSelected!, next: t });
         return;
       }
       setSelectedIds((prev) => (prev.includes(t.id) ? prev : [...prev, t.id]));
@@ -444,20 +505,20 @@ export default function TripShiftPlanner() {
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return (await res.json()) as TripStop[];
       };
+      const getEdgeStops = async (tripDbId: string): Promise<{ first: TripStop; last: TripStop }> => {
+        const stops = await fetchStops(tripDbId);
+        if (!Array.isArray(stops) || stops.length === 0) throw new Error("Trip has no stops");
+        return { first: stops[0], last: stops[stops.length - 1] };
+      };
 
       try {
         setExporting(true);
         setExportMessage("Preparing export…");
         const firstTrip = selectedTrips[0];
         const lastTrip = selectedTrips[selectedTrips.length - 1];
-        setExportMessage("Fetching stops for the first and last selected trips…");
-        const firstStops = await fetchStops(firstTrip.id);
-        const lastStops = await fetchStops(lastTrip.id);
-        if (!Array.isArray(firstStops) || firstStops.length === 0) throw new Error("First trip has no stops");
-        if (!Array.isArray(lastStops) || lastStops.length === 0) throw new Error("Last trip has no stops");
-
-        const firstStop = firstStops[0];
-        const lastStop = lastStops[lastStops.length - 1];
+        setExportMessage("Fetching stops for boundary trips…");
+        const { first: firstStop } = await getEdgeStops(firstTrip.id);
+        const { last: lastStop } = await getEdgeStops(lastTrip.id);
         const firstArr = (firstStop.arrival_time || firstStop.departure_time || "00:00:00").slice(0, 8);
         const lastDep = (lastStop.departure_time || lastStop.arrival_time || "00:00:00").slice(0, 8);
 
@@ -478,6 +539,51 @@ export default function TripShiftPlanner() {
           return (await res.json()) as Trip;
         };
         const routeUuid = routeDbId || routeId;
+
+        // Insert transfer legs between non-connecting trips (use collected times if present)
+        const withTransfers: Trip[] = [];
+        const stopEdgeCache = new Map<string, { first: TripStop; last: TripStop }>();
+        const ensureEdge = async (trip: TripX) => {
+          const cached = stopEdgeCache.get(trip.id);
+          if (cached) return cached;
+          const edge = await getEdgeStops(trip.id);
+          stopEdgeCache.set(trip.id, edge);
+          return edge;
+        };
+        for (let i = 0; i < selectedTrips.length; i++) {
+          const curr = selectedTrips[i];
+          if (i === 0) {
+            withTransfers.push(curr);
+            continue;
+          }
+          const prev = selectedTrips[i - 1];
+          const sameStop = normalizeStop(curr.start_stop_name) === normalizeStop(prev.end_stop_name);
+          if (sameStop) {
+            withTransfers.push(curr);
+            continue;
+          }
+          // Need a transfer: read saved times collected during selection
+          const key = `${prev.id}__${curr.id}`;
+          const saved = transfersByEdge[key];
+          if (!saved) {
+            alert("Missing transfer times for a non-connected sequence. Please remove and re-add the trip to provide times.");
+            setExportMessage(""); setExporting(false); return;
+          }
+          const transferDep = saved.depHHMM;
+          const transferArr = saved.arrHHMM;
+          const prevEdge = await ensureEdge(prev);
+          const currEdge = await ensureEdge(curr);
+          const transferTrip = await postDepotTrip({
+            departure_stop_id: prevEdge.last.id,
+            arrival_stop_id: currEdge.first.id,
+            departure_time: `${transferDep}:00`,
+            arrival_time: `${transferArr}:00`,
+            route_id: curr.route_id,
+            status: "transfer",
+          }, "Creating transfer leg…");
+          withTransfers.push(transferTrip);
+          withTransfers.push(curr);
+        }
         const depDepot = depots.find((d) => d.id === leaveDepotInfo.depotId);
         if (!depDepot || !depDepot.stop_id) throw new Error("Selected departure depot has no stop_id");
         const depTrip = await postDepotTrip({
@@ -500,7 +606,7 @@ export default function TripShiftPlanner() {
         }, "Creating return leg (last stop → depot)…");
 
         setExportMessage("Preparing download…");
-        const combined = [depTrip, ...selectedTrips, retTrip];
+        const combined = [depTrip, ...withTransfers, retTrip];
         const data = JSON.stringify(combined, null, 2);
         const blob = new Blob([data], { type: "application/json;charset=utf-8" });
         const url = URL.createObjectURL(blob);
@@ -593,16 +699,12 @@ export default function TripShiftPlanner() {
       const data = (await res.json()) as Trip[];
       if (!Array.isArray(data)) throw new Error("Response is not an array");
       setRawTrips(data);
-      setSelectedIds([]);
     } catch (e: any) {
       console.error(`Failed to load trips: ${e?.message || e}`);
       // Don't show alerts for automatic loading, just log the error
     } finally {
       setLoading(false);
       setHasLoadedForRouteDay(true);
-      // reset depot flow on load
-      setLeaveDepotInfo(null);
-      setReturnDepotInfo(null);
     }
   }
 
@@ -697,9 +799,7 @@ export default function TripShiftPlanner() {
   // Reset depot flow on route change
   useEffect(() => {
     setHasLoadedForRouteDay(false);
-    setLeaveDepotInfo(null);
-    setReturnDepotInfo(null);
-    setSelectedIds([]);
+    // Keep selected trips and depot info across route changes
     setStopsByTrip({});
     setElevationByTrip({});
   }, [routeDbId]);
@@ -825,10 +925,10 @@ export default function TripShiftPlanner() {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={onlyValidNext}
-                    onChange={(e) => setOnlyValidNext(e.target.checked)}
+                    checked={!onlyValidNext}
+                    onChange={(e) => setOnlyValidNext(!e.target.checked)}
                   />
-                  Only show valid next trips
+                  Show non connected trips
                 </label>
               </div>
               <div className="flex items-center justify-between">
@@ -836,6 +936,11 @@ export default function TripShiftPlanner() {
                   <input type="checkbox" checked={hideUsed} onChange={(e) => setHideUsed(e.target.checked)} /> Hide already selected
                 </label>
               </div>
+              {!onlyValidNext && (
+                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
+                  Non-connecting trips are shown. Time order is still enforced. You'll be asked transfer times when selecting a non-connected trip.
+                </div>
+              )}
               <div>
                 <input
                   type="text"
@@ -1203,9 +1308,10 @@ export default function TripShiftPlanner() {
                     disabled={
                       !leaveDepotInfo ||
                       (selectedIds.length === 0 && leaveDepotInfo !== null && t.departure_sec < parseHHMMToSec(leaveDepotInfo.timeHHMM)) ||
-                      (selectedIds.length > 0 && !computeValidNext(lastSelected, t))
+                      (selectedIds.length > 0 && (onlyValidNext ? !computeValidNext(lastSelected, t) : (t.departure_sec < (lastSelected?.arrival_sec ?? 0))))
                     }
                     used={used.has(t.id)}
+                    transferNeeded={(!onlyValidNext && !!lastSelected && normalizeStop(t.start_stop_name) !== normalizeStop(lastSelected.end_stop_name))}
                     onPick={handlePickTrip(t)}
                     onHover={() => {
                       if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
@@ -1234,7 +1340,7 @@ export default function TripShiftPlanner() {
                 {rawTrips.length === 0 ? (
                   <div className="text-sm text-gray-600">No trips loaded yet. Login and select an agency, route, and day to automatically load trips.</div>
                 ) : pagedNextCandidates.length === 0 ? (
-                  <div className="text-sm text-gray-600">No trips match the current filters. Try disabling "Only show valid next trips" or clearing the search.</div>
+                  <div className="text-sm text-gray-600">No trips match the current filters. Try enabling "Show non connected trips" or clearing the search.</div>
                 ) : null}
               </div>
             </section>
@@ -1273,7 +1379,13 @@ export default function TripShiftPlanner() {
                           <span>Arr: {formatDayHHMM(t.arrival_sec)}</span>
                         </div>
                         <div className="text-xs text-gray-600">
-                          Route: {t.route_id} · Trip: {t.trip_short_name || t.trip_id} · Headsign: {t.trip_headsign}
+                          {(() => {
+                            const r = routes.find((x) => x.id === t.route_id);
+                            const rLabel = (r?.route_short_name || r?.route_long_name || r?.route_id || t.route_id) as string;
+                            return (
+                              <>Route: {rLabel} (id: {t.route_id}) · Trip: {t.trip_short_name || t.trip_id} · Headsign: {t.trip_headsign}</>
+                            );
+                          })()}
                         </div>
                       </li>
                     ))}
@@ -1386,6 +1498,60 @@ export default function TripShiftPlanner() {
         </div>
       )}
 
+      {/* Transfer modal */}
+      {showTransferDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-4 border">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-medium">Transfer between stops</h3>
+              <button className="text-sm px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => setShowTransferDialog(null)}>Close</button>
+            </div>
+            {transferModalError && <div className="mb-2 text-sm text-red-600">{transferModalError}</div>}
+            <div className="text-sm text-gray-700 mb-2">
+              From "{normalizeStop(showTransferDialog.prev.end_stop_name)}" to "{normalizeStop(showTransferDialog.next.start_stop_name)}"
+            </div>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Departure time (HH:MM)</label>
+                <input className="w-full px-3 py-2 border rounded-lg" placeholder="e.g. 05:52" value={transferDepHHMM} onChange={(e) => setTransferDepHHMM(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">Arrival time (HH:MM)</label>
+                <input className="w-full px-3 py-2 border rounded-lg" placeholder="e.g. 06:05" value={transferArrHHMM} onChange={(e) => setTransferArrHHMM(e.target.value)} />
+              </div>
+              <div className="text-xs text-gray-600">
+                Must satisfy: dep ≥ {formatDayHHMM(showTransferDialog.prev.arrival_sec)} and arr ≤ {formatDayHHMM(showTransferDialog.next.departure_sec)} and arr ≥ dep.
+              </div>
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowTransferDialog(null)}>Cancel</button>
+              <button
+                className="px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm disabled:opacity-50"
+                disabled={!/^\d{1,2}:\d{2}$/.test(transferDepHHMM) || !/^\d{1,2}:\d{2}$/.test(transferArrHHMM)}
+                onClick={() => {
+                  setTransferModalError("");
+                  if (!/^\d{1,2}:\d{2}$/.test(transferDepHHMM) || !/^\d{1,2}:\d{2}$/.test(transferArrHHMM)) { setTransferModalError("Invalid time format"); return; }
+                  const [dh, dm] = transferDepHHMM.split(":").map((x) => parseInt(x, 10));
+                  const [ah, am] = transferArrHHMM.split(":").map((x) => parseInt(x, 10));
+                  const depSec = dh * 3600 + dm * 60;
+                  const arrSec = ah * 3600 + am * 60;
+                  if (depSec < showTransferDialog.prev.arrival_sec) { setTransferModalError("Departure earlier than previous arrival"); return; }
+                  if (arrSec < depSec) { setTransferModalError("Arrival earlier than departure"); return; }
+                  if (arrSec > showTransferDialog.next.departure_sec) { setTransferModalError("Arrival later than next departure"); return; }
+                  const key = `${showTransferDialog.prev.id}__${showTransferDialog.next.id}`;
+                  setTransfersByEdge((prev) => ({ ...prev, [key]: { depHHMM: transferDepHHMM, arrHHMM: transferArrHHMM } }));
+                  // Append the selected trip now that transfer has been collected
+                  setSelectedIds((prev) => (prev.includes(showTransferDialog.next.id) ? prev : [...prev, showTransferDialog.next.id]));
+                  setShowTransferDialog(null);
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1395,6 +1561,7 @@ function TripCard({
   t,
   disabled,
   used,
+  transferNeeded,
   onPick,
   onHover,
   onLeave,
@@ -1409,6 +1576,7 @@ function TripCard({
   t: TripX;
   disabled?: boolean;
   used?: boolean;
+  transferNeeded?: boolean;
   onPick: () => void;
   onHover?: () => void;
   onLeave?: () => void;
@@ -1534,7 +1702,7 @@ function TripCard({
           ? "bg-yellow-50 hover:bg-yellow-100"
           : "bg-white hover:bg-blue-50")
       }
-      title={disabled ? "Doesn't follow from the last selected trip" : "Add to shift"}
+      title={disabled ? "Doesn't follow selection rules" : "Add to shift"}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="font-medium truncate">{t.start_stop_name} → {t.end_stop_name}</div>
@@ -1542,6 +1710,9 @@ function TripCard({
           {formatDayHHMM(t.departure_sec)} → {formatDayHHMM(t.arrival_sec)}
         </div>
       </div>
+      {!disabled && transferNeeded && hovered && (
+        <div className="text-[11px] text-amber-700">Transfer required between end/start stops</div>
+      )}
       <div className="mt-0.5 text-[11px] text-gray-600 truncate">
         Headsign: {t.trip_headsign}
       </div>
