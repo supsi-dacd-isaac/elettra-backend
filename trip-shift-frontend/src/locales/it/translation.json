@@ -60,6 +60,8 @@
     "edit": "Modifica",
     "close": "Chiudi",
     "back": "Indietro",
+    "create": "Crea",
+    "refresh": "Aggiorna",
     "baseUrlRequired": "Base URL richiesto"
   },
   "available": {
@@ -176,7 +178,7 @@
   },
   "selected": {
     "title": "Turno selezionato",
-    "subtitle": "Clicca una corsa a sinistra per aggiungerla qui",
+    "subtitle": "Clicca una corsa sopra per aggiungerla qui",
     "empty": "Nessuna selezione al momento.",
     "depotDepartureTitle": "Uscita dal deposito",
     "depotReturnTitle": "Rientro al deposito",
@@ -222,6 +224,40 @@
       "departDepotMissing": "Il deposito di partenza selezionato non ha stop_id",
       "returnDepotMissing": "Il deposito di rientro selezionato non ha stop_id"
     }
+  },
+  "busModels": {
+    "title": "Modelli bus",
+    "createButton": "Crea modello",
+    "listTitle": "Modelli",
+    "empty": "Nessun modello.",
+    "form": {
+      "name": "Nome",
+      "description": "Descrizione",
+      "manufacturer": "Produttore",
+      "specs": "Specifiche (JSON)"
+    },
+    "parseError": "JSON non valido nelle specifiche",
+    "createFailed": "Creazione non riuscita: {{error}}",
+    "saveFailed": "Salvataggio non riuscito: {{error}}",
+    "confirmDelete": "Eliminare il modello \"{{name}}\"?",
+    "deleteFailed": "Eliminazione non riuscita: {{error}}"
+  },
+  "buses": {
+    "title": "Autobus",
+    "createButton": "Crea autobus",
+    "listTitle": "Autobus per l'agenzia",
+    "empty": "Nessun autobus.",
+    "form": {
+      "name": "Nome",
+      "selectModel": "Seleziona modello",
+      "specs": "Specifiche (JSON)"
+    },
+    "parseError": "JSON non valido nelle specifiche",
+    "createFailed": "Creazione non riuscita: {{error}}",
+    "saveFailed": "Salvataggio non riuscito: {{error}}",
+    "confirmDelete": "Eliminare l'autobus \"{{name}}\"?",
+    "deleteFailed": "Eliminazione non riuscita: {{error}}",
+    "noModel": "Nessun modello"
   },
   "days": {
     "monday": "Lunedì",

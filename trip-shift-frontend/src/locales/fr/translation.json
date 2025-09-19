@@ -60,6 +60,8 @@
     "edit": "Modifier",
     "close": "Fermer",
     "back": "Retour",
+    "create": "Créer",
+    "refresh": "Actualiser",
     "baseUrlRequired": "URL de base requise"
   },
   "available": {
@@ -176,7 +178,7 @@
   },
   "selected": {
     "title": "Tournée sélectionnée",
-    "subtitle": "Cliquez sur une course à gauche pour l'ajouter ici",
+    "subtitle": "Cliquez sur une course ci-dessus pour l'ajouter ici",
     "empty": "Aucune sélection pour l'instant.",
     "depotDepartureTitle": "Sortie du dépôt",
     "depotReturnTitle": "Retour au dépôt",
@@ -222,6 +224,40 @@
       "departDepotMissing": "Le dépôt de départ sélectionné n'a pas de stop_id",
       "returnDepotMissing": "Le dépôt de retour sélectionné n'a pas de stop_id"
     }
+  },
+  "busModels": {
+    "title": "Modèles de bus",
+    "createButton": "Créer un modèle",
+    "listTitle": "Modèles",
+    "empty": "Aucun modèle.",
+    "form": {
+      "name": "Nom",
+      "description": "Description",
+      "manufacturer": "Fabricant",
+      "specs": "Spécifications (JSON)"
+    },
+    "parseError": "JSON invalide dans les spécifications",
+    "createFailed": "Échec de la création : {{error}}",
+    "saveFailed": "Échec de l'enregistrement : {{error}}",
+    "confirmDelete": "Supprimer le modèle \"{{name}}\" ?",
+    "deleteFailed": "Échec de la suppression : {{error}}"
+  },
+  "buses": {
+    "title": "Bus",
+    "createButton": "Créer un bus",
+    "listTitle": "Bus de l'agence",
+    "empty": "Aucun bus.",
+    "form": {
+      "name": "Nom",
+      "selectModel": "Sélectionner un modèle",
+      "specs": "Spécifications (JSON)"
+    },
+    "parseError": "JSON invalide dans les spécifications",
+    "createFailed": "Échec de la création : {{error}}",
+    "saveFailed": "Échec de l'enregistrement : {{error}}",
+    "confirmDelete": "Supprimer le bus \"{{name}}\" ?",
+    "deleteFailed": "Échec de la suppression : {{error}}",
+    "noModel": "Aucun modèle"
   },
   "days": {
     "monday": "Lundi",

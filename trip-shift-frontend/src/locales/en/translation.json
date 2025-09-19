@@ -60,6 +60,8 @@
     "edit": "Edit",
     "close": "Close",
     "back": "Back",
+    "create": "Create",
+    "refresh": "Refresh",
     "baseUrlRequired": "Base URL required"
   },
   "available": {
@@ -176,7 +178,7 @@
   },
   "selected": {
     "title": "Selected shift",
-    "subtitle": "Click a trip on the left to append here",
+    "subtitle": "Click a trip above to append here",
     "empty": "Nothing selected yet.",
     "depotDepartureTitle": "Depot departure",
     "depotReturnTitle": "Depot return",
@@ -222,6 +224,40 @@
       "departDepotMissing": "Selected departure depot has no stop_id",
       "returnDepotMissing": "Selected return depot has no stop_id"
     }
+  },
+  "busModels": {
+    "title": "Bus models",
+    "createButton": "Create model",
+    "listTitle": "Models",
+    "empty": "No models.",
+    "form": {
+      "name": "Name",
+      "description": "Description",
+      "manufacturer": "Manufacturer",
+      "specs": "Specs (JSON)"
+    },
+    "parseError": "Invalid JSON in specs",
+    "createFailed": "Create failed: {{error}}",
+    "saveFailed": "Save failed: {{error}}",
+    "confirmDelete": "Delete model \"{{name}}\"?",
+    "deleteFailed": "Delete failed: {{error}}"
+  },
+  "buses": {
+    "title": "Buses",
+    "createButton": "Create bus",
+    "listTitle": "Buses for agency",
+    "empty": "No buses.",
+    "form": {
+      "name": "Name",
+      "selectModel": "Select model",
+      "specs": "Specs (JSON)"
+    },
+    "parseError": "Invalid JSON in specs",
+    "createFailed": "Create failed: {{error}}",
+    "saveFailed": "Save failed: {{error}}",
+    "confirmDelete": "Delete bus \"{{name}}\"?",
+    "deleteFailed": "Delete failed: {{error}}",
+    "noModel": "No model"
   },
   "days": {
     "monday": "Monday",

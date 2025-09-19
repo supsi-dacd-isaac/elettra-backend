@@ -60,6 +60,8 @@
     "edit": "Bearbeiten",
     "close": "Schließen",
     "back": "Zurück",
+    "create": "Erstellen",
+    "refresh": "Aktualisieren",
     "baseUrlRequired": "Basis-URL erforderlich"
   },
   "available": {
@@ -176,7 +178,7 @@
   },
   "selected": {
     "title": "Ausgewählte Schicht",
-    "subtitle": "Klicken Sie links auf eine Fahrt, um sie hier anzufügen",
+    "subtitle": "Klicken Sie oben auf eine Fahrt, um sie hier anzufügen",
     "empty": "Noch keine Auswahl.",
     "depotDepartureTitle": "Ausfahrt aus dem Depot",
     "depotReturnTitle": "Rückfahrt zum Depot",
@@ -222,6 +224,40 @@
       "departDepotMissing": "Ausgewähltes Abfahrtsdepot hat keine stop_id",
       "returnDepotMissing": "Ausgewähltes Rückfahrtsdepot hat keine stop_id"
     }
+  },
+  "busModels": {
+    "title": "Busmodelle",
+    "createButton": "Modell erstellen",
+    "listTitle": "Modelle",
+    "empty": "Keine Modelle.",
+    "form": {
+      "name": "Name",
+      "description": "Beschreibung",
+      "manufacturer": "Hersteller",
+      "specs": "Spezifikationen (JSON)"
+    },
+    "parseError": "Ungültiges JSON in den Spezifikationen",
+    "createFailed": "Erstellen fehlgeschlagen: {{error}}",
+    "saveFailed": "Speichern fehlgeschlagen: {{error}}",
+    "confirmDelete": "Modell \"{{name}}\" löschen?",
+    "deleteFailed": "Löschen fehlgeschlagen: {{error}}"
+  },
+  "buses": {
+    "title": "Busse",
+    "createButton": "Bus erstellen",
+    "listTitle": "Busse der Agentur",
+    "empty": "Keine Busse.",
+    "form": {
+      "name": "Name",
+      "selectModel": "Modell auswählen",
+      "specs": "Spezifikationen (JSON)"
+    },
+    "parseError": "Ungültiges JSON in den Spezifikationen",
+    "createFailed": "Erstellen fehlgeschlagen: {{error}}",
+    "saveFailed": "Speichern fehlgeschlagen: {{error}}",
+    "confirmDelete": "Bus \"{{name}}\" löschen?",
+    "deleteFailed": "Löschen fehlgeschlagen: {{error}}",
+    "noModel": "Kein Modell"
   },
   "days": {
     "monday": "Montag",
