@@ -382,6 +382,31 @@ export default function TripShiftPlanner() {
   const [depotsNotice, setDepotsNotice] = useState<string>("");
   const [editingDepotId, setEditingDepotId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Partial<Depot>>({});
+  // Bus models management
+  type BusModel = { id: string; agency_id: string; name: string; description?: string | null; specs?: any; manufacturer?: string | null };
+  const [busModels, setBusModels] = useState<BusModel[]>([]);
+  const [busModelsLoading, setBusModelsLoading] = useState<boolean>(false);
+  const [busModelsError, setBusModelsError] = useState<string>("");
+  const [editingBusModelId, setEditingBusModelId] = useState<string | null>(null);
+  const [editingBusModel, setEditingBusModel] = useState<Partial<BusModel & { specsText?: string }>>({});
+  const [showCreateBusModel, setShowCreateBusModel] = useState<boolean>(false);
+  const [newBusModelName, setNewBusModelName] = useState<string>("");
+  const [newBusModelManufacturer, setNewBusModelManufacturer] = useState<string>("");
+  const [newBusModelDescription, setNewBusModelDescription] = useState<string>("");
+  const [newBusModelSpecsText, setNewBusModelSpecsText] = useState<string>("");
+  const [creatingBusModel, setCreatingBusModel] = useState<boolean>(false);
+  // Buses management
+  type Bus = { id: string; agency_id: string; name: string; specs?: any; bus_model_id?: string | null };
+  const [buses, setBuses] = useState<Bus[]>([]);
+  const [busesLoading, setBusesLoading] = useState<boolean>(false);
+  const [busesError, setBusesError] = useState<string>("");
+  const [editingBusId, setEditingBusId] = useState<string | null>(null);
+  const [editingBus, setEditingBus] = useState<Partial<Bus & { specsText?: string }>>({});
+  const [showCreateBus, setShowCreateBus] = useState<boolean>(false);
+  const [newBusName, setNewBusName] = useState<string>("");
+  const [newBusModelId, setNewBusModelId] = useState<string>("");
+  const [newBusSpecsText, setNewBusSpecsText] = useState<string>("");
+  const [creatingBus, setCreatingBus] = useState<boolean>(false);
   // Depot flow state
   const [hasLoadedForRouteDay, setHasLoadedForRouteDay] = useState<boolean>(false);
   const [leaveDepotInfo, setLeaveDepotInfo] = useState<null | { depotId: string; timeHHMM: string }>(null);
@@ -875,6 +900,44 @@ export default function TripShiftPlanner() {
     }
   }, [effectiveBaseUrl, token, agencyId]);
 
+  // Load bus models (global, not per-agency)
+  const loadBusModels = useCallback(async () => {
+    if (!effectiveBaseUrl || !token || !agencyId) return;
+    try {
+      setBusModelsError("");
+      setBusModelsLoading(true);
+      const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/bus-models/?skip=0&limit=1000");
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const all = (await res.json()) as BusModel[];
+      setBusModels(Array.isArray(all) ? all.filter((m) => m.agency_id === agencyId) : []);
+    } catch (e: any) {
+      setBusModels([]);
+      setBusModelsError(e?.message || String(e));
+    } finally {
+      setBusModelsLoading(false);
+    }
+  }, [effectiveBaseUrl, token, agencyId]);
+
+  // Load buses for selected agency
+  const loadBusesForAgency = useCallback(async () => {
+    if (!effectiveBaseUrl || !token || !agencyId) return;
+    try {
+      setBusesError("");
+      setBusesLoading(true);
+      const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/buses/?skip=0&limit=1000");
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const all = (await res.json()) as Bus[];
+      setBuses(Array.isArray(all) ? all.filter((b) => b.agency_id === agencyId) : []);
+    } catch (e: any) {
+      setBuses([]);
+      setBusesError(e?.message || String(e));
+    } finally {
+      setBusesLoading(false);
+    }
+  }, [effectiveBaseUrl, token, agencyId]);
+
   // When token becomes available, load agencies
   useEffect(() => {
     if (token) {
@@ -915,9 +978,12 @@ export default function TripShiftPlanner() {
       fetchRoutesByAgency(agencyId);
       // Load depots for selected agency
       void loadDepotsForAgency();
+      // Load buses for selected agency
+      void loadBusesForAgency();
     } else {
       setRoutes([]);
       setDepots([]);
+      setBuses([]);
       setEditingDepotId(null);
     }
     // Reset depot flow completely on agency change
@@ -927,7 +993,12 @@ export default function TripShiftPlanner() {
     setSelectedIds([]);
     setStopsByTrip({});
     setElevationByTrip({});
-  }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency]);
+  }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
+
+  // When agency/token available, load bus models for agency
+  useEffect(() => {
+    if (token && agencyId) void loadBusModels();
+  }, [token, agencyId, effectiveBaseUrl, loadBusModels]);
 
   // Reset depot flow on route change
   useEffect(() => {
@@ -1388,6 +1459,264 @@ export default function TripShiftPlanner() {
                   </ul>
                 )}
               </div>
+            )}
+          </div>
+
+          {/* Bus models frame */}
+          <div className="p-3 rounded-2xl bg-white shadow-sm border">
+            <h2 className="text-lg font-medium mb-3">{t("busModels.title", 'Bus models')}</h2>
+            <div className="flex gap-2 mb-2">
+              <button
+                className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                style={{backgroundColor: '#002AA7'}}
+                disabled={!token}
+                onClick={() => setShowCreateBusModel((v) => !v)}
+                title={!token ? t("depots.authRequired") : ''}
+              >
+                {t("busModels.createButton", showCreateBusModel ? 'Close' : 'Create model')}
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                style={{backgroundColor: '#6b7280'}}
+                disabled={!token}
+                onClick={() => void loadBusModels()}
+              >
+                {t("common.refresh", 'Refresh')}
+              </button>
+            </div>
+            {showCreateBusModel && (
+              <div className="mb-3 border rounded-lg p-2 space-y-2">
+                <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.name", 'Name')} value={newBusModelName} onChange={(e) => setNewBusModelName(e.target.value)} />
+                <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.description", 'Description')} value={newBusModelDescription} onChange={(e) => setNewBusModelDescription(e.target.value)} />
+                <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.manufacturer", 'Manufacturer')} value={newBusModelManufacturer} onChange={(e) => setNewBusModelManufacturer(e.target.value)} />
+                <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t("busModels.form.specs", 'Specs (JSON)')} value={newBusModelSpecsText} onChange={(e) => setNewBusModelSpecsText(e.target.value)} />
+                <div className="flex gap-2">
+                  <button
+                    className="px-2 py-1 rounded text-white text-sm hover:opacity-90"
+                    style={{backgroundColor: '#74C244'}}
+                    disabled={!token || creatingBusModel || !newBusModelName.trim()}
+                    onClick={async () => {
+                      if (!effectiveBaseUrl || !token) return;
+                      try {
+                        setCreatingBusModel(true);
+                        let specs: any = {};
+                        if (newBusModelSpecsText.trim()) {
+                          try { specs = JSON.parse(newBusModelSpecsText); } catch (e) { alert(t("busModels.parseError", 'Invalid JSON in specs')); setCreatingBusModel(false); return; }
+                        }
+                        const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/agency/bus-models/"), {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ agency_id: agencyId, name: newBusModelName, description: newBusModelDescription || null, manufacturer: newBusModelManufacturer || null, specs })
+                        });
+                        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                        const created = (await res.json()) as BusModel;
+                        setBusModels((prev) => [created, ...prev]);
+                        setNewBusModelName(""); setNewBusModelDescription(""); setNewBusModelManufacturer(""); setNewBusModelSpecsText(""); setShowCreateBusModel(false);
+                      } catch (e: any) {
+                        alert(t("busModels.createFailed", { error: e?.message || String(e) }));
+                      } finally {
+                        setCreatingBusModel(false);
+                      }
+                    }}
+                  >{t("common.create", 'Create')}</button>
+                  <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setShowCreateBusModel(false); setNewBusModelName(""); setNewBusModelDescription(""); setNewBusModelManufacturer(""); setNewBusModelSpecsText(""); }}>{t("common.cancel")}</button>
+                </div>
+              </div>
+            )}
+            <div className="text-sm text-gray-700 flex items-center justify-between">
+              <span>{t("busModels.listTitle", 'Models')}</span>
+              {busModelsLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
+            </div>
+            {busModelsError && <div className="text-sm text-red-600">{busModelsError}</div>}
+            {(!busModelsLoading && busModels.length === 0) ? (
+              <div className="text-sm text-gray-600">{t("busModels.empty", 'No models')}</div>
+            ) : (
+              <ul className="space-y-2 mt-2">
+                {busModels.map((m) => (
+                  <li key={m.id} className="border rounded-lg p-2">
+                    {editingBusModelId === m.id ? (
+                      <div className="space-y-2">
+                        <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.name", 'Name')} value={(editingBusModel.name as string) ?? m.name} onChange={(e) => setEditingBusModel((prev) => ({ ...prev, name: e.target.value }))} />
+                        <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.description", 'Description')} value={(editingBusModel.description as string) ?? (m.description || '')} onChange={(e) => setEditingBusModel((prev) => ({ ...prev, description: e.target.value }))} />
+                        <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.manufacturer", 'Manufacturer')} value={(editingBusModel.manufacturer as string) ?? (m.manufacturer || '')} onChange={(e) => setEditingBusModel((prev) => ({ ...prev, manufacturer: e.target.value }))} />
+                        <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t("busModels.form.specs", 'Specs (JSON)')} value={(editingBusModel.specsText as string) ?? JSON.stringify(m.specs ?? {}, null, 2)} onChange={(e) => setEditingBusModel((prev) => ({ ...prev, specsText: e.target.value }))} />
+                        <div className="flex gap-2">
+                          <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#74C244'}} onClick={async () => {
+                            if (!effectiveBaseUrl || !token) return;
+                            try {
+                              const payload: any = { agency_id: agencyId };
+                              if (editingBusModel.name !== undefined) payload.name = editingBusModel.name;
+                              if (editingBusModel.description !== undefined) payload.description = editingBusModel.description;
+                              if (editingBusModel.manufacturer !== undefined) payload.manufacturer = editingBusModel.manufacturer;
+                              if (editingBusModel.specsText !== undefined) {
+                                try { payload.specs = editingBusModel.specsText ? JSON.parse(editingBusModel.specsText as string) : {}; } catch { alert(t("busModels.parseError", 'Invalid JSON in specs')); return; }
+                              }
+                              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/bus-models/${encodeURIComponent(m.id)}`), {
+                                method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload)
+                              });
+                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                              const updated = (await res.json()) as BusModel;
+                              setBusModels((prev) => prev.map((x) => x.id === m.id ? updated : x));
+                              setEditingBusModelId(null); setEditingBusModel({});
+                            } catch (e: any) { alert(t("busModels.saveFailed", { error: e?.message || String(e) })); }
+                          }}>{t("common.save")}</button>
+                          <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingBusModelId(null); setEditingBusModel({}); }}>{t("common.cancel")}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm">
+                          <div className="font-medium">{m.name}</div>
+                          <div className="text-gray-600">{m.description || ''}</div>
+                          <div className="text-gray-600">{m.manufacturer || ''}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} onClick={() => { setEditingBusModelId(m.id); setEditingBusModel({}); }}>{t("common.edit")}</button>
+                          <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
+                            if (!effectiveBaseUrl || !token) return;
+                            if (!window.confirm(t("busModels.confirmDelete", { name: m.name }))) return;
+                            try {
+                              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/bus-models/${encodeURIComponent(m.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                              setBusModels((prev) => prev.filter((x) => x.id !== m.id));
+                            } catch (e: any) { alert(t("busModels.deleteFailed", { error: e?.message || String(e) })); }
+                          }}>{t("common.delete")}</button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Buses frame */}
+          <div className="p-3 rounded-2xl bg-white shadow-sm border">
+            <h2 className="text-lg font-medium mb-3">{t("buses.title", 'Buses')}</h2>
+            <div className="flex gap-2 mb-2">
+              <button
+                className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                style={{backgroundColor: '#002AA7'}}
+                disabled={!token || !agencyId}
+                onClick={() => setShowCreateBus((v) => !v)}
+                title={!token ? t("depots.authRequired") : !agencyId ? t("depots.selectAgencyBackend") : ''}
+              >
+                {t("buses.createButton", showCreateBus ? 'Close' : 'Create bus')}
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                style={{backgroundColor: '#6b7280'}}
+                disabled={!token || !agencyId}
+                onClick={() => void loadBusesForAgency()}
+              >
+                {t("common.refresh", 'Refresh')}
+              </button>
+            </div>
+            {showCreateBus && (
+              <div className="mb-3 border rounded-lg p-2 space-y-2">
+                <input className="w-full px-2 py-1 border rounded" placeholder={t("buses.form.name", 'Name')} value={newBusName} onChange={(e) => setNewBusName(e.target.value)} />
+                <select className="w-full px-2 py-1 border rounded" value={newBusModelId} onChange={(e) => setNewBusModelId(e.target.value)}>
+                  <option value="">{t("buses.form.selectModel", 'Select model')}</option>
+                  {busModels.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                </select>
+                <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t("buses.form.specs", 'Specs (JSON)')} value={newBusSpecsText} onChange={(e) => setNewBusSpecsText(e.target.value)} />
+                <div className="flex gap-2">
+                  <button
+                    className="px-2 py-1 rounded text-white text-sm hover:opacity-90"
+                    style={{backgroundColor: '#74C244'}}
+                    disabled={!token || !agencyId || creatingBus || !newBusName.trim()}
+                    onClick={async () => {
+                      if (!effectiveBaseUrl || !token || !agencyId) return;
+                      try {
+                        setCreatingBus(true);
+                        let specs: any = {};
+                        if (newBusSpecsText.trim()) {
+                          try { specs = JSON.parse(newBusSpecsText); } catch (e) { alert(t("buses.parseError", 'Invalid JSON in specs')); setCreatingBus(false); return; }
+                        }
+                        const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/agency/buses/"), {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ agency_id: agencyId, name: newBusName, bus_model_id: newBusModelId || null, specs })
+                        });
+                        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                        const created = (await res.json()) as Bus;
+                        setBuses((prev) => [created, ...prev]);
+                        setNewBusName(""); setNewBusModelId(""); setNewBusSpecsText(""); setShowCreateBus(false);
+                      } catch (e: any) {
+                        alert(t("buses.createFailed", { error: e?.message || String(e) }));
+                      } finally {
+                        setCreatingBus(false);
+                      }
+                    }}
+                  >{t("common.create", 'Create')}</button>
+                  <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setShowCreateBus(false); setNewBusName(""); setNewBusModelId(""); setNewBusSpecsText(""); }}>{t("common.cancel")}</button>
+                </div>
+              </div>
+            )}
+            <div className="text-sm text-gray-700 flex items-center justify-between">
+              <span>{t("buses.listTitle", 'Buses for agency')}</span>
+              {busesLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
+            </div>
+            {busesError && <div className="text-sm text-red-600">{busesError}</div>}
+            {(!busesLoading && buses.length === 0) ? (
+              <div className="text-sm text-gray-600">{t("buses.empty", 'No buses')}</div>
+            ) : (
+              <ul className="space-y-2 mt-2">
+                {buses.map((b) => (
+                  <li key={b.id} className="border rounded-lg p-2">
+                    {editingBusId === b.id ? (
+                      <div className="space-y-2">
+                        <input className="w-full px-2 py-1 border rounded" placeholder={t("buses.form.name", 'Name')} value={(editingBus.name as string) ?? b.name} onChange={(e) => setEditingBus((prev) => ({ ...prev, name: e.target.value }))} />
+                        <select className="w-full px-2 py-1 border rounded" value={(editingBus.bus_model_id as string) ?? (b.bus_model_id || '')} onChange={(e) => setEditingBus((prev) => ({ ...prev, bus_model_id: e.target.value || null }))}>
+                          <option value="">{t("buses.form.selectModel", 'Select model')}</option>
+                          {busModels.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
+                        </select>
+                        <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t("buses.form.specs", 'Specs (JSON)')} value={(editingBus.specsText as string) ?? JSON.stringify(b.specs ?? {}, null, 2)} onChange={(e) => setEditingBus((prev) => ({ ...prev, specsText: e.target.value }))} />
+                        <div className="flex gap-2">
+                          <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#74C244'}} onClick={async () => {
+                            if (!effectiveBaseUrl || !token) return;
+                            try {
+                              const payload: any = {};
+                              if (editingBus.name !== undefined) payload.name = editingBus.name;
+                              if (editingBus.bus_model_id !== undefined) payload.bus_model_id = editingBus.bus_model_id || null;
+                              if (editingBus.specsText !== undefined) {
+                                try { payload.specs = editingBus.specsText ? JSON.parse(editingBus.specsText as string) : {}; } catch { alert(t("buses.parseError", 'Invalid JSON in specs')); return; }
+                              }
+                              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/buses/${encodeURIComponent(b.id)}`), {
+                                method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload)
+                              });
+                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                              const updated = (await res.json()) as Bus;
+                              setBuses((prev) => prev.map((x) => x.id === b.id ? updated : x));
+                              setEditingBusId(null); setEditingBus({});
+                            } catch (e: any) { alert(t("buses.saveFailed", { error: e?.message || String(e) })); }
+                          }}>{t("common.save")}</button>
+                          <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingBusId(null); setEditingBus({}); }}>{t("common.cancel")}</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm">
+                          <div className="font-medium">{b.name}</div>
+                          <div className="text-gray-600">{busModels.find((m) => m.id === (b.bus_model_id || ''))?.name || t("buses.noModel", 'No model')}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} onClick={() => { setEditingBusId(b.id); setEditingBus({}); }}>{t("common.edit")}</button>
+                          <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
+                            if (!effectiveBaseUrl || !token) return;
+                            if (!window.confirm(t("buses.confirmDelete", { name: b.name }))) return;
+                            try {
+                              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/buses/${encodeURIComponent(b.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                              setBuses((prev) => prev.filter((x) => x.id !== b.id));
+                            } catch (e: any) { alert(t("buses.deleteFailed", { error: e?.message || String(e) })); }
+                          }}>{t("common.delete")}</button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
