@@ -8,13 +8,14 @@ from app.database import get_async_session
 from app.schemas.database import (
     UsersCreate, UsersRead, UsersUpdate,
     GtfsAgenciesCreate, GtfsAgenciesRead,
-    BusModelsCreate, BusModelsRead, BusModelsUpdate,
+    BusesModelsCreate, BusesModelsRead, BusesModelsUpdate,
+    BusesCreate, BusesRead, BusesUpdate,
 )
 from app.schemas.responses import (
     DepotCreateRequest, DepotUpdateRequest, DepotReadWithLocation,
 )
 from app.models import (
-    Users, GtfsAgencies, BusModels, Depots, GtfsStops
+    Users, GtfsAgencies, BusesModels, Buses, Depots, GtfsStops
 )
 from app.core.auth import get_current_user, require_admin, get_password_hash
 
@@ -84,30 +85,30 @@ async def read_agency(agency_id: UUID, db: AsyncSession = Depends(get_async_sess
     return agency
 
 # Bus Models endpoints (authenticated users only)
-@router.post("/bus-models/", response_model=BusModelsRead)
-async def create_bus_model(bus_model: BusModelsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_bus_model = BusModels(**bus_model.model_dump(exclude_unset=True))
+@router.post("/bus-models/", response_model=BusesModelsRead)
+async def create_bus_model(bus_model: BusesModelsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_bus_model = BusesModels(**bus_model.model_dump(exclude_unset=True))
     db.add(db_bus_model)
     await db.commit()
     await db.refresh(db_bus_model)
     return db_bus_model
 
-@router.get("/bus-models/", response_model=List[BusModelsRead])
+@router.get("/bus-models/", response_model=List[BusesModelsRead])
 async def read_bus_models(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    result = await db.execute(select(BusModels).offset(skip).limit(limit))
+    result = await db.execute(select(BusesModels).offset(skip).limit(limit))
     bus_models = result.scalars().all()
     return bus_models
 
-@router.get("/bus-models/{model_id}", response_model=BusModelsRead)
+@router.get("/bus-models/{model_id}", response_model=BusesModelsRead)
 async def read_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    bus_model = await db.get(BusModels, model_id)
+    bus_model = await db.get(BusesModels, model_id)
     if bus_model is None:
         raise HTTPException(status_code=404, detail="Bus model not found")
     return bus_model
 
-@router.put("/bus-models/{model_id}", response_model=BusModelsRead)
-async def update_bus_model(model_id: UUID, bus_model_update: BusModelsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_bus_model = await db.get(BusModels, model_id)
+@router.put("/bus-models/{model_id}", response_model=BusesModelsRead)
+async def update_bus_model(model_id: UUID, bus_model_update: BusesModelsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_bus_model = await db.get(BusesModels, model_id)
     if db_bus_model is None:
         raise HTTPException(status_code=404, detail="Bus model not found")
 
@@ -118,6 +119,76 @@ async def update_bus_model(model_id: UUID, bus_model_update: BusModelsUpdate, db
     await db.commit()
     await db.refresh(db_bus_model)
     return db_bus_model
+
+@router.delete("/bus-models/{model_id}")
+async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_bus_model = await db.get(BusesModels, model_id)
+    if db_bus_model is None:
+        raise HTTPException(status_code=404, detail="Bus model not found")
+    await db.delete(db_bus_model)
+    await db.commit()
+    return {"message": "Bus model deleted successfully"}
+
+# Buses endpoints (authenticated users only)
+@router.post("/buses/", response_model=BusesRead)
+async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    # Validate agency
+    agency = await db.get(GtfsAgencies, bus.agency_id)
+    if agency is None:
+        raise HTTPException(status_code=400, detail="Agency not found")
+    # Validate bus model if provided
+    if bus.bus_model_id is not None:
+        bm = await db.get(BusesModels, bus.bus_model_id)
+        if bm is None:
+            raise HTTPException(status_code=400, detail="Bus model not found")
+    db_bus = Buses(**bus.model_dump(exclude_unset=True))
+    db.add(db_bus)
+    await db.commit()
+    await db.refresh(db_bus)
+    return db_bus
+
+@router.get("/buses/", response_model=List[BusesRead])
+async def read_buses(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    result = await db.execute(select(Buses).offset(skip).limit(limit))
+    buses = result.scalars().all()
+    return buses
+
+@router.get("/buses/{bus_id}", response_model=BusesRead)
+async def read_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    bus = await db.get(Buses, bus_id)
+    if bus is None:
+        raise HTTPException(status_code=404, detail="Bus not found")
+    return bus
+
+@router.put("/buses/{bus_id}", response_model=BusesRead)
+async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_bus = await db.get(Buses, bus_id)
+    if db_bus is None:
+        raise HTTPException(status_code=404, detail="Bus not found")
+    update_data = bus_update.model_dump(exclude_unset=True, exclude={'id'})
+    # Validate foreign keys if changing
+    if 'agency_id' in update_data:
+        agency = await db.get(GtfsAgencies, update_data['agency_id'])
+        if agency is None:
+            raise HTTPException(status_code=400, detail="Agency not found")
+    if 'bus_model_id' in update_data and update_data['bus_model_id'] is not None:
+        bm = await db.get(BusesModels, update_data['bus_model_id'])
+        if bm is None:
+            raise HTTPException(status_code=400, detail="Bus model not found")
+    for field, value in update_data.items():
+        setattr(db_bus, field, value)
+    await db.commit()
+    await db.refresh(db_bus)
+    return db_bus
+
+@router.delete("/buses/{bus_id}")
+async def delete_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_bus = await db.get(Buses, bus_id)
+    if db_bus is None:
+        raise HTTPException(status_code=404, detail="Bus not found")
+    await db.delete(db_bus)
+    await db.commit()
+    return {"message": "Bus deleted successfully"}
 
 def _validate_coords(lat: Optional[float], lon: Optional[float]):
     if lat is not None and (lat < -90 or lat > 90):
