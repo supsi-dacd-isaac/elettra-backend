@@ -16,3 +16,15 @@ class AuxTripCreate(BaseModel):
     calendar_service_key: Optional[str] = None
 
 
+# Shift creation/update requests
+class ShiftCreateRequest(BaseModel):
+    name: str
+    bus_id: Optional[UUID] = None
+    trip_ids: list[UUID]
+
+
+class ShiftUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    bus_id: Optional[UUID] = None
+    trip_ids: Optional[list[UUID]] = None
+

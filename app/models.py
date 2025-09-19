@@ -18,7 +18,7 @@ class GtfsAgencies(Base):
         UniqueConstraint('gtfs_agency_id', name='gtfs_agency_gtfs_agency_id_key')
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     gtfs_agency_id: Mapped[str] = mapped_column(Text, nullable=False)
     agency_name: Mapped[str] = mapped_column(Text, nullable=False)
     agency_url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -64,7 +64,7 @@ class GtfsStops(Base):
         PrimaryKeyConstraint('id', name='gtfs_stops_pkey')
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     stop_id: Mapped[str] = mapped_column(Text, nullable=False)
     stop_code: Mapped[Optional[str]] = mapped_column(Text)
     stop_name: Mapped[Optional[str]] = mapped_column(Text)
@@ -160,7 +160,7 @@ class GtfsRoutes(Base):
         PrimaryKeyConstraint('id', name='gtfs_routes_pkey')
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     route_id: Mapped[str] = mapped_column(Text, nullable=False)
     agency_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     route_short_name: Mapped[Optional[str]] = mapped_column(Text)
@@ -230,7 +230,7 @@ class GtfsTrips(Base):
         Index('gtfs_trips_trip_id_udx', 'trip_id', unique=True)
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     route_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     service_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     gtfs_service_id: Mapped[str] = mapped_column(Text, nullable=False)
@@ -283,7 +283,7 @@ class GtfsStopsTimes(Base):
         Index('gtfs_stops_times_trip_seq_udx', 'trip_id', 'stop_sequence', unique=True)
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     trip_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     stop_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     arrival_time: Mapped[Optional[str]] = mapped_column(Text)
@@ -310,7 +310,7 @@ class Shifts(Base):
         Index('shifts_name_idx', 'name')
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     bus_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
@@ -353,7 +353,7 @@ class ShiftsStructures(Base):
         Index('shifts_structures_trip_idx', 'trip_id')
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     trip_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     shift_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)

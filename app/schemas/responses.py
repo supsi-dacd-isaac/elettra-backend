@@ -96,3 +96,19 @@ class GtfsRoutesReadWithVariant(BaseModel):
     variant_elevation_data_fields: list[str]
     variant_elevation_data: list[list]
     model_config = ConfigDict(from_attributes=True)
+
+
+class ShiftStructureItem(BaseModel):
+    id: UUID
+    trip_id: UUID
+    shift_id: UUID
+    sequence_number: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ShiftReadWithStructure(BaseModel):
+    id: UUID
+    name: str
+    bus_id: Optional[UUID]
+    structure: list[ShiftStructureItem]
+    model_config = ConfigDict(from_attributes=True)

@@ -380,7 +380,7 @@ async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_asyn
     if trip.status not in {s.value for s in TripStatus}:
         raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {[s.value for s in TripStatus]}")
 
-    db_trip = GtfsTrips(id=uuid4(), **trip.model_dump(exclude_unset=True))
+    db_trip = GtfsTrips(**trip.model_dump(exclude_unset=True))
     db.add(db_trip)
     await db.commit()
     await db.refresh(db_trip)
@@ -955,7 +955,6 @@ async def create_aux_trip(
 
     # 6) Create trip row (prefix trip_id by status, set status and gtfs_service_id)
     trip = GtfsTrips(
-        id=uuid4(),
         route_id=req.route_id,
         service_id=svc_row.id,
         gtfs_service_id=calendar_key,
@@ -973,7 +972,6 @@ async def create_aux_trip(
 
     # 7) Create stop_times entries
     st1 = GtfsStopsTimes(
-        id=uuid4(),
         trip_id=trip.id,
         stop_id=dep_stop.id,
         arrival_time=req.departure_time,
@@ -981,7 +979,6 @@ async def create_aux_trip(
         stop_sequence=1,
     )
     st2 = GtfsStopsTimes(
-        id=uuid4(),
         trip_id=trip.id,
         stop_id=arr_stop.id,
         arrival_time=req.arrival_time,

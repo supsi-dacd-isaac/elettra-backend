@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -13,9 +13,12 @@ from app.schemas.database import (
 )
 from app.schemas.responses import (
     DepotCreateRequest, DepotUpdateRequest, DepotReadWithLocation,
+    ShiftReadWithStructure, ShiftStructureItem,
 )
+from app.schemas.requests import ShiftCreateRequest, ShiftUpdateRequest
 from app.models import (
-    Users, GtfsAgencies, BusesModels, Buses, Depots, GtfsStops
+    Users, GtfsAgencies, BusesModels, Buses, Depots, GtfsStops,
+    Shifts, ShiftsStructures, GtfsTrips
 )
 from app.core.auth import get_current_user, require_admin, get_password_hash
 
@@ -218,7 +221,6 @@ async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get
     # 1) Create GTFS stop for this depot
     generated_stop_id = f"depot_{uuid4()}"
     stop = GtfsStops(
-        id=uuid4(),
         stop_id=generated_stop_id,
         stop_name=depot.name,
         stop_lat=float(depot.latitude) if depot.latitude is not None else None,
@@ -323,7 +325,6 @@ async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: Asy
         if stop is None:
             # Create a stop if missing
             stop = GtfsStops(
-                id=uuid4(),
                 stop_id=f"depot_{uuid4()}",
             )
             db.add(stop)
@@ -367,3 +368,130 @@ async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_sess
     await db.delete(db_depot)
     await db.commit()
     return {"message": "Depot deleted successfully"}
+
+
+# Shifts endpoints (authenticated users only)
+@router.post("/shifts/", response_model=ShiftReadWithStructure)
+async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    # Validate bus if provided
+    if payload.bus_id is not None:
+        bus = await db.get(Buses, payload.bus_id)
+        if bus is None:
+            raise HTTPException(status_code=400, detail="Bus not found")
+
+    # Validate trips exist
+    if not payload.trip_ids:
+        raise HTTPException(status_code=400, detail="trip_ids must be a non-empty list")
+    trips = (await db.execute(select(GtfsTrips.id).where(GtfsTrips.id.in_(payload.trip_ids)))).scalars().all()
+    missing = set(payload.trip_ids) - set(trips)
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Trips not found: {', '.join(str(x) for x in missing)}")
+
+    # Create shift (explicit id required by schema)
+    db_shift = Shifts(name=payload.name, bus_id=payload.bus_id)
+    db.add(db_shift)
+    await db.flush()
+
+    # Create structure with sequence starting at 1
+    for idx, trip_id in enumerate(payload.trip_ids, start=1):
+        ss = ShiftsStructures(trip_id=trip_id, shift_id=db_shift.id, sequence_number=idx)
+        db.add(ss)
+
+    await db.commit()
+    await db.refresh(db_shift)
+
+    # Load structure for response
+    rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id == db_shift.id).order_by(ShiftsStructures.sequence_number))).scalars().all()
+    structure = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in rows]
+    return ShiftReadWithStructure(id=db_shift.id, name=db_shift.name, bus_id=db_shift.bus_id, structure=structure)
+
+
+@router.get("/shifts/", response_model=List[ShiftReadWithStructure])
+async def list_shifts(skip: int = 0, limit: int = 100, bus_id: Optional[UUID] = None, agency_id: Optional[UUID] = None, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    q = select(Shifts)
+    if bus_id is not None:
+        q = q.where(Shifts.bus_id == bus_id)
+    if agency_id is not None:
+        # Filter shifts by agency via their bus agency_id
+        q = q.join(Buses, isouter=True).where((Buses.agency_id == agency_id))
+    q = q.offset(skip).limit(limit)
+    shifts = (await db.execute(q)).scalars().all()
+
+    # Batch fetch structures
+    shift_ids = [s.id for s in shifts]
+    structures_by_shift: dict[UUID, list[ShiftsStructures]] = {sid: [] for sid in shift_ids}
+    if shift_ids:
+        rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id.in_(shift_ids)).order_by(ShiftsStructures.shift_id, ShiftsStructures.sequence_number))).scalars().all()
+        for r in rows:
+            structures_by_shift[r.shift_id].append(r)
+
+    results: List[ShiftReadWithStructure] = []
+    for s in shifts:
+        struct_items = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in structures_by_shift.get(s.id, [])]
+        results.append(ShiftReadWithStructure(id=s.id, name=s.name, bus_id=s.bus_id, structure=struct_items))
+    return results
+
+
+@router.get("/shifts/{shift_id}", response_model=ShiftReadWithStructure)
+async def read_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    shift = await db.get(Shifts, shift_id)
+    if shift is None:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id).order_by(ShiftsStructures.sequence_number))).scalars().all()
+    structure = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in rows]
+    return ShiftReadWithStructure(id=shift.id, name=shift.name, bus_id=shift.bus_id, structure=structure)
+
+
+@router.put("/shifts/{shift_id}", response_model=ShiftReadWithStructure)
+async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    shift = await db.get(Shifts, shift_id)
+    if shift is None:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if 'bus_id' in update_data and update_data['bus_id'] is not None:
+        bus = await db.get(Buses, update_data['bus_id'])
+        if bus is None:
+            raise HTTPException(status_code=400, detail="Bus not found")
+
+    if 'name' in update_data:
+        shift.name = update_data['name']
+    if 'bus_id' in update_data:
+        shift.bus_id = update_data['bus_id']
+
+    # Replace structure if trip_ids provided
+    if 'trip_ids' in update_data:
+        trip_ids = update_data['trip_ids'] or []
+        # Validate all trips
+        trips = (await db.execute(select(GtfsTrips.id).where(GtfsTrips.id.in_(trip_ids)))).scalars().all() if trip_ids else []
+        missing = set(trip_ids) - set(trips)
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Trips not found: {', '.join(str(x) for x in missing)}")
+
+        # Delete existing structure rows
+        await db.execute(delete(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id))
+
+        # Recreate structure
+        for idx, trip_id in enumerate(trip_ids, start=1):
+            ss = ShiftsStructures(trip_id=trip_id, shift_id=shift.id, sequence_number=idx)
+            db.add(ss)
+
+    await db.commit()
+    await db.refresh(shift)
+
+    rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id).order_by(ShiftsStructures.sequence_number))).scalars().all()
+    structure = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in rows]
+    return ShiftReadWithStructure(id=shift.id, name=shift.name, bus_id=shift.bus_id, structure=structure)
+
+
+@router.delete("/shifts/{shift_id}")
+async def delete_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    shift = await db.get(Shifts, shift_id)
+    if shift is None:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    # Explicitly delete structures to avoid ORM setting FK to NULL before parent delete
+    await db.execute(delete(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id))
+    await db.delete(shift)
+    await db.commit()
+    return {"message": "Shift deleted successfully"}
