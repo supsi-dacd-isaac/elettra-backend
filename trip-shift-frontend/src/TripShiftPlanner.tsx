@@ -89,6 +89,20 @@ type ElevationProfile = {
   records: ElevationRecord[];
 };
 
+// Shifts types (backend responses)
+type ShiftStructureItem = {
+  id: string;
+  trip_id: string;
+  shift_id: string;
+  sequence_number: number;
+};
+type ShiftRead = {
+  id: string;
+  name: string;
+  bus_id?: string | null;
+  structure: ShiftStructureItem[];
+};
+
 // ---------- Utils ----------
 function parseGtfsTimeToSeconds(t: string): number {
   // Accepts strings like "08:42:00" or "25:13:00" (hours > 24 allowed)
@@ -279,13 +293,15 @@ export default function TripShiftPlanner() {
   const [password, setPassword] = useState<string>("");
   const [token, setToken] = useState<string>(ENV_TOKEN);
   const [loading, setLoading] = useState<boolean>(false);
-  const [mode, setMode] = useState<"planner" | "createDepot" | "config">("planner");
+  const [mode, setMode] = useState<"planner" | "createDepot">("planner");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [currentAgencyName, setCurrentAgencyName] = useState<string>("");
-  // Shift creation flow state
+
+  // Shift creation gating
   const [creatingShift, setCreatingShift] = useState<boolean>(false);
   const [shiftName, setShiftName] = useState<string>("");
-  const [selectedBusIdForShift, setSelectedBusIdForShift] = useState<string>("");
+  const [shiftBusId, setShiftBusId] = useState<string>("");
+  const [showStartShiftDialog, setShowStartShiftDialog] = useState<boolean>(false);
 
   useEffect(() => {
     const handleLanguageChange = (lng: string) => {
@@ -378,7 +394,6 @@ export default function TripShiftPlanner() {
   // Export progress state
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportMessage, setExportMessage] = useState<string>("");
-  const [savingShift, setSavingShift] = useState<boolean>(false);
   // Depots management
   type Depot = { id: string; agency_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
   const [depots, setDepots] = useState<Depot[]>([]);
@@ -412,7 +427,12 @@ export default function TripShiftPlanner() {
   const [newBusModelId, setNewBusModelId] = useState<string>("");
   const [newBusSpecsText, setNewBusSpecsText] = useState<string>("");
   const [creatingBus, setCreatingBus] = useState<boolean>(false);
-  const [busFilterId, setBusFilterId] = useState<string>("");
+  // Shifts management
+  const [shifts, setShifts] = useState<ShiftRead[]>([]);
+  const [shiftsLoading, setShiftsLoading] = useState<boolean>(false);
+  const [shiftsError, setShiftsError] = useState<string>("");
+  const [shiftEdges, setShiftEdges] = useState<Record<string, { fromStop: string; fromTime: string; toStop: string; toTime: string }>>({});
+  const [shiftEdgesLoading, setShiftEdgesLoading] = useState<Record<string, boolean>>({});
   // Depot flow state
   const [hasLoadedForRouteDay, setHasLoadedForRouteDay] = useState<boolean>(false);
   const [leaveDepotInfo, setLeaveDepotInfo] = useState<null | { depotId: string; timeHHMM: string }>(null);
@@ -438,14 +458,6 @@ export default function TripShiftPlanner() {
   const [agencyHighlight, setAgencyHighlight] = useState<number>(-1);
   const [routes, setRoutes] = useState<RouteRead[]>([]);
   const [routeDbId, setRouteDbId] = useState<string>(ENV_ROUTE_ID); // database UUID for route
-  // Shifts management (config view)
-  type ShiftItem = { id: string; name: string; bus_id?: string | null; structure: Array<{ id: string; trip_id: string; shift_id: string; sequence_number: number }> };
-  const [shifts, setShifts] = useState<ShiftItem[]>([]);
-  const [shiftsLoading, setShiftsLoading] = useState<boolean>(false);
-  const [shiftsError, setShiftsError] = useState<string>("");
-  const [shiftsPage, setShiftsPage] = useState<number>(1);
-  const [shiftsPageSize, setShiftsPageSize] = useState<number>(20);
-  const [shiftsHasMore, setShiftsHasMore] = useState<boolean>(false);
 
   // Hovered trip and stops cache
   const [hoveredTripId, setHoveredTripId] = useState<string | null>(null); // database trip id (UUID)
@@ -620,194 +632,221 @@ export default function TripShiftPlanner() {
     setExportMessage("");
   }
 
-  function handleExport() {
-    (async () => {
-      if (!effectiveBaseUrl) {
-        alert(t("common.baseUrlRequired"));
+  // Build final trips list: depot + transfers (if any) + core GTFS trips
+  async function buildShiftTrips(): Promise<Trip[]> {
+    if (!effectiveBaseUrl) {
+      alert(t("common.baseUrlRequired"));
+      return [];
+    }
+    if (!token) {
+      alert(t("alerts.loginRequired"));
+      return [];
+    }
+    if (!leaveDepotInfo || !returnDepotInfo) {
+      alert(t("alerts.setDepotLegs"));
+      return [];
+    }
+    if (!routeDbId && !routeId) {
+      alert(t("alerts.selectRouteFirst"));
+      return [];
+    }
+    if (selectedTrips.length === 0) {
+      alert(t("alerts.selectTrips"));
+      return [];
+    }
+
+    const parseHHMM = (hhmm: string) => {
+      const [h, m] = (hhmm || "").split(":").map((x) => parseInt(x, 10));
+      return (isFinite(h) ? h : 0) * 3600 + (isFinite(m) ? m : 0) * 60;
+    };
+    const fetchStops = async (tripDbId: string): Promise<TripStop[]> => {
+      const url = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(tripDbId)}`);
+      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return (await res.json()) as TripStop[];
+    };
+    const getEdgeStops = async (tripDbId: string): Promise<{ first: TripStop; last: TripStop }> => {
+      const stops = await fetchStops(tripDbId);
+      if (!Array.isArray(stops) || stops.length === 0) throw new Error(t("export.errors.tripHasNoStops"));
+      return { first: stops[0], last: stops[stops.length - 1] };
+    };
+
+    setExportMessage(t("export.fetchingStops"));
+    const firstTrip = selectedTrips[0];
+    const lastTrip = selectedTrips[selectedTrips.length - 1];
+    const { first: firstStop } = await getEdgeStops(firstTrip.id);
+    const { last: lastStop } = await getEdgeStops(lastTrip.id);
+    const firstArr = (firstStop.arrival_time || firstStop.departure_time || "00:00:00").slice(0, 8);
+    const lastDep = (lastStop.departure_time || lastStop.arrival_time || "00:00:00").slice(0, 8);
+
+    const lastArrSec = lastTrip.arrival_sec;
+    if (parseHHMM(returnDepotInfo.timeHHMM) <= lastArrSec) {
+      alert(t("alerts.returnTimeTooEarly", { time: formatDayHHMM(lastArrSec) }));
+      return [];
+    }
+
+    const postDepotTrip = async (body: any, stageLabel: string) => {
+      setExportMessage(stageLabel);
+      const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/gtfs/aux-trip"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return (await res.json()) as Trip;
+    };
+    const routeUuid = routeDbId || routeId;
+
+    // Insert transfer legs between non-connecting trips (use collected times if present)
+    const withTransfers: Trip[] = [];
+    const stopEdgeCache = new Map<string, { first: TripStop; last: TripStop }>();
+    const ensureEdge = async (trip: TripX) => {
+      const cached = stopEdgeCache.get(trip.id);
+      if (cached) return cached;
+      const edge = await getEdgeStops(trip.id);
+      stopEdgeCache.set(trip.id, edge);
+      return edge;
+    };
+    for (let i = 0; i < selectedTrips.length; i++) {
+      const curr = selectedTrips[i];
+      if (i === 0) {
+        withTransfers.push(curr);
+        continue;
+      }
+      const prev = selectedTrips[i - 1];
+      const sameStop = normalizeStop(curr.start_stop_name) === normalizeStop(prev.end_stop_name);
+      if (sameStop) {
+        withTransfers.push(curr);
+        continue;
+      }
+      // Need a transfer: read saved times collected during selection
+      const key = `${prev.id}__${curr.id}`;
+      const saved = transfersByEdge[key];
+      if (!saved) {
+        alert(t("alerts.missingTransferTimes"));
+        setExportMessage(""); setExporting(false); return [];
+      }
+      const transferDep = saved.depHHMM;
+      const transferArr = saved.arrHHMM;
+      const prevEdge = await ensureEdge(prev);
+      const currEdge = await ensureEdge(curr);
+      const transferTrip = await postDepotTrip({
+        departure_stop_id: prevEdge.last.id,
+        arrival_stop_id: currEdge.first.id,
+        departure_time: `${transferDep}:00`,
+        arrival_time: `${transferArr}:00`,
+        route_id: curr.route_id,
+        status: "transfer",
+      }, t("export.creatingTransfer"));
+      withTransfers.push(transferTrip);
+      withTransfers.push(curr);
+    }
+    const depDepot = depots.find((d) => d.id === leaveDepotInfo.depotId);
+    if (!depDepot || !depDepot.stop_id) throw new Error(t("export.errors.departDepotMissing"));
+    const depTrip = await postDepotTrip({
+      departure_stop_id: depDepot.stop_id,
+      arrival_stop_id: firstStop.id,
+      departure_time: `${leaveDepotInfo.timeHHMM}:00`,
+      arrival_time: firstArr.length === 5 ? `${firstArr}:00` : firstArr,
+      route_id: routeUuid,
+      status: "depot",
+    }, t("export.creatingDeparture"));
+    const retDepot = depots.find((d) => d.id === returnDepotInfo.depotId);
+    if (!retDepot || !retDepot.stop_id) throw new Error(t("export.errors.returnDepotMissing"));
+    const retTrip = await postDepotTrip({
+      departure_stop_id: lastStop.id,
+      arrival_stop_id: retDepot.stop_id,
+      departure_time: lastDep.length === 5 ? `${lastDep}:00` : lastDep,
+      arrival_time: `${returnDepotInfo.timeHHMM}:00`,
+      route_id: routeUuid,
+      status: "depot",
+    }, t("export.creatingReturn"));
+
+    const combined: Trip[] = [depTrip, ...withTransfers, retTrip];
+    return combined;
+  }
+
+  // Fetch and cache shift edges (first and last trip stop/time)
+  async function fetchShiftEdges(shift: ShiftRead) {
+    try {
+      if (!shift || !shift.structure || shift.structure.length === 0) return;
+      const firstTripId = shift.structure[0].trip_id;
+      const lastTripId = shift.structure[shift.structure.length - 1].trip_id;
+      setShiftEdgesLoading((prev) => ({ ...prev, [shift.id]: true }));
+      const urlFirst = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(firstTripId)}`);
+      const urlLast = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(lastTripId)}`);
+      const [resFirst, resLast] = await Promise.all([
+        fetch(urlFirst, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+        fetch(urlLast, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+      ]);
+      if (resFirst.ok && resLast.ok) {
+        const firstStops = (await resFirst.json()) as TripStop[];
+        const lastStops = (await resLast.json()) as TripStop[];
+        const first = firstStops?.[0];
+        const last = lastStops?.[lastStops.length - 1];
+        const fromStop = first?.stop_name || '';
+        const fromTime = (first?.departure_time || first?.arrival_time || '').slice(0, 5);
+        const toStop = last?.stop_name || '';
+        const toTime = (last?.arrival_time || last?.departure_time || '').slice(0, 5);
+        setShiftEdges((prev) => ({ ...prev, [shift.id]: { fromStop, fromTime, toStop, toTime } }));
+      }
+    } catch {
+      // ignore per-item errors
+    } finally {
+      setShiftEdgesLoading((prev) => ({ ...prev, [shift.id]: false }));
+    }
+  }
+
+  async function handleSaveShift() {
+    try {
+      setExporting(true);
+      setExportMessage(t("export.preparing"));
+      const combined = await buildShiftTrips();
+      if (!combined || combined.length === 0) return;
+
+      // Save shift to backend (requires name and bus)
+      if (!shiftName.trim() || !shiftBusId) {
+        alert(t("selected.exportHintIncomplete"));
         return;
       }
-      if (!token) {
-        alert(t("alerts.loginRequired"));
-        return;
-      }
-      if (!leaveDepotInfo || !returnDepotInfo) {
-        alert(t("alerts.setDepotLegs"));
-        return;
-      }
-      if (!routeDbId && !routeId) {
-        alert(t("alerts.selectRouteFirst"));
-        return;
-      }
-      if (selectedTrips.length === 0) {
-        alert(t("alerts.selectTrips"));
-        return;
-      }
-      // Require shift name and bus if in creating flow
-      if (creatingShift) {
-        if (!shiftName.trim()) { alert(t("selected.enterShiftName", "Please enter a shift name")); return; }
-        if (!selectedBusIdForShift) { alert(t("selected.selectBusFirst", "Please select a bus for the shift")); return; }
-      }
+      setExportMessage(t("selected.exporting"));
+      const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/agency/shifts/"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: shiftName.trim(), bus_id: shiftBusId, trip_ids: combined.map((tr) => tr.id) }),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
-      const parseHHMM = (hhmm: string) => {
-        const [h, m] = (hhmm || "").split(":").map((x) => parseInt(x, 10));
-        return (isFinite(h) ? h : 0) * 3600 + (isFinite(m) ? m : 0) * 60;
-      };
-      const fetchStops = async (tripDbId: string): Promise<TripStop[]> => {
-        const url = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(tripDbId)}`);
-        const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-        return (await res.json()) as TripStop[];
-      };
-      const getEdgeStops = async (tripDbId: string): Promise<{ first: TripStop; last: TripStop }> => {
-        const stops = await fetchStops(tripDbId);
-        if (!Array.isArray(stops) || stops.length === 0) throw new Error(t("export.errors.tripHasNoStops"));
-        return { first: stops[0], last: stops[stops.length - 1] };
-      };
+      // Refresh shifts list
+      void loadShiftsForAgency();
 
-      try {
-        setExporting(true);
-        setExportMessage(t("export.preparing"));
-        const firstTrip = selectedTrips[0];
-        const lastTrip = selectedTrips[selectedTrips.length - 1];
-        setExportMessage(t("export.fetchingStops"));
-        const { first: firstStop } = await getEdgeStops(firstTrip.id);
-        const { last: lastStop } = await getEdgeStops(lastTrip.id);
-        const firstArr = (firstStop.arrival_time || firstStop.departure_time || "00:00:00").slice(0, 8);
-        const lastDep = (lastStop.departure_time || lastStop.arrival_time || "00:00:00").slice(0, 8);
+      // Keep exporting JSON as before
+      setExportMessage(t("export.preparingDownload"));
+      const data = JSON.stringify(combined, null, 2);
+      const blob = new Blob([data], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `shift_${Date.now()}.json`;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        if (a.parentNode) a.parentNode.removeChild(a);
+      }, 1000);
 
-        const lastArrSec = lastTrip.arrival_sec;
-        if (parseHHMM(returnDepotInfo.timeHHMM) <= lastArrSec) {
-          alert(t("alerts.returnTimeTooEarly", { time: formatDayHHMM(lastArrSec) }));
-          return;
-        }
-
-        const postDepotTrip = async (body: any, stageLabel: string) => {
-          setExportMessage(stageLabel);
-          const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/gtfs/aux-trip"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify(body),
-          });
-          if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-          return (await res.json()) as Trip;
-        };
-        const routeUuid = routeDbId || routeId;
-
-        // Insert transfer legs between non-connecting trips (use collected times if present)
-        const withTransfers: Trip[] = [];
-        const stopEdgeCache = new Map<string, { first: TripStop; last: TripStop }>();
-        const ensureEdge = async (trip: TripX) => {
-          const cached = stopEdgeCache.get(trip.id);
-          if (cached) return cached;
-          const edge = await getEdgeStops(trip.id);
-          stopEdgeCache.set(trip.id, edge);
-          return edge;
-        };
-        for (let i = 0; i < selectedTrips.length; i++) {
-          const curr = selectedTrips[i];
-          if (i === 0) {
-            withTransfers.push(curr);
-            continue;
-          }
-          const prev = selectedTrips[i - 1];
-          const sameStop = normalizeStop(curr.start_stop_name) === normalizeStop(prev.end_stop_name);
-          if (sameStop) {
-            withTransfers.push(curr);
-            continue;
-          }
-          // Need a transfer: read saved times collected during selection
-          const key = `${prev.id}__${curr.id}`;
-          const saved = transfersByEdge[key];
-          if (!saved) {
-            alert(t("alerts.missingTransferTimes"));
-            setExportMessage(""); setExporting(false); return;
-          }
-          const transferDep = saved.depHHMM;
-          const transferArr = saved.arrHHMM;
-          const prevEdge = await ensureEdge(prev);
-          const currEdge = await ensureEdge(curr);
-          const transferTrip = await postDepotTrip({
-            departure_stop_id: prevEdge.last.id,
-            arrival_stop_id: currEdge.first.id,
-            departure_time: `${transferDep}:00`,
-            arrival_time: `${transferArr}:00`,
-            route_id: curr.route_id,
-            status: "transfer",
-          }, t("export.creatingTransfer"));
-          withTransfers.push(transferTrip);
-          withTransfers.push(curr);
-        }
-        const depDepot = depots.find((d) => d.id === leaveDepotInfo.depotId);
-        if (!depDepot || !depDepot.stop_id) throw new Error(t("export.errors.departDepotMissing"));
-        const depTrip = await postDepotTrip({
-          departure_stop_id: depDepot.stop_id,
-          arrival_stop_id: firstStop.id,
-          departure_time: `${leaveDepotInfo.timeHHMM}:00`,
-          arrival_time: firstArr.length === 5 ? `${firstArr}:00` : firstArr,
-          route_id: routeUuid,
-          status: "depot",
-        }, t("export.creatingDeparture"));
-        const retDepot = depots.find((d) => d.id === returnDepotInfo.depotId);
-        if (!retDepot || !retDepot.stop_id) throw new Error(t("export.errors.returnDepotMissing"));
-        const retTrip = await postDepotTrip({
-          departure_stop_id: lastStop.id,
-          arrival_stop_id: retDepot.stop_id,
-          departure_time: lastDep.length === 5 ? `${lastDep}:00` : lastDep,
-          arrival_time: `${returnDepotInfo.timeHHMM}:00`,
-          route_id: routeUuid,
-          status: "depot",
-        }, t("export.creatingReturn"));
-
-        setExportMessage(t("export.preparingDownload"));
-        const combined = [depTrip, ...withTransfers, retTrip];
-        // If creating a shift, save it now using the ordered trip ids (including depot and transfers)
-        if (creatingShift) {
-          try {
-            setSavingShift(true);
-            setExportMessage(t("selected.savingShift", "Saving shift") as string);
-            const tripIds = combined.map((tr) => tr.id);
-            const resShift = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/agency/shifts/"), {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ name: shiftName.trim(), bus_id: selectedBusIdForShift, trip_ids: tripIds })
-            });
-            if (!resShift.ok) throw new Error(`${resShift.status} ${resShift.statusText}`);
-          } catch (e: any) {
-            alert(t("selected.saveShiftFailed", { error: e?.message || String(e) }));
-            setSavingShift(false);
-            setExporting(false);
-            setExportMessage("");
-            return;
-          } finally {
-            setSavingShift(false);
-          }
-        }
-        const data = JSON.stringify(combined, null, 2);
-        const blob = new Blob([data], { type: "application/json;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `shift_${Date.now()}.json`;
-        a.style.display = "none";
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          URL.revokeObjectURL(url);
-          if (a.parentNode) a.parentNode.removeChild(a);
-        }, 1000);
-      } catch (e: any) {
-        alert(t("export.failed", { error: e?.message || e }));
-      } finally {
-        setExporting(false);
-        setExportMessage("");
-        // End of create shift flow
-        if (creatingShift) {
-          setCreatingShift(false);
-          setShiftName("");
-          setSelectedBusIdForShift("");
-        }
-      }
-    })();
+      // Reset creation flow after save
+      setCreatingShift(false);
+      setShiftName("");
+      setShiftBusId("");
+      handleReset();
+    } catch (e: any) {
+      alert(t("export.failed", { error: e?.message || e }));
+    } finally {
+      setExporting(false);
+      setExportMessage("");
+    }
   }
 
   async function performLogin(emailToUse: string, passwordToUse: string) {
@@ -868,9 +907,6 @@ export default function TripShiftPlanner() {
     setRoutes([]);
     setCurrentUser(null);
     setCurrentAgencyName("");
-    setCreatingShift(false);
-    setShiftName("");
-    setSelectedBusIdForShift("");
   }
 
   async function loadByRouteDay() {
@@ -988,6 +1024,28 @@ export default function TripShiftPlanner() {
     }
   }, [effectiveBaseUrl, token, agencyId]);
 
+  // Load shifts for selected agency
+  const loadShiftsForAgency = useCallback(async () => {
+    if (!effectiveBaseUrl || !token || !agencyId) return;
+    try {
+      setShiftsError("");
+      setShiftsLoading(true);
+      const url = joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/?skip=0&limit=1000&agency_id=${encodeURIComponent(agencyId)}`);
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const all = (await res.json()) as ShiftRead[];
+      setShifts(Array.isArray(all) ? all : []);
+      // Preload edges for first page few items
+      const toPreload = (Array.isArray(all) ? all.slice(0, 10) : []);
+      for (const s of toPreload) void fetchShiftEdges(s);
+    } catch (e: any) {
+      setShifts([]);
+      setShiftsError(e?.message || String(e));
+    } finally {
+      setShiftsLoading(false);
+    }
+  }, [effectiveBaseUrl, token, agencyId]);
+
   // When token becomes available, load agencies
   useEffect(() => {
     if (token) {
@@ -1030,14 +1088,13 @@ export default function TripShiftPlanner() {
       void loadDepotsForAgency();
       // Load buses for selected agency
       void loadBusesForAgency();
-      // Reset shifts pagination
-      setShifts([]);
-      setShiftsPage(1);
-      setShiftsHasMore(false);
+      // Load shifts for selected agency
+      void loadShiftsForAgency();
     } else {
       setRoutes([]);
       setDepots([]);
       setBuses([]);
+      setShifts([]);
       setEditingDepotId(null);
     }
     // Reset depot flow completely on agency change
@@ -1047,43 +1104,12 @@ export default function TripShiftPlanner() {
     setSelectedIds([]);
     setStopsByTrip({});
     setElevationByTrip({});
-  }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
+  }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency, loadShiftsForAgency]);
 
   // When agency/token available, load bus models for agency
   useEffect(() => {
     if (token && agencyId) void loadBusModels();
   }, [token, agencyId, effectiveBaseUrl, loadBusModels]);
-
-  // Load shifts page
-  const loadShiftsPage = useCallback(async (page: number, pageSizeArg?: number) => {
-    if (!effectiveBaseUrl || !token || !agencyId) return;
-    const size = pageSizeArg ?? shiftsPageSize;
-    const skip = (page - 1) * size;
-    try {
-      setShiftsLoading(true);
-      setShiftsError("");
-      const url = joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/?skip=${skip}&limit=${size}&agency_id=${encodeURIComponent(agencyId)}${busFilterId ? `&bus_id=${encodeURIComponent(busFilterId)}` : ""}`);
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const data = (await res.json()) as ShiftItem[];
-      setShifts((prev) => page === 1 ? data : [...prev, ...data]);
-      setShiftsHasMore(data.length === size);
-    } catch (e: any) {
-      setShiftsError(e?.message || String(e));
-    } finally {
-      setShiftsLoading(false);
-    }
-  }, [effectiveBaseUrl, token, agencyId, busFilterId, shiftsPageSize]);
-
-  // Reload shifts when filters change
-  useEffect(() => {
-    if (mode === "config" && token && agencyId) {
-      setShifts([]);
-      setShiftsPage(1);
-      setShiftsHasMore(false);
-      void loadShiftsPage(1);
-    }
-  }, [mode, token, agencyId, busFilterId, shiftsPageSize, loadShiftsPage]);
 
   // Reset depot flow on route change
   useEffect(() => {
@@ -1202,10 +1228,6 @@ export default function TripShiftPlanner() {
           </div>
 
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
-            <div className="flex items-center gap-2">
-              <button className={`px-3 py-2 rounded-lg text-sm ${mode === "planner" ? "text-white" : "bg-gray-100 hover:bg-gray-200"}`} style={mode === "planner" ? {backgroundColor: '#002AA7'} : {}} onClick={() => setMode("planner")}>{t("common.planner", 'Planner')}</button>
-              <button className={`px-3 py-2 rounded-lg text-sm ${mode === "config" ? "text-white" : "bg-gray-100 hover:bg-gray-200"}`} style={mode === "config" ? {backgroundColor: '#002AA7'} : {}} onClick={() => setMode("config")}>{t("common.config", 'Config')}</button>
-            </div>
             <label className="flex items-center gap-2 text-sm text-gray-600">
               <span className="font-medium text-gray-700">{t("header.languageLabel")}</span>
               <select
@@ -1298,10 +1320,237 @@ export default function TripShiftPlanner() {
                 {depotsNotice}
               </div>
             )}
-            {/* Left-side Depots, Bus Models, and Buses panels moved to Config view */}
-            {/* The selection controls (agency/route/day) remain here for planning */}
             <div className="space-y-2 text-sm">
-              {/* Existing shift flow buttons remain below */}
+              {/* Create Shift flow */}
+              <div className="p-2 rounded-lg border">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium">{t("shifts.createTitle", 'Shift creation')}</div>
+                  {!creatingShift ? (
+                    <button
+                      className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                      style={{backgroundColor: '#002AA7'}}
+                      disabled={!token || !agencyId}
+                      onClick={() => {
+                        setShowStartShiftDialog(true);
+                      }}
+                      title={!token ? t("depots.authRequired") : (!agencyId ? t("depots.selectAgencyBackend") : t("shifts.startHint", 'Start a new shift'))}
+                    >
+                      {t("shifts.createButton", 'Create shift')}
+                    </button>
+                  ) : (
+                    <div className="text-xs text-gray-700">
+                      {t("shifts.current", 'Creating')}: <span className="font-medium">{shiftName || '—'}</span>
+                      <div className="mt-1 flex gap-2">
+                        <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => {
+                          setCreatingShift(false);
+                          setShiftName("");
+                          setShiftBusId("");
+                          handleReset();
+                        }}>{t("common.cancel")}</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {!creatingShift && (
+                  <div className="text-xs text-gray-600">{t("shifts.createHint", 'Click "Create shift" to begin. You will enter the name and select a bus. Then select day/route and construct the shift.')}</div>
+                )}
+                {creatingShift && (
+                  <div className="text-xs text-gray-600">{t("shifts.enabledHint", 'Day and route are now enabled. Proceed with depot, trips, return then Save shift.')}</div>
+                )}
+              </div>
+              {/* Depot flow */}
+              <div className="p-2 rounded-lg border">
+                <div className="text-sm font-medium mb-2">{t("shift.depotFlow")}</div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                    style={{backgroundColor: '#002AA7'}}
+                    disabled={!token || !agencyId || !(routeDbId || routeId) || !hasLoadedForRouteDay || !creatingShift}
+                    onClick={() => {
+                      setModalError("");
+                      setModalDepotId("");
+                      setModalTime("");
+                      setShowDepotDialog("leave");
+                    }}
+                    title={!hasLoadedForRouteDay ? t("shift.leaveDisabledHint") : t("shift.pickDepotAndTime")}
+                  >
+                    {leaveDepotInfo ? t("shift.leaveDepotSet") : t("shift.leaveDepot")}
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
+                    style={{ backgroundColor: returnDepotInfo ? "#6b7280" : "#74C244" }}
+                    disabled={!token || !agencyId || !(routeDbId || routeId) || !leaveDepotInfo || selectedIds.length === 0 || !creatingShift}
+                    onClick={() => {
+                      setModalError("");
+                      setModalDepotId("");
+                      setModalTime("");
+                      setShowDepotDialog("return");
+                    }}
+                    title={!leaveDepotInfo
+                      ? t("shift.returnDisabledNoLeave")
+                      : selectedIds.length === 0
+                      ? t("shift.returnDisabledNoTrips")
+                      : t("shift.pickDepotAndTime")}
+                  >
+                    {returnDepotInfo ? t("shift.returnDepotSet") : t("shift.returnDepot")}
+                  </button>
+                </div>
+                {leaveDepotInfo && (
+                  <div className="mt-2 text-xs text-gray-700">{t("shift.leaveSummary", { time: leaveDepotInfo.timeHHMM })}</div>
+                )}
+                {returnDepotInfo && (
+                  <div className="mt-1 text-xs text-gray-700">{t("shift.returnSummary", { time: returnDepotInfo.timeHHMM })}</div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <div className="relative">
+                  <input
+                    className="w-full px-3 py-2 border rounded-lg"
+                    placeholder={token ? t("shift.selectAgencyPlaceholder") : t("shift.loginFirstPlaceholder")}
+                    value={agencyQuery}
+                    disabled={!token}
+                    onFocus={() => token && setAgencyOpen(true)}
+                    onChange={(e) => {
+                      setAgencyQuery(e.target.value);
+                      setAgencyOpen(true);
+                      setAgencyHighlight(-1);
+                      if (agencyId) setAgencyId(""); // clear selection when typing
+                    }}
+                    onKeyDown={(e) => {
+                      if (!agencyOpen && (e.key === "ArrowDown" || e.key === "Enter")) {
+                        setAgencyOpen(true);
+                        return;
+                      }
+                      if (!agencyOpen) return;
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setAgencyHighlight((h) => Math.min((filteredAgencies.length - 1), h + 1));
+                      } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setAgencyHighlight((h) => Math.max(-1, h - 1));
+                      } else if (e.key === "Enter") {
+                        e.preventDefault();
+                        const pick = agencyHighlight >= 0 ? filteredAgencies[agencyHighlight] : filteredAgencies[0];
+                        if (pick) {
+                          setAgencyId(pick.id);
+                          setAgencyQuery(agencyLabel(pick));
+                          setAgencyOpen(false);
+                          setAgencyHighlight(-1);
+                        }
+                      } else if (e.key === "Escape") {
+                        setAgencyOpen(false);
+                        setAgencyHighlight(-1);
+                      }
+                    }}
+                    onBlur={() => {
+                      // Close after click selection
+                      setTimeout(() => setAgencyOpen(false), 100);
+                    }}
+                  />
+                  {agencyOpen && token && filteredAgencies.length > 0 && (
+                    <ul className="absolute z-10 mt-1 w-full max-h-48 overflow-auto border rounded-lg bg-white shadow">
+                      {filteredAgencies.map((a, idx) => (
+                        <li
+                          key={a.id}
+                          className={
+                            "px-3 py-2 cursor-pointer text-sm " +
+                            (idx === agencyHighlight ? "text-white" : "hover:bg-gray-100")
+                          }
+                          style={idx === agencyHighlight ? {backgroundColor: '#002AA7'} : {}}
+                          onMouseEnter={() => setAgencyHighlight(idx)}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setAgencyId(a.id);
+                            setAgencyQuery(agencyLabel(a));
+                            setAgencyOpen(false);
+                            setAgencyHighlight(-1);
+                          }}
+                        >
+                          {agencyLabel(a)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <select
+                  className="px-3 py-2 border rounded-lg"
+                  value={routeDbId}
+                  onChange={(e) => setRouteDbId(e.target.value)}
+                  disabled={!agencyId || routes.length === 0 || !creatingShift}
+                >
+                  <option value="">{agencyId
+                    ? (routes.length ? t("shift.selectRoutePlaceholder") : t("shift.loadingRoutes"))
+                    : t("shift.selectAgencyFirst")}</option>
+                  {routes.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {(r.route_short_name || r.route_long_name || r.route_id) as string}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <select className="px-3 py-2 border rounded-lg" value={day} onChange={(e) => setDay(e.target.value)} disabled={!creatingShift}>
+                  {DAYS.map((d) => (
+                    <option key={d} value={d}>{t(`days.${d}`)}</option>
+                  ))}
+                </select>
+              </div>
+              {/* Shifts list inside Shift Planning panel */}
+              <div className="mt-3 p-2 rounded-lg border">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium">{t("shifts.listTitle", 'Saved shifts')}</div>
+                  <div className="flex items-center gap-2">
+                    {shiftsLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
+                    <button
+                      className="px-2 py-1 rounded text-white text-xs hover:opacity-90 disabled:opacity-50"
+                      style={{backgroundColor: '#6b7280'}}
+                      disabled={!token || !agencyId}
+                      onClick={() => void loadShiftsForAgency()}
+                      title={!token ? t("depots.authRequired") : (!agencyId ? t("depots.selectAgencyBackend") : '')}
+                    >
+                      {t("common.refresh", 'Refresh')}
+                    </button>
+                  </div>
+                </div>
+                {shiftsError && <div className="text-sm text-red-600">{shiftsError}</div>}
+                {(!shiftsLoading && shifts.length === 0) ? (
+                  <div className="text-sm text-gray-600">{t("shifts.empty", 'No shifts')}</div>
+                ) : (
+                  <ul className="space-y-2">
+                    {shifts.map((s) => (
+                      <li key={s.id} className="border rounded-lg p-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-sm">
+                            <div className="font-medium">{s.name}</div>
+                            <div className="text-gray-600">{t("shifts.tripCount", { count: s.structure?.length || 0 })}</div>
+                            <div className="text-gray-600">
+                              {(() => {
+                                const edge = shiftEdges[s.id];
+                                const loading = shiftEdgesLoading[s.id];
+                                if (loading) return <span className="text-xs text-gray-500">{t("common.loading")}</span>;
+                                if (!edge) { void fetchShiftEdges(s); return <span className="text-xs text-gray-500">{t("common.loading")}</span>; }
+                                return <>{t("shifts.summary", edge as any)}</>;
+                              })()}
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
+                              if (!effectiveBaseUrl || !token) return;
+                              if (!window.confirm(t("shifts.confirmDelete", { name: s.name }) as any)) return;
+                              try {
+                                const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/${encodeURIComponent(s.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                                if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                                setShifts((prev) => prev.filter((x) => x.id !== s.id));
+                              } catch (e: any) { alert(t("shifts.deleteFailed", { error: e?.message || String(e) })); }
+                            }}>{t("common.delete")}</button>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1674,6 +1923,7 @@ export default function TripShiftPlanner() {
             )}
           </div>
 
+
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">{t("summary.title")}</h2>
             <ul className="space-y-2 text-sm">
@@ -1757,11 +2007,11 @@ export default function TripShiftPlanner() {
                 </div>
               </div>
 
-              {/* Overlay hint when trips are loaded but Leave depot not set */}
-              {rawTrips.length > 0 && !leaveDepotInfo && (
+              {/* Overlay hint when trips are loaded but Leave depot not set or shift not started */}
+              {((rawTrips.length > 0 && !leaveDepotInfo) || !creatingShift) && (
                 <div className="absolute inset-0 z-10 flex items-start justify-center pointer-events-none">
                   <div className="mt-12 px-4 py-2 rounded-lg text-sm shadow" style={{color: '#3B3C48', backgroundColor: '#f8f9fa', borderColor: '#dee2e6', border: '1px solid'}}>
-                    {t("available.leaveDepotOverlay")}
+                    {!creatingShift ? t("shifts.overlayCreateFirst", 'Click "Create shift" and set name + bus to begin') : t("available.leaveDepotOverlay")}
                   </div>
                 </div>
               )}
@@ -1771,6 +2021,7 @@ export default function TripShiftPlanner() {
                     key={trip.id}
                     trip={trip}
                     disabled={
+                      !creatingShift ||
                       !leaveDepotInfo ||
                       (selectedIds.length === 0 && leaveDepotInfo !== null && trip.departure_sec < parseHHMMToSec(leaveDepotInfo.timeHHMM)) ||
                       (selectedIds.length > 0 && (onlyValidNext ? !computeValidNext(lastSelected, trip) : (trip.departure_sec < (lastSelected?.arrival_sec ?? 0))))
@@ -1886,16 +2137,16 @@ export default function TripShiftPlanner() {
                 const hasCore = selectedTrips.length > 0 && !!leaveDepotInfo && !!returnDepotInfo;
                 const lastArr = selectedTrips.length > 0 ? selectedTrips[selectedTrips.length - 1].arrival_sec : undefined;
                 const retOk = hasCore && lastArr !== undefined && parseHHMMToSec(returnDepotInfo!.timeHHMM) > lastArr;
-                const canExport = Boolean(retOk) && (!creatingShift || (shiftName.trim() && selectedBusIdForShift));
+                const canExport = Boolean(retOk);
                 return (
                   <button
-                    onClick={handleExport}
+                    onClick={handleSaveShift}
                     className="px-3 py-2 rounded-lg text-white hover:opacity-90 disabled:opacity-50"
                     style={{backgroundColor: '#74C244'}}
-                    disabled={!canExport || exporting || savingShift}
-                    title={!hasCore ? t("selected.exportHintIncomplete") : (!retOk ? t("selected.exportHintReturn") : (!creatingShift ? "" : (!shiftName.trim() ? t("selected.enterShiftName", 'Enter a shift name') : (!selectedBusIdForShift ? t("selected.selectBusFirst", 'Select a bus') : ""))))}
+                    disabled={!canExport || !creatingShift || !shiftName.trim() || !shiftBusId}
+                    title={!creatingShift ? (t("shifts.createFirst", 'Create shift to enable saving') as any) : (!hasCore ? t("selected.exportHintIncomplete") : (!retOk ? t("selected.exportHintReturn") : (!shiftName.trim() || !shiftBusId ? (t("shifts.nameBusRequired", 'Name and bus are required') as any) : "")))}
                   >
-                    {exporting || savingShift ? (exportMessage || t("selected.exporting")) : (creatingShift ? t("selected.saveAndExport", 'Save & Export') : t("selected.export"))}
+                    {exporting ? (exportMessage || t("shifts.saving", 'Saving shift...')) : t("shifts.saveButton", 'Save shift')}
                   </button>
                 );
               })()}
@@ -1903,88 +2154,22 @@ export default function TripShiftPlanner() {
             </section>
           </>
         ) : (
-          mode === "createDepot" ? (
-            <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
-              <CreateDepotView
-                token={token}
-                agencyId={agencyId}
-                baseUrl={effectiveBaseUrl}
-                onCancel={() => setMode("planner")}
-                onCreated={(dep?: any) => {
-                  setDepotsNotice(dep?.name ? t("depots.createdWithName", { name: dep.name }) : t("depots.created"));
-                  setTimeout(() => setDepotsNotice(""), 3000);
-                  void loadDepotsForAgency();
-                  setMode("planner");
-                }}
-              />
-            </section>
-          ) : (
-            // Config view: show Depots, Bus Models, Buses, and Shifts panels
-            <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col gap-4">
-              <div className="text-sm text-gray-700">{t("common.configIntro", 'Manage depots, bus models, buses, and shifts')}</div>
-              {/* Reuse existing panels by showing quick summaries where appropriate */}
-              <div className="grid grid-cols-1 gap-4">
-                {/* Shifts panel */}
-                <div className="p-3 rounded-2xl bg-white shadow-sm border">
-                  <div className="flex items-center justify-between mb-2">
-                    <h2 className="text-lg font-medium">{t("shifts.title", 'Shifts')}</h2>
-                    <div className="flex items-center gap-2">
-                      <select className="px-2 py-1 border rounded" value={busFilterId} onChange={(e) => setBusFilterId(e.target.value)}>
-                        <option value="">{t("shifts.filterAllBuses", 'All buses')}</option>
-                        {buses.filter((b) => b.agency_id === agencyId).map((b) => (
-                          <option key={b.id} value={b.id}>{b.name}</option>
-                        ))}
-                      </select>
-                      <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor:'#6b7280'}} disabled={!token || !agencyId} onClick={() => { setShifts([]); setShiftsPage(1); setShiftsHasMore(false); void loadShiftsPage(1); }}>{t("common.refresh", 'Refresh')}</button>
-                    </div>
-                  </div>
-                  {!token || !agencyId ? (
-                    <div className="text-sm text-gray-600">{!token ? t("depots.authRequired") : t("depots.selectAgencyBackend")}</div>
-                  ) : (
-                    <>
-                      {shiftsError && <div className="text-sm text-red-600">{shiftsError}</div>}
-                      <ul className="space-y-2">
-                        {shifts.map((s) => (
-                          <li key={s.id} className="border rounded-lg p-2 flex items-center justify-between">
-                            <div className="text-sm">
-                              <div className="font-medium">{s.name}</div>
-                              <div className="text-gray-600">{t("shifts.structureCount", { count: s.structure?.length ?? 0 })}</div>
-                              <div className="text-xs text-gray-500">{t("shifts.busLabel", 'Bus')}: {buses.find((b) => b.id === (s.bus_id || ''))?.name || t("buses.noModel", 'No model')}</div>
-                            </div>
-                            <div className="flex gap-2">
-                              <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
-                                if (!effectiveBaseUrl || !token) return;
-                                if (!window.confirm(t("shifts.confirmDelete", { name: s.name }) as string)) return;
-                                try {
-                                  const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/${encodeURIComponent(s.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-                                  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                                  setShifts((prev) => prev.filter((x) => x.id !== s.id));
-                                } catch (e: any) {
-                                  alert(t("shifts.deleteFailed", { error: e?.message || String(e) }));
-                                }
-                              }}>{t("common.delete")}</button>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                      <div className="mt-2 flex items-center gap-2 text-sm">
-                        <button className="px-2 py-1 border rounded disabled:opacity-50" disabled={shiftsPage <= 1 || shiftsLoading} onClick={() => { const p = Math.max(1, shiftsPage - 1); setShiftsPage(p); setShifts([]); void loadShiftsPage(p); }}>{t("common.prev")}</button>
-                        <span className="text-gray-600">{t("available.pageStatus", { current: shiftsPage, total: shiftsHasMore ? `${shiftsPage}+` : shiftsPage })}</span>
-                        <button className="px-2 py-1 border rounded disabled:opacity-50" disabled={!shiftsHasMore || shiftsLoading} onClick={() => { const p = shiftsPage + 1; setShiftsPage(p); void loadShiftsPage(p); }}>{t("common.next")}</button>
-                        <label className="ml-2 text-gray-600">{t("available.perPage")}</label>
-                        <select className="px-2 py-1 border rounded" value={shiftsPageSize} onChange={(e) => { const ps = parseInt(e.target.value, 10) || 20; setShiftsPageSize(ps); setShiftsPage(1); setShifts([]); void loadShiftsPage(1, ps); }}>
-                          <option value={10}>10</option>
-                          <option value={20}>20</option>
-                          <option value={50}>50</option>
-                        </select>
-                        {shiftsLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </section>
-          )
+          <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
+            <CreateDepotView
+              token={token}
+              agencyId={agencyId}
+              baseUrl={effectiveBaseUrl}
+              onCancel={() => setMode("planner")}
+              onCreated={(dep?: any) => {
+                // Non-blocking success notice
+                setDepotsNotice(dep?.name ? t("depots.createdWithName", { name: dep.name }) : t("depots.created"));
+                setTimeout(() => setDepotsNotice(""), 3000);
+                // Reload list immediately so it appears without a page refresh
+                void loadDepotsForAgency();
+                setMode("planner");
+              }}
+            />
+          </section>
         )}
       </main>
       {/* Depot modal */}
@@ -2036,6 +2221,50 @@ export default function TripShiftPlanner() {
                 }}
               >
                 {t("common.save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Start Shift modal */}
+      {showStartShiftDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-4 border">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-medium">{t("shifts.startTitle", 'Create shift')}</h3>
+              <button className="text-sm px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => setShowStartShiftDialog(false)}>{t("common.close")}</button>
+            </div>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">{t("shifts.nameLabel", 'Shift name')}</label>
+                <input className="w-full px-3 py-2 border rounded-lg" value={shiftName} onChange={(e) => setShiftName(e.target.value)} placeholder={t("shifts.namePlaceholder", 'e.g. Morning peak 1')} />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-700 mb-1">{t("shifts.busLabel", 'Bus')}</label>
+                <select className="w-full px-3 py-2 border rounded-lg" value={shiftBusId} onChange={(e) => setShiftBusId(e.target.value)}>
+                  <option value="">{t("shifts.selectBus", 'Select bus')}</option>
+                  {buses.filter((b) => b.agency_id === agencyId).map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="text-xs text-gray-600">{t("shifts.startHint2", 'After starting, select day and route, then build the shift.')}</div>
+            </div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => setShowStartShiftDialog(false)}>{t("common.cancel")}</button>
+              <button
+                className="px-3 py-2 rounded text-white text-sm hover:opacity-90 disabled:opacity-50"
+                style={{backgroundColor: '#002AA7'}}
+                disabled={!shiftName.trim() || !shiftBusId}
+                onClick={() => {
+                  setShowStartShiftDialog(false);
+                  setCreatingShift(true);
+                  // Clear any previous selections
+                  handleReset();
+                }}
+              >
+                {t("shifts.startButton", 'Start')}
               </button>
             </div>
           </div>
