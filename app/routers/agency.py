@@ -87,6 +87,10 @@ async def read_agency(agency_id: UUID, db: AsyncSession = Depends(get_async_sess
 # Bus Models endpoints (authenticated users only)
 @router.post("/bus-models/", response_model=BusesModelsRead)
 async def create_bus_model(bus_model: BusesModelsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    # Validate agency exists
+    agency = await db.get(GtfsAgencies, bus_model.agency_id)
+    if agency is None:
+        raise HTTPException(status_code=400, detail="Agency not found")
     db_bus_model = BusesModels(**bus_model.model_dump(exclude_unset=True))
     db.add(db_bus_model)
     await db.commit()
@@ -113,6 +117,11 @@ async def update_bus_model(model_id: UUID, bus_model_update: BusesModelsUpdate, 
         raise HTTPException(status_code=404, detail="Bus model not found")
 
     update_data = bus_model_update.model_dump(exclude_unset=True, exclude={'id'})
+    # Validate agency if being changed
+    if 'agency_id' in update_data:
+        agency = await db.get(GtfsAgencies, update_data['agency_id'])
+        if agency is None:
+            raise HTTPException(status_code=400, detail="Agency not found")
     for field, value in update_data.items():
         setattr(db_bus_model, field, value)
 

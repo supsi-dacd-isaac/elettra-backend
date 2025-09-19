@@ -33,7 +33,11 @@ def ensure_bus_model(client: TestClient, token: str) -> str:
     # Always create a fresh model so we can safely delete it later
     r = client.post(
         f"{API_BASE}/bus-models/",
-        json={"name": "Test Model for Buses", "specs": {}},
+        json={
+            "name": "Test Model for Buses",
+            "specs": {},
+            "agency_id": os.getenv("TEST_AGENCY_ID")
+        },
         headers=hdrs,
     )
     assert r.status_code == 200, f"create model failed: {r.text}"

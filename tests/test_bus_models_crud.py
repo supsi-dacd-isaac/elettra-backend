@@ -6,6 +6,7 @@ Generates a human-readable report in tests/reports/ via report_collector fixture
 import os
 import pytest
 from fastapi.testclient import TestClient
+import uuid
 
 __report_module__ = "bus_models_crud"
 
@@ -34,6 +35,8 @@ def create_bus_model(client: TestClient, token: str, name: str = "Test Model") -
         "manufacturer": "Test Maker",
         "specs": {"battery_kwh": 300}
     }
+    # Agency id required now
+    payload["agency_id"] = os.getenv("TEST_AGENCY_ID")
     r = client.post(f"{API_BASE}/bus-models/", json=payload, headers=auth_headers(token))
     if r.status_code == 200:
         return r.json()["id"]
@@ -68,11 +71,14 @@ def test_create_read_update_delete_bus_model(client: TestClient, record):
     r = client.post(f"{API_BASE}/bus-models/", json={
         "name": "Test Model 1",
         "manufacturer": "Maker",
-        "specs": {"battery_kwh": 250}
+        "specs": {"battery_kwh": 250},
+        "description": "Initial description",
+        "agency_id": os.getenv("TEST_AGENCY_ID")
     }, headers=hdrs)
     record("bm_create", r.status_code == 200, f"status={r.status_code}")
     model = r.json()
     model_id = model["id"]
+    record("bm_create_description", model.get("description") == "Initial description", f"desc={model.get('description')}")
 
     # Read list
     r = client.get(f"{API_BASE}/bus-models/", headers=hdrs)
@@ -83,8 +89,8 @@ def test_create_read_update_delete_bus_model(client: TestClient, record):
     record("bm_get", r.status_code == 200 and r.json()["id"] == model_id, f"status={r.status_code}")
 
     # Update
-    r = client.put(f"{API_BASE}/bus-models/{model_id}", json={"name": "Updated Model 1"}, headers=hdrs)
-    ok = r.status_code == 200 and r.json()["name"] == "Updated Model 1"
+    r = client.put(f"{API_BASE}/bus-models/{model_id}", json={"name": "Updated Model 1", "description": "Updated description"}, headers=hdrs)
+    ok = r.status_code == 200 and r.json()["name"] == "Updated Model 1" and r.json().get("description") == "Updated description"
     record("bm_update", ok, f"status={r.status_code}")
 
     # Delete
@@ -109,5 +115,20 @@ def test_bus_model_not_found(client: TestClient, record):
     record("bm_put_404", r.status_code == 404, f"status={r.status_code}")
     r = client.delete(f"{API_BASE}/bus-models/{invalid_id}", headers=hdrs)
     record("bm_del_404", r.status_code == 404, f"status={r.status_code}")
+
+
+def test_bus_model_invalid_agency_fk(client: TestClient, record):
+    token = get_auth_token(client)
+    if not token:
+        record("bm_fk_auth_failed", False, "login failed")
+        return
+    hdrs = auth_headers(token)
+    bad_agency = str(uuid.uuid4())
+    r = client.post(f"{API_BASE}/bus-models/", json={
+        "name": "Invalid FK Model",
+        "specs": {},
+        "agency_id": bad_agency
+    }, headers=hdrs)
+    record("bm_create_invalid_fk", r.status_code == 400, f"status={r.status_code}")
 
 
