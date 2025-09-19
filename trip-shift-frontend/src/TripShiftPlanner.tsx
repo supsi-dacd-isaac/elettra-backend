@@ -4,6 +4,7 @@ import * as L from "leaflet";
 import { useTranslation } from "react-i18next";
 
 import { SUPPORTED_LANGUAGES, setAppLanguage, type SupportedLanguage } from "./i18n";
+import { useAuth } from "./app/auth/AuthContext.tsx";
 
 /**
  * Trip Shift Planner — single‑file React demo (TypeScript + Tailwind)
@@ -249,7 +250,6 @@ const SAMPLE_TRIPS: Trip[] = [
 // ---------- Env helpers (Vite/Next) ----------
 const VITE = (typeof import.meta !== "undefined" ? (import.meta as any).env : {}) || {};
 const ENV_BASE_URL: string = VITE.VITE_API_BASE_URL || "";
-const ENV_TOKEN: string = VITE.VITE_API_TOKEN || "";
 const ENV_ROUTE_ID: string = VITE.VITE_TEST_ROUTE_ID || "";
 const ENV_DAY: string = VITE.VITE_DAY || "monday";
 const ENV_LOGIN_EMAIL: string = VITE.VITE_TEST_LOGIN_EMAIL || VITE.TEST_LOGIN_EMAIL || "";
@@ -259,12 +259,17 @@ const ENV_AUTO_LOGIN: boolean = VITE.VITE_AUTO_LOGIN === "true" || VITE.VITE_AUT
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
 
 // ---------- Main Component ----------
-export default function TripShiftPlanner() {
+export default function TripShiftPlanner(props?: { embedded?: boolean }) {
+  const embedded = props?.embedded ?? false;
   const { t, i18n } = useTranslation();
-  const [language, setLanguage] = useState<SupportedLanguage>(() => {
+  const [language] = useState<SupportedLanguage>(() => {
     const current = i18n.language as SupportedLanguage;
     return SUPPORTED_LANGUAGES.includes(current) ? current : "en";
   });
+  const handleLanguageSelect = useCallback((lng: SupportedLanguage) => {
+    if (lng === language) return;
+    setAppLanguage(lng);
+  }, [language]);
 
   const [rawTrips, setRawTrips] = useState<Trip[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -272,6 +277,12 @@ export default function TripShiftPlanner() {
   const [hideUsed, setHideUsed] = useState<boolean>(true);
   const [textFilter, setTextFilter] = useState<string>("");
   const [allTripsMap, setAllTripsMap] = useState<Map<string, TripX>>(new Map());
+
+  // Shift creation gating
+  const [creatingShift, setCreatingShift] = useState<boolean>(false);
+  const [shiftName, setShiftName] = useState<string>("");
+  const [shiftBusId, setShiftBusId] = useState<string>("");
+  const [showStartShiftDialog, setShowStartShiftDialog] = useState<boolean>(false);
 
   // Removed outdated file upload and free-URL fetch
 
@@ -289,144 +300,27 @@ export default function TripShiftPlanner() {
   }, []);
   const [routeId] = useState<string>(ENV_ROUTE_ID);
   const [day, setDay] = useState<string>(ENV_DAY);
-  const [email, setEmail] = useState<string>("");
-  const [password, setPassword] = useState<string>("");
-  const [token, setToken] = useState<string>(ENV_TOKEN);
+  const { token, setToken } = useAuth();
   const [loading, setLoading] = useState<boolean>(false);
-  const [mode, setMode] = useState<"planner" | "createDepot">("planner");
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [currentAgencyName, setCurrentAgencyName] = useState<string>("");
-
-  // Shift creation gating
-  const [creatingShift, setCreatingShift] = useState<boolean>(false);
-  const [shiftName, setShiftName] = useState<string>("");
-  const [shiftBusId, setShiftBusId] = useState<string>("");
-  const [showStartShiftDialog, setShowStartShiftDialog] = useState<boolean>(false);
-
-  useEffect(() => {
-    const handleLanguageChange = (lng: string) => {
-      if (SUPPORTED_LANGUAGES.includes(lng as SupportedLanguage)) {
-        setLanguage(lng as SupportedLanguage);
-      }
-    };
-    i18n.on("languageChanged", handleLanguageChange);
-    return () => {
-      i18n.off("languageChanged", handleLanguageChange);
-    };
-  }, [i18n]);
-
-  const handleLanguageSelect = useCallback((lng: SupportedLanguage) => {
-    if (lng === language) return;
-    setAppLanguage(lng);
-  }, [language]);
-  // Persist token across reloads
-  const LS_TOKEN_KEY = "elettra_jwt";
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const saved = window.localStorage.getItem(LS_TOKEN_KEY);
-      if (saved && !token) {
-        setToken(saved);
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      if (token) {
-        window.localStorage.setItem(LS_TOKEN_KEY, token);
-      } else {
-        window.localStorage.removeItem(LS_TOKEN_KEY);
-      }
-    } catch {}
-  }, [token]);
-
-  // Load current user and agency name whenever token changes
-  useEffect(() => {
-    let cancelled = false;
-    async function loadMeAndAgency() {
-      if (!token || !effectiveBaseUrl) {
-        setCurrentUser(null);
-        setCurrentAgencyName("");
-        return;
-      }
-      try {
-        const meRes = await fetch(joinUrl(effectiveBaseUrl, "/auth/me"), {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!meRes.ok) throw new Error("me failed");
-        const me: CurrentUser = await meRes.json();
-        if (cancelled) return;
-        setCurrentUser(me);
-        if (me?.company_id) {
-          setAgencyId((prev) => prev || me.company_id!);
-          try {
-            const agRes = await fetch(
-              joinUrl(effectiveBaseUrl, `/api/v1/agency/agencies/${me.company_id}`),
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            if (cancelled) return;
-            if (agRes.ok) {
-              const agency: Agency = await agRes.json();
-              if (!cancelled) setCurrentAgencyName(agency?.agency_name || "");
-            } else {
-              setCurrentAgencyName("");
-            }
-          } catch {
-            if (!cancelled) setCurrentAgencyName("");
-          }
-        } else {
-          setCurrentAgencyName("");
-        }
-      } catch {
-        if (!cancelled) {
-          setCurrentUser(null);
-          setCurrentAgencyName("");
-        }
-      }
-    }
-    void loadMeAndAgency();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, effectiveBaseUrl]);
+  // Current user details no longer shown here; loaded on user page
+  const [_currentUser, _setCurrentUser] = useState<CurrentUser | null>(null);
+  const [_currentAgencyName, _setCurrentAgencyName] = useState<string>("");
   // Export progress state
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportMessage, setExportMessage] = useState<string>("");
   // Depots management
   type Depot = { id: string; agency_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
   const [depots, setDepots] = useState<Depot[]>([]);
-  const [depotsLoading, setDepotsLoading] = useState<boolean>(false);
-  const [depotsError, setDepotsError] = useState<string>("");
-  const [depotsNotice, setDepotsNotice] = useState<string>("");
-  const [editingDepotId, setEditingDepotId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Partial<Depot>>({});
-  // Bus models management
-  type BusModel = { id: string; agency_id: string; name: string; description?: string | null; specs?: any; manufacturer?: string | null };
-  const [busModels, setBusModels] = useState<BusModel[]>([]);
-  const [busModelsLoading, setBusModelsLoading] = useState<boolean>(false);
-  const [busModelsError, setBusModelsError] = useState<string>("");
-  const [editingBusModelId, setEditingBusModelId] = useState<string | null>(null);
-  const [editingBusModel, setEditingBusModel] = useState<Partial<BusModel & { specsText?: string }>>({});
-  const [showCreateBusModel, setShowCreateBusModel] = useState<boolean>(false);
-  const [newBusModelName, setNewBusModelName] = useState<string>("");
-  const [newBusModelManufacturer, setNewBusModelManufacturer] = useState<string>("");
-  const [newBusModelDescription, setNewBusModelDescription] = useState<string>("");
-  const [newBusModelSpecsText, setNewBusModelSpecsText] = useState<string>("");
-  const [creatingBusModel, setCreatingBusModel] = useState<boolean>(false);
+  // Depots state kept for planner flow only
+  const [_depotsLoading, _setDepotsLoading] = useState<boolean>(false);
+  const [_depotsError, _setDepotsError] = useState<string>("");
+  // Bus models management (page moved out)
+  
   // Buses management
   type Bus = { id: string; agency_id: string; name: string; specs?: any; bus_model_id?: string | null };
   const [buses, setBuses] = useState<Bus[]>([]);
-  const [busesLoading, setBusesLoading] = useState<boolean>(false);
-  const [busesError, setBusesError] = useState<string>("");
-  const [editingBusId, setEditingBusId] = useState<string | null>(null);
-  const [editingBus, setEditingBus] = useState<Partial<Bus & { specsText?: string }>>({});
-  const [showCreateBus, setShowCreateBus] = useState<boolean>(false);
-  const [newBusName, setNewBusName] = useState<string>("");
-  const [newBusModelId, setNewBusModelId] = useState<string>("");
-  const [newBusSpecsText, setNewBusSpecsText] = useState<string>("");
-  const [creatingBus, setCreatingBus] = useState<boolean>(false);
+  const [_busesLoading, _setBusesLoading] = useState<boolean>(false);
+  const [_busesError, _setBusesError] = useState<string>("");
   // Shifts management
   const [shifts, setShifts] = useState<ShiftRead[]>([]);
   const [shiftsLoading, setShiftsLoading] = useState<boolean>(false);
@@ -888,26 +782,7 @@ export default function TripShiftPlanner() {
     }
   }
 
-  async function login() {
-    if (!effectiveBaseUrl) {
-      alert(t("common.baseUrlRequired"));
-      return;
-    }
-    await performLogin(email, password);
-  }
-
-  function logout() {
-    setToken("");
-    setEmail("");
-    setPassword("");
-    try { if (typeof window !== "undefined") window.localStorage.removeItem(LS_TOKEN_KEY); } catch {}
-    setAgencyId("");
-    setAgencyQuery("");
-    setAgencies([]);
-    setRoutes([]);
-    setCurrentUser(null);
-    setCurrentAgencyName("");
-  }
+  // login/logout moved to dedicated pages; keep performLogin for auto-login only
 
   async function loadByRouteDay() {
     const selectedRouteId = routeDbId || routeId; // support legacy env for now
@@ -971,8 +846,8 @@ export default function TripShiftPlanner() {
   const loadDepotsForAgency = useCallback(async () => {
     if (!effectiveBaseUrl || !token || !agencyId) return;
     try {
-      setDepotsError("");
-      setDepotsLoading(true);
+      _setDepotsError("");
+      _setDepotsLoading(true);
       const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/depots/?skip=0&limit=1000");
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -980,37 +855,21 @@ export default function TripShiftPlanner() {
       setDepots(Array.isArray(all) ? all.filter((d) => d.agency_id === agencyId) : []);
     } catch (e: any) {
       setDepots([]);
-      setDepotsError(e?.message || String(e));
+      _setDepotsError(e?.message || String(e));
     } finally {
-      setDepotsLoading(false);
+      _setDepotsLoading(false);
     }
   }, [effectiveBaseUrl, token, agencyId]);
 
   // Load bus models (global, not per-agency)
-  const loadBusModels = useCallback(async () => {
-    if (!effectiveBaseUrl || !token || !agencyId) return;
-    try {
-      setBusModelsError("");
-      setBusModelsLoading(true);
-      const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/bus-models/?skip=0&limit=1000");
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const all = (await res.json()) as BusModel[];
-      setBusModels(Array.isArray(all) ? all.filter((m) => m.agency_id === agencyId) : []);
-    } catch (e: any) {
-      setBusModels([]);
-      setBusModelsError(e?.message || String(e));
-    } finally {
-      setBusModelsLoading(false);
-    }
-  }, [effectiveBaseUrl, token, agencyId]);
+  
 
   // Load buses for selected agency
   const loadBusesForAgency = useCallback(async () => {
     if (!effectiveBaseUrl || !token || !agencyId) return;
     try {
-      setBusesError("");
-      setBusesLoading(true);
+      _setBusesError("");
+      _setBusesLoading(true);
       const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/buses/?skip=0&limit=1000");
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -1018,9 +877,9 @@ export default function TripShiftPlanner() {
       setBuses(Array.isArray(all) ? all.filter((b) => b.agency_id === agencyId) : []);
     } catch (e: any) {
       setBuses([]);
-      setBusesError(e?.message || String(e));
+      _setBusesError(e?.message || String(e));
     } finally {
-      setBusesLoading(false);
+      _setBusesLoading(false);
     }
   }, [effectiveBaseUrl, token, agencyId]);
 
@@ -1072,8 +931,6 @@ export default function TripShiftPlanner() {
   // Attempt auto-login on first load using env credentials (if enabled)
   useEffect(() => {
     if (!token && ENV_AUTO_LOGIN && ENV_LOGIN_EMAIL && ENV_LOGIN_PASSWORD && effectiveBaseUrl) {
-      setEmail(ENV_LOGIN_EMAIL);
-      setPassword(ENV_LOGIN_PASSWORD);
       performLogin(ENV_LOGIN_EMAIL, ENV_LOGIN_PASSWORD);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1095,7 +952,6 @@ export default function TripShiftPlanner() {
       setDepots([]);
       setBuses([]);
       setShifts([]);
-      setEditingDepotId(null);
     }
     // Reset depot flow completely on agency change
     setHasLoadedForRouteDay(false);
@@ -1106,10 +962,7 @@ export default function TripShiftPlanner() {
     setElevationByTrip({});
   }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency, loadShiftsForAgency]);
 
-  // When agency/token available, load bus models for agency
-  useEffect(() => {
-    if (token && agencyId) void loadBusModels();
-  }, [token, agencyId, effectiveBaseUrl, loadBusModels]);
+  
 
   // Reset depot flow on route change
   useEffect(() => {
@@ -1217,6 +1070,7 @@ export default function TripShiftPlanner() {
   // ---------- UI ----------
   return (
     <div className="min-h-screen w-full bg-gray-50 text-gray-900">
+      {!embedded && (
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="mx-auto max-w-7xl px-4 py-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-3">
@@ -1245,6 +1099,7 @@ export default function TripShiftPlanner() {
           </div>
         </div>
       </header>
+      )}
 
       <main className="mx-auto max-w-7xl px-4 py-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Left: Controls */}
@@ -1284,42 +1139,11 @@ export default function TripShiftPlanner() {
             </div>
           </div>
 
-          <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">{t("auth.title")}</h2>
-            <div className="space-y-2 text-sm">
-              {!token ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <input className="px-3 py-2 border rounded-lg" placeholder={t("auth.emailPlaceholder")} value={email} onChange={(e) => setEmail(e.target.value)} />
-                  <input className="px-3 py-2 border rounded-lg" type="password" placeholder={t("auth.passwordPlaceholder")} value={password} onChange={(e) => setPassword(e.target.value)} />
-                </div>
-              ) : (
-                <div className="p-2 rounded-lg border bg-gray-50">
-                  <div className="text-sm font-medium mb-1">{t("auth.userInfoTitle")}</div>
-                  <div className="text-xs text-gray-700">
-                    <div><span className="font-semibold">{t("auth.userName")}:</span> {currentUser?.full_name || "—"}</div>
-                    <div><span className="font-semibold">{t("auth.userEmail")}:</span> {currentUser?.email || "—"}</div>
-                    <div><span className="font-semibold">{t("auth.agencyName")}:</span> {currentAgencyName || "—"}</div>
-                    <div><span className="font-semibold">{t("auth.userRole")}:</span> {currentUser?.role || "—"}</div>
-                  </div>
-                </div>
-              )}
-              <div className="flex gap-2">
-                {token ? (
-                  <button onClick={logout} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} disabled={loading}>{t("auth.logout")}</button>
-                ) : (
-                  <button onClick={login} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} disabled={loading}>{t(loading ? "auth.loggingIn" : "auth.login")}</button>
-                )}
-              </div>
-            </div>
-          </div>
+          
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
             <h2 className="text-lg font-medium mb-3">{t("shift.title")}</h2>
-            {depotsNotice && (
-              <div className="mb-2 text-xs px-3 py-2 rounded" style={{backgroundColor: '#f0f9ff', color: '#74C244', borderColor: '#74C244', border: '1px solid'}}>
-                {depotsNotice}
-              </div>
-            )}
+            
             <div className="space-y-2 text-sm">
               {/* Create Shift flow */}
               <div className="p-2 rounded-lg border">
@@ -1477,7 +1301,7 @@ export default function TripShiftPlanner() {
                   className="px-3 py-2 border rounded-lg"
                   value={routeDbId}
                   onChange={(e) => setRouteDbId(e.target.value)}
-                  disabled={!agencyId || routes.length === 0 || !creatingShift}
+                  disabled={!agencyId || routes.length === 0}
                 >
                   <option value="">{agencyId
                     ? (routes.length ? t("shift.selectRoutePlaceholder") : t("shift.loadingRoutes"))
@@ -1490,7 +1314,7 @@ export default function TripShiftPlanner() {
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <select className="px-3 py-2 border rounded-lg" value={day} onChange={(e) => setDay(e.target.value)} disabled={!creatingShift}>
+                <select className="px-3 py-2 border rounded-lg" value={day} onChange={(e) => setDay(e.target.value)}>
                   {DAYS.map((d) => (
                     <option key={d} value={d}>{t(`days.${d}`)}</option>
                   ))}
@@ -1554,374 +1378,13 @@ export default function TripShiftPlanner() {
             </div>
           </div>
 
-          <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">{t("depots.title")}</h2>
-            <button
-              className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 w-full disabled:opacity-50"
-              style={{backgroundColor: '#002AA7'}}
-              disabled={!token || !agencyId}
-              onClick={() => setMode("createDepot")}
-              title={!token ? t("depots.loginFirst") : !agencyId ? t("depots.selectAgencyFirst") : t("depots.createNewHint")}
-            >
-              {t("depots.createButton")}
-            </button>
-            {!token || !agencyId ? (
-              <div className="mt-2 text-xs text-gray-600">
-                {!token ? t("depots.authRequired") : !agencyId ? t("depots.selectAgencyBackend") : null}
-              </div>
-            ) : null}
-            {/* Depots list */}
-            {token && agencyId && (
-              <div className="mt-3 space-y-2">
-                <div className="text-sm text-gray-700 flex items-center justify-between">
-                  <span>{t("depots.listTitle")}</span>
-                  {depotsLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
-                </div>
-                {depotsError && <div className="text-sm text-red-600">{depotsError}</div>}
-                {(!depotsLoading && depots.length === 0) ? (
-                  <div className="text-sm text-gray-600">{t("depots.empty")}</div>
-                ) : (
-                  <ul className="space-y-2">
-                    {depots.map((d) => (
-                      <li key={d.id} className="border rounded-lg p-2">
-                        {editingDepotId === d.id ? (
-                          <div className="space-y-2">
-                            <input className="w-full px-2 py-1 border rounded" placeholder={t("depots.form.namePlaceholder")} value={(editing.name as string) ?? d.name} onChange={(e) => setEditing((prev) => ({ ...prev, name: e.target.value }))} />
-                            <div>
-                              <input className="w-full px-2 py-1 border rounded" placeholder={t("depots.form.addressPlaceholder")} value={(editing.address as string) ?? (d.address || "")} onChange={(e) => setEditing((prev) => ({ ...prev, address: e.target.value }))} />
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <input className="px-2 py-1 border rounded" placeholder={t("depots.form.latitudePlaceholder")} value={(editing.latitude as any) ?? (typeof d.latitude === "number" ? d.latitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, latitude: e.target.value ? parseFloat(e.target.value) : null }))} />
-                              <input className="px-2 py-1 border rounded" placeholder={t("depots.form.longitudePlaceholder")} value={(editing.longitude as any) ?? (typeof d.longitude === "number" ? d.longitude : "")} onChange={(e) => setEditing((prev) => ({ ...prev, longitude: e.target.value ? parseFloat(e.target.value) : null }))} />
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                className="px-2 py-1 rounded text-white text-sm hover:opacity-90"
-                                style={{backgroundColor: '#74C244'}}
-                                onClick={async () => {
-                                  if (!effectiveBaseUrl || !token) return;
-                                  try {
-                                    const payload: any = {};
-                                    if (editing.name !== undefined) payload.name = editing.name;
-                                    if (editing.address !== undefined) payload.address = editing.address;
-                                    if (editing.latitude !== undefined) payload.latitude = editing.latitude;
-                                    if (editing.longitude !== undefined) payload.longitude = editing.longitude;
-                                    const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), {
-                                      method: "PUT",
-                                      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                                      body: JSON.stringify(payload),
-                                    });
-                                    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                                    const updated = (await res.json()) as Depot;
-                                    setDepots((prev) => prev.map((x) => (x.id === d.id ? updated : x)));
-                                    setEditingDepotId(null);
-                                    setEditing({});
-                                  } catch (e: any) {
-                                    alert(t("depots.saveFailed", { error: e?.message || e }));
-                                  }
-                                }}
-                              >
-                                {t("common.save")}
-                              </button>
-                              <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingDepotId(null); setEditing({}); }}>{t("common.cancel")}</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="text-sm">
-                              <div className="font-medium">{d.name}</div>
-                              <div className="text-gray-600">{[d.address].filter(Boolean).join(", ")}</div>
-                              <div className="text-xs text-gray-500">{typeof d.latitude === "number" && typeof d.longitude === "number" ? `${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}` : ""}</div>
-                            </div>
-                            <div className="flex gap-2">
-                              <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} onClick={() => { setEditingDepotId(d.id); setEditing({}); }}>{t("common.edit")}</button>
-                              <button
-                                className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700"
-                                onClick={async () => {
-                                  if (!effectiveBaseUrl || !token) return;
-                                  if (!window.confirm(t("depots.confirmDelete", { name: d.name }))) return;
-                                  try {
-                                    const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), {
-                                      method: "DELETE",
-                                      headers: { Authorization: `Bearer ${token}` },
-                                    });
-                                    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                                    setDepots((prev) => prev.filter((x) => x.id !== d.id));
-                                  } catch (e: any) {
-                                    alert(t("depots.deleteFailed", { error: e?.message || e }));
-                                  }
-                                }}
-                              >
-                                {t("common.delete")}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
+          
 
           {/* Bus models frame */}
-          <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">{t("busModels.title", 'Bus models')}</h2>
-            <div className="flex gap-2 mb-2">
-              <button
-                className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
-                style={{backgroundColor: '#002AA7'}}
-                disabled={!token}
-                onClick={() => setShowCreateBusModel((v) => !v)}
-                title={!token ? t("depots.authRequired") : ''}
-              >
-                {t("busModels.createButton", showCreateBusModel ? 'Close' : 'Create model')}
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
-                style={{backgroundColor: '#6b7280'}}
-                disabled={!token}
-                onClick={() => void loadBusModels()}
-              >
-                {t("common.refresh", 'Refresh')}
-              </button>
-            </div>
-            {showCreateBusModel && (
-              <div className="mb-3 border rounded-lg p-2 space-y-2">
-                <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.name", 'Name')} value={newBusModelName} onChange={(e) => setNewBusModelName(e.target.value)} />
-                <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.description", 'Description')} value={newBusModelDescription} onChange={(e) => setNewBusModelDescription(e.target.value)} />
-                <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.manufacturer", 'Manufacturer')} value={newBusModelManufacturer} onChange={(e) => setNewBusModelManufacturer(e.target.value)} />
-                <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t("busModels.form.specs", 'Specs (JSON)')} value={newBusModelSpecsText} onChange={(e) => setNewBusModelSpecsText(e.target.value)} />
-                <div className="flex gap-2">
-                  <button
-                    className="px-2 py-1 rounded text-white text-sm hover:opacity-90"
-                    style={{backgroundColor: '#74C244'}}
-                    disabled={!token || creatingBusModel || !newBusModelName.trim()}
-                    onClick={async () => {
-                      if (!effectiveBaseUrl || !token) return;
-                      try {
-                        setCreatingBusModel(true);
-                        let specs: any = {};
-                        if (newBusModelSpecsText.trim()) {
-                          try { specs = JSON.parse(newBusModelSpecsText); } catch (e) { alert(t("busModels.parseError", 'Invalid JSON in specs')); setCreatingBusModel(false); return; }
-                        }
-                        const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/agency/bus-models/"), {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({ agency_id: agencyId, name: newBusModelName, description: newBusModelDescription || null, manufacturer: newBusModelManufacturer || null, specs })
-                        });
-                        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                        const created = (await res.json()) as BusModel;
-                        setBusModels((prev) => [created, ...prev]);
-                        setNewBusModelName(""); setNewBusModelDescription(""); setNewBusModelManufacturer(""); setNewBusModelSpecsText(""); setShowCreateBusModel(false);
-                      } catch (e: any) {
-                        alert(t("busModels.createFailed", { error: e?.message || String(e) }));
-                      } finally {
-                        setCreatingBusModel(false);
-                      }
-                    }}
-                  >{t("common.create", 'Create')}</button>
-                  <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setShowCreateBusModel(false); setNewBusModelName(""); setNewBusModelDescription(""); setNewBusModelManufacturer(""); setNewBusModelSpecsText(""); }}>{t("common.cancel")}</button>
-                </div>
-              </div>
-            )}
-            <div className="text-sm text-gray-700 flex items-center justify-between">
-              <span>{t("busModels.listTitle", 'Models')}</span>
-              {busModelsLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
-            </div>
-            {busModelsError && <div className="text-sm text-red-600">{busModelsError}</div>}
-            {(!busModelsLoading && busModels.length === 0) ? (
-              <div className="text-sm text-gray-600">{t("busModels.empty", 'No models')}</div>
-            ) : (
-              <ul className="space-y-2 mt-2">
-                {busModels.map((m) => (
-                  <li key={m.id} className="border rounded-lg p-2">
-                    {editingBusModelId === m.id ? (
-                      <div className="space-y-2">
-                        <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.name", 'Name')} value={(editingBusModel.name as string) ?? m.name} onChange={(e) => setEditingBusModel((prev) => ({ ...prev, name: e.target.value }))} />
-                        <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.description", 'Description')} value={(editingBusModel.description as string) ?? (m.description || '')} onChange={(e) => setEditingBusModel((prev) => ({ ...prev, description: e.target.value }))} />
-                        <input className="w-full px-2 py-1 border rounded" placeholder={t("busModels.form.manufacturer", 'Manufacturer')} value={(editingBusModel.manufacturer as string) ?? (m.manufacturer || '')} onChange={(e) => setEditingBusModel((prev) => ({ ...prev, manufacturer: e.target.value }))} />
-                        <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t("busModels.form.specs", 'Specs (JSON)')} value={(editingBusModel.specsText as string) ?? JSON.stringify(m.specs ?? {}, null, 2)} onChange={(e) => setEditingBusModel((prev) => ({ ...prev, specsText: e.target.value }))} />
-                        <div className="flex gap-2">
-                          <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#74C244'}} onClick={async () => {
-                            if (!effectiveBaseUrl || !token) return;
-                            try {
-                              const payload: any = { agency_id: agencyId };
-                              if (editingBusModel.name !== undefined) payload.name = editingBusModel.name;
-                              if (editingBusModel.description !== undefined) payload.description = editingBusModel.description;
-                              if (editingBusModel.manufacturer !== undefined) payload.manufacturer = editingBusModel.manufacturer;
-                              if (editingBusModel.specsText !== undefined) {
-                                try { payload.specs = editingBusModel.specsText ? JSON.parse(editingBusModel.specsText as string) : {}; } catch { alert(t("busModels.parseError", 'Invalid JSON in specs')); return; }
-                              }
-                              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/bus-models/${encodeURIComponent(m.id)}`), {
-                                method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload)
-                              });
-                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                              const updated = (await res.json()) as BusModel;
-                              setBusModels((prev) => prev.map((x) => x.id === m.id ? updated : x));
-                              setEditingBusModelId(null); setEditingBusModel({});
-                            } catch (e: any) { alert(t("busModels.saveFailed", { error: e?.message || String(e) })); }
-                          }}>{t("common.save")}</button>
-                          <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingBusModelId(null); setEditingBusModel({}); }}>{t("common.cancel")}</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="text-sm">
-                          <div className="font-medium">{m.name}</div>
-                          <div className="text-gray-600">{m.description || ''}</div>
-                          <div className="text-gray-600">{m.manufacturer || ''}</div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} onClick={() => { setEditingBusModelId(m.id); setEditingBusModel({}); }}>{t("common.edit")}</button>
-                          <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
-                            if (!effectiveBaseUrl || !token) return;
-                            if (!window.confirm(t("busModels.confirmDelete", { name: m.name }))) return;
-                            try {
-                              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/bus-models/${encodeURIComponent(m.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                              setBusModels((prev) => prev.filter((x) => x.id !== m.id));
-                            } catch (e: any) { alert(t("busModels.deleteFailed", { error: e?.message || String(e) })); }
-                          }}>{t("common.delete")}</button>
-                        </div>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          
 
           {/* Buses frame */}
-          <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">{t("buses.title", 'Buses')}</h2>
-            <div className="flex gap-2 mb-2">
-              <button
-                className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
-                style={{backgroundColor: '#002AA7'}}
-                disabled={!token || !agencyId}
-                onClick={() => setShowCreateBus((v) => !v)}
-                title={!token ? t("depots.authRequired") : !agencyId ? t("depots.selectAgencyBackend") : ''}
-              >
-                {t("buses.createButton", showCreateBus ? 'Close' : 'Create bus')}
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
-                style={{backgroundColor: '#6b7280'}}
-                disabled={!token || !agencyId}
-                onClick={() => void loadBusesForAgency()}
-              >
-                {t("common.refresh", 'Refresh')}
-              </button>
-            </div>
-            {showCreateBus && (
-              <div className="mb-3 border rounded-lg p-2 space-y-2">
-                <input className="w-full px-2 py-1 border rounded" placeholder={t("buses.form.name", 'Name')} value={newBusName} onChange={(e) => setNewBusName(e.target.value)} />
-                <select className="w-full px-2 py-1 border rounded" value={newBusModelId} onChange={(e) => setNewBusModelId(e.target.value)}>
-                  <option value="">{t("buses.form.selectModel", 'Select model')}</option>
-                  {busModels.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
-                </select>
-                <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t("buses.form.specs", 'Specs (JSON)')} value={newBusSpecsText} onChange={(e) => setNewBusSpecsText(e.target.value)} />
-                <div className="flex gap-2">
-                  <button
-                    className="px-2 py-1 rounded text-white text-sm hover:opacity-90"
-                    style={{backgroundColor: '#74C244'}}
-                    disabled={!token || !agencyId || creatingBus || !newBusName.trim()}
-                    onClick={async () => {
-                      if (!effectiveBaseUrl || !token || !agencyId) return;
-                      try {
-                        setCreatingBus(true);
-                        let specs: any = {};
-                        if (newBusSpecsText.trim()) {
-                          try { specs = JSON.parse(newBusSpecsText); } catch (e) { alert(t("buses.parseError", 'Invalid JSON in specs')); setCreatingBus(false); return; }
-                        }
-                        const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/agency/buses/"), {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({ agency_id: agencyId, name: newBusName, bus_model_id: newBusModelId || null, specs })
-                        });
-                        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                        const created = (await res.json()) as Bus;
-                        setBuses((prev) => [created, ...prev]);
-                        setNewBusName(""); setNewBusModelId(""); setNewBusSpecsText(""); setShowCreateBus(false);
-                      } catch (e: any) {
-                        alert(t("buses.createFailed", { error: e?.message || String(e) }));
-                      } finally {
-                        setCreatingBus(false);
-                      }
-                    }}
-                  >{t("common.create", 'Create')}</button>
-                  <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setShowCreateBus(false); setNewBusName(""); setNewBusModelId(""); setNewBusSpecsText(""); }}>{t("common.cancel")}</button>
-                </div>
-              </div>
-            )}
-            <div className="text-sm text-gray-700 flex items-center justify-between">
-              <span>{t("buses.listTitle", 'Buses for agency')}</span>
-              {busesLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
-            </div>
-            {busesError && <div className="text-sm text-red-600">{busesError}</div>}
-            {(!busesLoading && buses.length === 0) ? (
-              <div className="text-sm text-gray-600">{t("buses.empty", 'No buses')}</div>
-            ) : (
-              <ul className="space-y-2 mt-2">
-                {buses.map((b) => (
-                  <li key={b.id} className="border rounded-lg p-2">
-                    {editingBusId === b.id ? (
-                      <div className="space-y-2">
-                        <input className="w-full px-2 py-1 border rounded" placeholder={t("buses.form.name", 'Name')} value={(editingBus.name as string) ?? b.name} onChange={(e) => setEditingBus((prev) => ({ ...prev, name: e.target.value }))} />
-                        <select className="w-full px-2 py-1 border rounded" value={(editingBus.bus_model_id as string) ?? (b.bus_model_id || '')} onChange={(e) => setEditingBus((prev) => ({ ...prev, bus_model_id: e.target.value || null }))}>
-                          <option value="">{t("buses.form.selectModel", 'Select model')}</option>
-                          {busModels.map((m) => (<option key={m.id} value={m.id}>{m.name}</option>))}
-                        </select>
-                        <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t("buses.form.specs", 'Specs (JSON)')} value={(editingBus.specsText as string) ?? JSON.stringify(b.specs ?? {}, null, 2)} onChange={(e) => setEditingBus((prev) => ({ ...prev, specsText: e.target.value }))} />
-                        <div className="flex gap-2">
-                          <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#74C244'}} onClick={async () => {
-                            if (!effectiveBaseUrl || !token) return;
-                            try {
-                              const payload: any = {};
-                              if (editingBus.name !== undefined) payload.name = editingBus.name;
-                              if (editingBus.bus_model_id !== undefined) payload.bus_model_id = editingBus.bus_model_id || null;
-                              if (editingBus.specsText !== undefined) {
-                                try { payload.specs = editingBus.specsText ? JSON.parse(editingBus.specsText as string) : {}; } catch { alert(t("buses.parseError", 'Invalid JSON in specs')); return; }
-                              }
-                              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/buses/${encodeURIComponent(b.id)}`), {
-                                method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload)
-                              });
-                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                              const updated = (await res.json()) as Bus;
-                              setBuses((prev) => prev.map((x) => x.id === b.id ? updated : x));
-                              setEditingBusId(null); setEditingBus({});
-                            } catch (e: any) { alert(t("buses.saveFailed", { error: e?.message || String(e) })); }
-                          }}>{t("common.save")}</button>
-                          <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingBusId(null); setEditingBus({}); }}>{t("common.cancel")}</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="text-sm">
-                          <div className="font-medium">{b.name}</div>
-                          <div className="text-gray-600">{busModels.find((m) => m.id === (b.bus_model_id || ''))?.name || t("buses.noModel", 'No model')}</div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} onClick={() => { setEditingBusId(b.id); setEditingBus({}); }}>{t("common.edit")}</button>
-                          <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
-                            if (!effectiveBaseUrl || !token) return;
-                            if (!window.confirm(t("buses.confirmDelete", { name: b.name }))) return;
-                            try {
-                              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/buses/${encodeURIComponent(b.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                              setBuses((prev) => prev.filter((x) => x.id !== b.id));
-                            } catch (e: any) { alert(t("buses.deleteFailed", { error: e?.message || String(e) })); }
-                          }}>{t("common.delete")}</button>
-                        </div>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          
 
 
           <div className="p-3 rounded-2xl bg-white shadow-sm border">
@@ -1956,7 +1419,8 @@ export default function TripShiftPlanner() {
           </div>
         </section>
 
-        {mode === "planner" ? (
+        {/* Planner content only */}
+        {
           <>
             {/* Middle: Available trips */}
             <section className="relative lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
@@ -2153,24 +1617,7 @@ export default function TripShiftPlanner() {
             </div>
             </section>
           </>
-        ) : (
-          <section className="lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
-            <CreateDepotView
-              token={token}
-              agencyId={agencyId}
-              baseUrl={effectiveBaseUrl}
-              onCancel={() => setMode("planner")}
-              onCreated={(dep?: any) => {
-                // Non-blocking success notice
-                setDepotsNotice(dep?.name ? t("depots.createdWithName", { name: dep.name }) : t("depots.created"));
-                setTimeout(() => setDepotsNotice(""), 3000);
-                // Reload list immediately so it appears without a page refresh
-                void loadDepotsForAgency();
-                setMode("planner");
-              }}
-            />
-          </section>
-        )}
+        }
       </main>
       {/* Depot modal */}
       {showDepotDialog && (
@@ -2536,214 +1983,4 @@ function TripCard({
 }
 
 
-// ---------- Create Depot View ----------
-function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
-  token: string;
-  agencyId: string;
-  baseUrl: string;
-  onCancel: () => void;
-  onCreated: (dep?: any) => void;
-}) {
-  const { t } = useTranslation();
-  const [name, setName] = useState<string>("");
-  const [address, setAddress] = useState<string>("");
-  // city field removed from backend; keep local for UI address search only
-  // city removed from backend; no longer collected
-  const [latitude, setLatitude] = useState<number | null>(null);
-  const [longitude, setLongitude] = useState<number | null>(null);
-  const [center, setCenter] = useState<[number, number]>([46.0037, 8.9511]); // Lugano
-  const [zoom] = useState<number>(13);
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [suggestions, setSuggestions] = useState<Array<{ label: string; lat: number; lon: number }>>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string>("");
-  const searchTimer = useRef<number | null>(null);
-
-  function stripHtml(input: string): string {
-    try {
-      return (input || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
-    } catch {
-      return input;
-    }
-  }
-
-  useEffect(() => {
-    const q = searchQuery.trim();
-    if (searchTimer.current) window.clearTimeout(searchTimer.current);
-    if (q.length < 3) {
-      setSuggestions([]);
-      return;
-    }
-    searchTimer.current = window.setTimeout(async () => {
-      try {
-        const url = `https://api3.geo.admin.ch/rest/services/api/SearchServer?sr=4326&type=locations&origins=address&lang=en&searchText=${encodeURIComponent(q)}`;
-        const res = await fetch(url);
-        const data = await res.json();
-        const results = Array.isArray(data?.results) ? data.results : [];
-        const mapped = results.map((r: any) => {
-          const attrs = r?.attrs || {};
-          const lat = typeof attrs.lat === "number" ? attrs.lat : (typeof attrs.y === "number" ? attrs.y : null);
-          const lon = typeof attrs.lon === "number" ? attrs.lon : (typeof attrs.x === "number" ? attrs.x : null);
-          const label = stripHtml((attrs.label || r?.label || "").toString());
-          return lat != null && lon != null ? { label, lat, lon } : null;
-        }).filter(Boolean) as Array<{ label: string; lat: number; lon: number }>;
-        setSuggestions(mapped.slice(0, 8));
-      } catch {
-        setSuggestions([]);
-      }
-    }, 300);
-    return () => {
-      if (searchTimer.current) window.clearTimeout(searchTimer.current);
-    };
-  }, [searchQuery]);
-
-  function SetView({ center }: { center: [number, number] }) {
-    const map = useMap();
-    useEffect(() => {
-      map.setView(center);
-    }, [map, center]);
-    return null;
-  }
-
-  function ClickCapture() {
-    const map = useMap();
-    useEffect(() => {
-      function onClick(e: any) {
-        const lat = e.latlng?.lat;
-        const lon = e.latlng?.lng;
-        if (typeof lat === "number" && typeof lon === "number") {
-          setLatitude(lat);
-          setLongitude(lon);
-        }
-      }
-      (map as any).on("click", onClick);
-      return () => {
-        (map as any).off("click", onClick);
-      };
-    }, [map]);
-    return null;
-  }
-
-  async function submit() {
-    setError("");
-    if (!token) {
-      setError(t("createDepot.errors.loginFirst"));
-      return;
-    }
-    if (!agencyId) {
-      setError(t("createDepot.errors.selectAgency"));
-      return;
-    }
-    if (!name.trim()) {
-      setError(t("createDepot.errors.nameRequired"));
-      return;
-    }
-    if (latitude != null && (latitude < -90 || latitude > 90)) {
-      setError(t("createDepot.errors.latitudeRange"));
-      return;
-    }
-    if (longitude != null && (longitude < -180 || longitude > 180)) {
-      setError(t("createDepot.errors.longitudeRange"));
-      return;
-    }
-    try {
-      setLoading(true);
-      const payload: any = {
-        agency_id: agencyId,
-        name: name.trim(),
-      };
-      if (address.trim()) payload.address = address.trim();
-      // city is not part of backend payload anymore
-      if (latitude != null) payload.latitude = latitude;
-      if (longitude != null) payload.longitude = longitude;
-      const res = await fetch(joinUrl(baseUrl, "/api/v1/agency/depots/"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const data = await res.json();
-      onCreated(data);
-    } catch (e: any) {
-      setError(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-medium">{t("createDepot.title")}</h2>
-        <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">{t("common.back")}</button>
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div className="space-y-2">
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.nameLabel")}</label>
-            <input className="w-full px-3 py-2 border rounded-lg" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("createDepot.form.namePlaceholder")} />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.searchLabel")}</label>
-            <input className="w-full px-3 py-2 border rounded-lg" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={t("createDepot.form.searchPlaceholder")} />
-            {suggestions.length > 0 && (
-              <ul className="mt-1 max-h-48 overflow-auto border rounded-lg bg-white shadow text-sm">
-                {suggestions.map((s, i) => (
-                  <li
-                    key={`${s.label}-${i}`}
-                    className="px-3 py-2 hover:bg-gray-100 cursor-pointer"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setAddress(s.label);
-                      setCenter([s.lat, s.lon]);
-                      setLatitude(s.lat);
-                      setLongitude(s.lon);
-                      setSuggestions([]);
-                      setSearchQuery(s.label);
-                    }}
-                  >
-                    {s.label}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div>
-            <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.addressLabel")}</label>
-            <input className="w-full px-3 py-2 border rounded-lg" value={address} onChange={(e) => setAddress(e.target.value)} placeholder={t("createDepot.form.addressPlaceholder")} />
-          </div>
-          {/* City field removed: backend no longer stores it */}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.latitudeLabel")}</label>
-              <input className="w-full px-3 py-2 border rounded-lg" value={latitude ?? ""} onChange={(e) => setLatitude(e.target.value ? parseFloat(e.target.value) : null)} placeholder={t("createDepot.form.latitudePlaceholder")} />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-700 mb-1">{t("createDepot.form.longitudeLabel")}</label>
-              <input className="w-full px-3 py-2 border rounded-lg" value={longitude ?? ""} onChange={(e) => setLongitude(e.target.value ? parseFloat(e.target.value) : null)} placeholder={t("createDepot.form.longitudePlaceholder")} />
-            </div>
-          </div>
-        </div>
-        <div>
-          <MapContainer {...({ className: "w-full h-[380px] rounded border", center } as any)} zoom={zoom as any}>
-            <TileLayer {...({ url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", maxZoom: 19 } as any)} />
-            <SetView center={center} />
-            <ClickCapture />
-            {latitude != null && longitude != null && <Marker position={[latitude, longitude] as any} />}
-          </MapContainer>
-          <div className="mt-1 text-xs text-gray-600">{t("createDepot.mapHelp")}</div>
-        </div>
-      </div>
-      {error && <div className="text-sm text-red-600">{error}</div>}
-      <div className="flex gap-2">
-        <button onClick={submit} disabled={loading || !token || !agencyId || !name.trim()} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#74C244'}}>
-          {loading ? t("createDepot.creating") : t("createDepot.create")}
-        </button>
-        <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">{t("common.cancel")}</button>
-      </div>
-    </div>
-  );
-}
+// CreateDepotView moved out to features page; inline copy removed.

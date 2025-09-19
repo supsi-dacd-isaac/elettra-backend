@@ -10,6 +10,15 @@
     "subtitle": "Wählen Sie Fahrten der Reihe nach aus, um einen Busdienstplan zu erstellen. Zeiten unterstützen GTFS-Stunden > 24.",
     "languageLabel": "Sprache"
   },
+  "nav": {
+    "planner": "Planer",
+    "shifts": "Schichten",
+    "depots": "Depots",
+    "busModels": "Busmodelle",
+    "buses": "Busse",
+    "user": "Benutzer",
+    "login": "Anmelden"
+  },
   "filters": {
     "title": "Filter",
     "showDisconnected": "Nicht verbundene Fahrten anzeigen",
@@ -27,7 +36,7 @@
     "logout": "Abmelden",
     "loggedIn": "Angemeldet. Token {{token}}",
     "loginFailed": "Anmeldung fehlgeschlagen: {{error}}",
-    "provideCredentials": "E-Mail und Passwort eingeben oder ein Token einfügen",
+    "provideCredentials": "E-Mail und Passwort eingeben",
     "userInfoTitle": "Benutzer",
     "userName": "Name",
     "userEmail": "E-Mail",
@@ -88,7 +97,7 @@
     "leaveSummary": "Ausfahrt: Depot gesetzt, Zeit {{time}}",
     "returnSummary": "Rückfahrt: Depot gesetzt, Zeit {{time}}",
     "selectAgencyPlaceholder": "Agentur auswählen",
-    "loginFirstPlaceholder": "Anmelden oder Token einfügen",
+    "loginFirstPlaceholder": "Zuerst anmelden",
     "selectRoutePlaceholder": "Linie auswählen",
     "loadingRoutes": "Linien werden geladen...",
     "selectAgencyFirst": "Zuerst eine Agentur auswählen"

@@ -1,0 +1,168 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useAuth } from '../auth/AuthContext.tsx';
+import CreateDepotView from '../components/depots/CreateDepotView.tsx';
+
+type Depot = { id: string; agency_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
+type UserMe = { id: string; company_id?: string };
+
+function joinUrl(base: string, path: string): string {
+  const cleanBase = (base || '').replace(/\/+$/, '');
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return cleanBase ? `${cleanBase}${cleanPath}` : cleanPath;
+}
+function getEffectiveBaseUrl(): string {
+  const VITE = (typeof import.meta !== 'undefined' ? (import.meta as any).env : {}) || {};
+  const envBase = VITE.VITE_API_BASE_URL || '';
+  if (envBase) return envBase as string;
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:8002';
+    if (/^10\./.test(host)) return `http://${host}:8002`;
+    if (host === 'isaac-elettra.dacd.supsi.ch') return 'http://isaac-elettra.dacd.supsi.ch:8002';
+  }
+  return 'http://localhost:8002';
+}
+
+export default function DepotsPage() {
+  const { t } = useTranslation();
+  const { token } = useAuth();
+  const baseUrl = useMemo(() => getEffectiveBaseUrl(), []);
+  const [agencyId, setAgencyId] = useState<string>('');
+  const [depots, setDepots] = useState<Depot[]>([]);
+  const [depotsLoading, setDepotsLoading] = useState<boolean>(false);
+  const [depotsError, setDepotsError] = useState<string>('');
+  const [editingDepotId, setEditingDepotId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Partial<Depot>>({});
+  const [mode, setMode] = useState<'list' | 'create'>('list');
+  const [notice, setNotice] = useState<string>('');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMe() {
+      if (!token || !baseUrl) return;
+      try {
+        const meRes = await fetch(joinUrl(baseUrl, '/auth/me'), { headers: { Authorization: `Bearer ${token}` } });
+        if (meRes.ok) {
+          const me = (await meRes.json()) as UserMe;
+          if (!cancelled && me?.company_id) setAgencyId(me.company_id);
+        }
+      } catch {}
+    }
+    void loadMe();
+    return () => { cancelled = true; };
+  }, [token, baseUrl]);
+
+  const loadDepotsForAgency = async () => {
+    if (!baseUrl || !token || !agencyId) return;
+    try {
+      setDepotsError('');
+      setDepotsLoading(true);
+      const url = joinUrl(baseUrl, '/api/v1/agency/depots/?skip=0&limit=1000');
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const all = (await res.json()) as Depot[];
+      setDepots(Array.isArray(all) ? all.filter((d) => d.agency_id === agencyId) : []);
+    } catch (e: any) {
+      setDepots([]);
+      setDepotsError(e?.message || String(e));
+    } finally {
+      setDepotsLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadDepotsForAgency(); }, [token, baseUrl, agencyId]);
+
+  return (
+    <div className="p-3 rounded-2xl bg-white shadow-sm border">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-lg font-medium">{t('depots.title')}</h2>
+        <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#002AA7'}} disabled={!token || !agencyId} onClick={() => setMode('create')} title={!token ? (t('depots.loginFirst') as any) : !agencyId ? (t('depots.selectAgencyFirst') as any) : (t('depots.createNewHint') as any)}>
+          {t('depots.createButton')}
+        </button>
+      </div>
+      {notice && (
+        <div className="mb-2 text-xs px-3 py-2 rounded" style={{backgroundColor: '#f0f9ff', color: '#74C244', borderColor: '#74C244', border: '1px solid'}}>{notice}</div>
+      )}
+      {mode === 'create' ? (
+        <CreateDepotView token={token} agencyId={agencyId} baseUrl={baseUrl} onCancel={() => setMode('list')} onCreated={(dep?: any) => {
+          setNotice(dep?.name ? t('depots.createdWithName', { name: dep.name }) as string : (t('depots.created') as string));
+          setTimeout(() => setNotice(''), 3000);
+          void loadDepotsForAgency();
+          setMode('list');
+        }} />
+      ) : (
+        <div className="mt-1 space-y-2">
+          <div className="text-sm text-gray-700 flex items-center justify-between">
+            <span>{t('depots.listTitle')}</span>
+            {depotsLoading && <span className="text-xs text-gray-500">{t('common.loading')}</span>}
+          </div>
+          {depotsError && <div className="text-sm text-red-600">{depotsError}</div>}
+          {(!depotsLoading && depots.length === 0) ? (
+            <div className="text-sm text-gray-600">{t('depots.empty')}</div>
+          ) : (
+            <ul className="space-y-2">
+              {depots.map((d) => (
+                <li key={d.id} className="border rounded-lg p-2">
+                  {editingDepotId === d.id ? (
+                    <div className="space-y-2">
+                      <input className="w-full px-2 py-1 border rounded" placeholder={t('depots.form.namePlaceholder') as string} value={(editing.name as string) ?? d.name} onChange={(e) => setEditing((prev) => ({ ...prev, name: e.target.value }))} />
+                      <div>
+                        <input className="w-full px-2 py-1 border rounded" placeholder={t('depots.form.addressPlaceholder') as string} value={(editing.address as string) ?? (d.address || '')} onChange={(e) => setEditing((prev) => ({ ...prev, address: e.target.value }))} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input className="px-2 py-1 border rounded" placeholder={t('depots.form.latitudePlaceholder') as string} value={(editing.latitude as any) ?? (typeof d.latitude === 'number' ? d.latitude : '')} onChange={(e) => setEditing((prev) => ({ ...prev, latitude: e.target.value ? parseFloat(e.target.value) : null }))} />
+                        <input className="px-2 py-1 border rounded" placeholder={t('depots.form.longitudePlaceholder') as string} value={(editing.longitude as any) ?? (typeof d.longitude === 'number' ? d.longitude : '')} onChange={(e) => setEditing((prev) => ({ ...prev, longitude: e.target.value ? parseFloat(e.target.value) : null }))} />
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#74C244'}} onClick={async () => {
+                          if (!baseUrl || !token) return;
+                          try {
+                            const payload: any = {};
+                            if (editing.name !== undefined) payload.name = editing.name;
+                            if (editing.address !== undefined) payload.address = editing.address;
+                            if (editing.latitude !== undefined) payload.latitude = editing.latitude;
+                            if (editing.longitude !== undefined) payload.longitude = editing.longitude;
+                            const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+                            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                            const updated = (await res.json()) as Depot;
+                            setDepots((prev) => prev.map((x) => (x.id === d.id ? updated : x)));
+                            setEditingDepotId(null);
+                            setEditing({});
+                          } catch (e: any) { alert(t('depots.saveFailed', { error: e?.message || e }) as any); }
+                        }}>{t('common.save')}</button>
+                        <button className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm" onClick={() => { setEditingDepotId(null); setEditing({}); }}>{t('common.cancel')}</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm">
+                        <div className="font-medium">{d.name}</div>
+                        <div className="text-gray-600">{[d.address].filter(Boolean).join(', ')}</div>
+                        <div className="text-xs text-gray-500">{typeof d.latitude === 'number' && typeof d.longitude === 'number' ? `${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}` : ''}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} onClick={() => { setEditingDepotId(d.id); setEditing({}); }}>{t('common.edit')}</button>
+                        <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
+                          if (!baseUrl || !token) return;
+                          if (!window.confirm(t('depots.confirmDelete', { name: d.name }) as any)) return;
+                          try {
+                            const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                            setDepots((prev) => prev.filter((x) => x.id !== d.id));
+                          } catch (e: any) { alert(t('depots.deleteFailed', { error: e?.message || e }) as any); }
+                        }}>{t('common.delete')}</button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+

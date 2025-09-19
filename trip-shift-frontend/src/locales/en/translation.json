@@ -10,6 +10,15 @@
     "subtitle": "Select trips sequentially to build a bus shift. Times support GTFS hours > 24.",
     "languageLabel": "Language"
   },
+  "nav": {
+    "planner": "Planner",
+    "shifts": "Shifts",
+    "depots": "Depots",
+    "busModels": "Bus models",
+    "buses": "Buses",
+    "user": "User",
+    "login": "Login"
+  },
   "filters": {
     "title": "Filters",
     "showDisconnected": "Show non connected trips",
@@ -27,7 +36,7 @@
     "logout": "Logout",
     "loggedIn": "Logged in. Token {{token}}",
     "loginFailed": "Login failed: {{error}}",
-    "provideCredentials": "Provide email and password or paste a token",
+    "provideCredentials": "Provide email and password",
     "userInfoTitle": "User",
     "userName": "Name",
     "userEmail": "Email",
@@ -88,7 +97,7 @@
     "leaveSummary": "Leave: depot set, time {{time}}",
     "returnSummary": "Return: depot set, time {{time}}",
     "selectAgencyPlaceholder": "Select agency",
-    "loginFirstPlaceholder": "Login or paste token first",
+    "loginFirstPlaceholder": "Login first",
     "selectRoutePlaceholder": "Select route",
     "loadingRoutes": "Loading routes...",
     "selectAgencyFirst": "Select agency first"

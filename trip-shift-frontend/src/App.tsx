@@ -1,5 +1,10 @@
-import TripShiftPlanner from './TripShiftPlanner'
+import { AuthProvider } from './app/auth/AuthContext';
+import AppRouter from './app/Router';
 
 export default function App() {
-  return <TripShiftPlanner />
+  return (
+    <AuthProvider>
+      <AppRouter />
+    </AuthProvider>
+  );
 }

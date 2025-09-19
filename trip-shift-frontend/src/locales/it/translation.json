@@ -10,6 +10,15 @@
     "subtitle": "Seleziona le corse in sequenza per costruire un turno macchina. Gli orari supportano valori GTFS superiori a 24 ore.",
     "languageLabel": "Lingua"
   },
+  "nav": {
+    "planner": "Planner",
+    "shifts": "Turni",
+    "depots": "Depositi",
+    "busModels": "Modelli bus",
+    "buses": "Autobus",
+    "user": "Utente",
+    "login": "Accedi"
+  },
   "filters": {
     "title": "Filtri",
     "showDisconnected": "Mostra corse non collegate",
@@ -27,7 +36,7 @@
     "logout": "Esci",
     "loggedIn": "Accesso eseguito. Token {{token}}",
     "loginFailed": "Accesso non riuscito: {{error}}",
-    "provideCredentials": "Inserisci email e password oppure incolla un token",
+    "provideCredentials": "Inserisci email e password",
     "userInfoTitle": "Utente",
     "userName": "Nome",
     "userEmail": "Email",
@@ -88,7 +97,7 @@
     "leaveSummary": "Uscita: deposito impostato, ora {{time}}",
     "returnSummary": "Rientro: deposito impostato, ora {{time}}",
     "selectAgencyPlaceholder": "Seleziona agenzia",
-    "loginFirstPlaceholder": "Accedi o incolla un token",
+    "loginFirstPlaceholder": "Accedi prima",
     "selectRoutePlaceholder": "Seleziona linea",
     "loadingRoutes": "Caricamento linee...",
     "selectAgencyFirst": "Seleziona prima un'agenzia"

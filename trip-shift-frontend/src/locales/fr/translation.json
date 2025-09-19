@@ -10,6 +10,15 @@
     "subtitle": "Sélectionnez les courses successivement pour construire un service de bus. Les horaires prennent en charge des heures GTFS supérieures à 24.",
     "languageLabel": "Langue"
   },
+  "nav": {
+    "planner": "Planner",
+    "shifts": "Services",
+    "depots": "Dépôts",
+    "busModels": "Modèles de bus",
+    "buses": "Bus",
+    "user": "Utilisateur",
+    "login": "Se connecter"
+  },
   "filters": {
     "title": "Filtres",
     "showDisconnected": "Afficher les courses non connectées",
@@ -27,7 +36,7 @@
     "logout": "Se déconnecter",
     "loggedIn": "Connecté. Jeton {{token}}",
     "loginFailed": "Échec de la connexion : {{error}}",
-    "provideCredentials": "Saisissez e-mail et mot de passe ou collez un jeton",
+    "provideCredentials": "Saisissez e-mail et mot de passe",
     "userInfoTitle": "Utilisateur",
     "userName": "Nom",
     "userEmail": "E-mail",
@@ -88,7 +97,7 @@
     "leaveSummary": "Départ : dépôt défini, heure {{time}}",
     "returnSummary": "Retour : dépôt défini, heure {{time}}",
     "selectAgencyPlaceholder": "Sélectionner une agence",
-    "loginFirstPlaceholder": "Connectez-vous ou collez un jeton",
+    "loginFirstPlaceholder": "Connectez-vous d'abord",
     "selectRoutePlaceholder": "Sélectionner une ligne",
     "loadingRoutes": "Chargement des lignes...",
     "selectAgencyFirst": "Sélectionnez d'abord une agence"

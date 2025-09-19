@@ -2,6 +2,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 # react-leaflet requires legacy peer resolution with React 19
+# react-leaflet currently peers React 18, project uses React 19. Use legacy peers.
 RUN npm ci --legacy-peer-deps
 COPY . .
 ARG VITE_TEST_LOGIN_EMAIL
@@ -14,6 +15,7 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx","-g","daemon off;"]
 
