@@ -45,6 +45,7 @@ services:
         VITE_TEST_LOGIN_EMAIL: ${VITE_TEST_LOGIN_EMAIL:-}
         VITE_TEST_LOGIN_PASSWORD: ${VITE_TEST_LOGIN_PASSWORD:-}
         VITE_AUTO_LOGIN: ${VITE_AUTO_LOGIN:-true}
+    restart: unless-stopped
     ports:
       - "55557:80"
     environment:
