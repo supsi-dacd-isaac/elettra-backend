@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict AssPkdyiuEOh4jyCDpy71OXJQTIKZaXIPuQT0GlDUY6qBCk8Slb8IwQWQTi9baI
+\restrict 12vqELAoXgtmQzLhYR0ufbJAHHiqOYFRFkXVE1a2NTKS8VIgkICBbvNHAIZ66W6
 
 -- Dumped from database version 16.10
 -- Dumped by pg_dump version 16.10 (Ubuntu 16.10-0ubuntu0.24.04.1)
@@ -86,7 +86,7 @@ SET default_table_access_method = heap;
 
 CREATE TABLE public.buses (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    agency_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     name text NOT NULL,
     specs jsonb DEFAULT '{}'::jsonb NOT NULL,
     bus_model_id uuid
@@ -105,7 +105,7 @@ CREATE TABLE public.buses_models (
     manufacturer text,
     specs jsonb DEFAULT '{}'::jsonb NOT NULL,
     description character varying,
-    agency_id uuid NOT NULL
+    user_id uuid NOT NULL
 );
 
 
@@ -117,7 +117,7 @@ ALTER TABLE public.buses_models OWNER TO admin;
 
 CREATE TABLE public.depots (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    agency_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     name text NOT NULL,
     address text,
     features jsonb,
@@ -381,7 +381,7 @@ ALTER TABLE public.weather_measurements OWNER TO admin;
 --
 
 ALTER TABLE ONLY public.buses
-    ADD CONSTRAINT buses_company_id_name_key UNIQUE (agency_id, name);
+    ADD CONSTRAINT buses_company_id_name_key UNIQUE (user_id, name);
 
 
 --
@@ -556,7 +556,7 @@ ALTER TABLE ONLY public.weather_measurements
 -- Name: depots_agency_id_idx; Type: INDEX; Schema: public; Owner: admin
 --
 
-CREATE INDEX depots_agency_id_idx ON public.depots USING btree (agency_id);
+CREATE INDEX depots_agency_id_idx ON public.depots USING btree (user_id);
 
 
 --
@@ -644,14 +644,6 @@ CREATE INDEX variants_route_id_idx ON public.variants USING btree (route_id);
 
 
 --
--- Name: buses bus_models_company_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
---
-
-ALTER TABLE ONLY public.buses
-    ADD CONSTRAINT bus_models_company_id_fkey FOREIGN KEY (agency_id) REFERENCES public.gtfs_agencies(id) ON DELETE CASCADE;
-
-
---
 -- Name: buses buses_bus_model_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
 --
 
@@ -660,19 +652,19 @@ ALTER TABLE ONLY public.buses
 
 
 --
--- Name: buses_models buses_models_gtfs_agencies_fk; Type: FK CONSTRAINT; Schema: public; Owner: admin
+-- Name: buses_models buses_models_users_fk; Type: FK CONSTRAINT; Schema: public; Owner: admin
 --
 
 ALTER TABLE ONLY public.buses_models
-    ADD CONSTRAINT buses_models_gtfs_agencies_fk FOREIGN KEY (agency_id) REFERENCES public.gtfs_agencies(id);
+    ADD CONSTRAINT buses_models_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id);
 
 
 --
--- Name: depots depots_agency_fk; Type: FK CONSTRAINT; Schema: public; Owner: admin
+-- Name: buses buses_users_fk; Type: FK CONSTRAINT; Schema: public; Owner: admin
 --
 
-ALTER TABLE ONLY public.depots
-    ADD CONSTRAINT depots_agency_fk FOREIGN KEY (agency_id) REFERENCES public.gtfs_agencies(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+ALTER TABLE ONLY public.buses
+    ADD CONSTRAINT buses_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id);
 
 
 --
@@ -681,6 +673,14 @@ ALTER TABLE ONLY public.depots
 
 ALTER TABLE ONLY public.depots
     ADD CONSTRAINT depots_gtfs_stops_fk FOREIGN KEY (stop_id) REFERENCES public.gtfs_stops(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: depots depots_users_fk; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.depots
+    ADD CONSTRAINT depots_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id);
 
 
 --
@@ -783,5 +783,5 @@ ALTER TABLE ONLY public.variants
 -- PostgreSQL database dump complete
 --
 
-\unrestrict AssPkdyiuEOh4jyCDpy71OXJQTIKZaXIPuQT0GlDUY6qBCk8Slb8IwQWQTi9baI
+\unrestrict 12vqELAoXgtmQzLhYR0ufbJAHHiqOYFRFkXVE1a2NTKS8VIgkICBbvNHAIZ66W6
 
