@@ -16,9 +16,9 @@ function stripHtml(input: string): string {
   }
 }
 
-export default function CreateDepotView({ token, agencyId, baseUrl, onCancel, onCreated }: {
+export default function CreateDepotView({ token, userId, baseUrl, onCancel, onCreated }: {
   token: string;
-  agencyId: string;
+  userId: string;
   baseUrl: string;
   onCancel: () => void;
   onCreated: (dep?: any) => void;
@@ -96,13 +96,13 @@ export default function CreateDepotView({ token, agencyId, baseUrl, onCancel, on
   async function submit() {
     setError('');
     if (!token) { setError(t('createDepot.errors.loginFirst') as string); return; }
-    if (!agencyId) { setError(t('createDepot.errors.selectAgency') as string); return; }
+    if (!userId) { setError(t('createDepot.errors.selectAgency') as string); return; }
     if (!name.trim()) { setError(t('createDepot.errors.nameRequired') as string); return; }
     if (latitude != null && (latitude < -90 || latitude > 90)) { setError(t('createDepot.errors.latitudeRange') as string); return; }
     if (longitude != null && (longitude < -180 || longitude > 180)) { setError(t('createDepot.errors.longitudeRange') as string); return; }
     try {
       setLoading(true);
-      const payload: any = { user_id: agencyId, name: name.trim() };
+      const payload: any = { user_id: userId, name: name.trim() };
       if (address.trim()) payload.address = address.trim();
       if (latitude != null) payload.latitude = latitude;
       if (longitude != null) payload.longitude = longitude;
@@ -171,7 +171,7 @@ export default function CreateDepotView({ token, agencyId, baseUrl, onCancel, on
       </div>
       {error && <div className="text-sm text-red-600">{error}</div>}
       <div className="flex gap-2">
-        <button onClick={submit} disabled={loading || !token || !agencyId || !name.trim()} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#74C244'}}>
+        <button onClick={submit} disabled={loading || !token || !userId || !name.trim()} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#74C244'}}>
           {loading ? t('createDepot.creating') : t('createDepot.create')}
         </button>
         <button onClick={onCancel} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm">{t('common.cancel')}</button>

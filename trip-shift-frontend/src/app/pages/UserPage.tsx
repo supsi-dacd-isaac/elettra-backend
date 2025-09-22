@@ -26,7 +26,7 @@ function getEffectiveBaseUrl(): string {
 
 export default function UserPage() {
   const { t } = useTranslation();
-  const { token, logout, agencyId, setAgencyId } = useAuth();
+  const { token, logout, userId, setUserId } = useAuth();
   const baseUrl = useMemo(() => getEffectiveBaseUrl(), []);
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [agencyName, setAgencyName] = useState<string>('');
@@ -81,7 +81,7 @@ export default function UserPage() {
         <h2 className="text-lg font-medium mb-2">{t('shift.selectAgencyPlaceholder')}</h2>
         <div className="text-sm">
           <p className="text-gray-600 mb-2">{t('depots.selectAgencyBackend')}</p>
-          <AgencySelector token={token} selectedId={agencyId} onSelect={setAgencyId} />
+          <AgencySelector token={token} selectedId={userId} onSelect={setUserId} />
         </div>
       </Panel>
     </div>

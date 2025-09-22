@@ -3,8 +3,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 type AuthContextValue = {
   token: string;
   setToken: (t: string) => void;
-  agencyId: string;
-  setAgencyId: (id: string) => void;
+  userId: string;
+  setUserId: (id: string) => void;
   logout: () => void;
 };
 
@@ -21,7 +21,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return '';
     }
   });
-  const [agencyId, setAgencyIdState] = useState<string>('');
+  const [userId, setUserIdState] = useState<string>('');
 
   const setToken = useCallback((t: string) => {
     setTokenState(t);
@@ -32,8 +32,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   }, []);
 
-  const setAgencyId = useCallback((id: string) => {
-    setAgencyIdState(id || '');
+  const setUserId = useCallback((id: string) => {
+    setUserIdState(id || '');
   }, []);
 
   // When token changes, fetch /auth/me to preselect agency
@@ -57,7 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const res = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) return;
         const me = await res.json();
-        if (!cancelled && me?.company_id && !agencyId) setAgencyIdState(me.company_id);
+        if (!cancelled && me?.id && !userId) setUserIdState(me.id);
       } catch {}
     }
     void syncAgencyFromMe();
@@ -66,10 +66,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(() => {
     setToken('');
-    setAgencyIdState('');
+    setUserIdState('');
   }, [setToken]);
 
-  const value = useMemo<AuthContextValue>(() => ({ token, setToken, agencyId, setAgencyId, logout }), [token, setToken, agencyId, setAgencyId, logout]);
+  const value = useMemo<AuthContextValue>(() => ({ token, setToken, userId, setUserId, logout }), [token, setToken, userId, setUserId, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -330,7 +330,7 @@ export default function ShiftsPage() {
   const [transfersByEdge, setTransfersByEdge] = useState<Record<string, { depHHMM: string; arrHHMM: string }>>({});
 
   // Agency/Route selection
-  const { agencyId, setAgencyId } = useAuth(); // global agency selection
+  const { userId, setUserId } = useAuth(); // global user selection
   const [routes, setRoutes] = useState<RouteRead[]>([]);
   const [routeDbId, setRouteDbId] = useState<string>(ENV_ROUTE_ID); // database UUID for route
 
@@ -721,8 +721,8 @@ export default function ShiftsPage() {
         if (meRes.ok) {
           const me = await meRes.json();
           // If user has a company_id and no agency selected yet, preselect it
-          if (me?.company_id && !agencyId) {
-            setAgencyId(me.company_id);
+          if (me?.company_id && !userId) {
+            setUserId(me.company_id);
           }
         }
       } catch {}
@@ -830,7 +830,7 @@ export default function ShiftsPage() {
   }
 
   const loadDepotsForAgency = useCallback(async () => {
-    if (!effectiveBaseUrl || !token || !agencyId) return;
+    if (!effectiveBaseUrl || !token || !userId) return;
     try {
       _setDepotsError("");
       _setDepotsLoading(true);
@@ -838,21 +838,21 @@ export default function ShiftsPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Depot[];
-      setDepots(Array.isArray(all) ? all.filter((d) => d.user_id === agencyId) : []);
+      setDepots(Array.isArray(all) ? all.filter((d) => d.user_id === userId) : []);
       } catch (e: any) {
       setDepots([]);
       _setDepotsError(e?.message || String(e));
       } finally {
       _setDepotsLoading(false);
     }
-  }, [effectiveBaseUrl, token, agencyId]);
+  }, [effectiveBaseUrl, token, userId]);
 
   // Load bus models (global, not per-agency)
   
 
   // Load buses for selected agency
   const loadBusesForAgency = useCallback(async () => {
-    if (!effectiveBaseUrl || !token || !agencyId) return;
+    if (!effectiveBaseUrl || !token || !userId) return;
     try {
       _setBusesError("");
       _setBusesLoading(true);
@@ -860,14 +860,14 @@ export default function ShiftsPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Bus[];
-      setBuses(Array.isArray(all) ? all.filter((b) => b.user_id === agencyId) : []);
+      setBuses(Array.isArray(all) ? all.filter((b) => b.user_id === userId) : []);
     } catch (e: any) {
       setBuses([]);
       _setBusesError(e?.message || String(e));
     } finally {
       _setBusesLoading(false);
     }
-  }, [effectiveBaseUrl, token, agencyId]);
+  }, [effectiveBaseUrl, token, userId]);
 
   // Load shifts for selected agency
   
@@ -882,8 +882,8 @@ export default function ShiftsPage() {
         const meRes = await fetch(joinUrl(effectiveBaseUrl, "/auth/me"), { headers: { Authorization: `Bearer ${token}` } });
         if (meRes.ok) {
           const me = await meRes.json();
-          if (me?.company_id && !agencyId) {
-            setAgencyId(me.company_id);
+          if (me?.company_id && !userId) {
+            setUserId(me.company_id);
           }
         }
       } catch {}
@@ -900,12 +900,12 @@ export default function ShiftsPage() {
 
   // When agency changes, load routes and clear selection
   useEffect(() => {
-    if (agencyId) {
+    if (userId) {
       setRouteDbId("");
-      fetchRoutesByAgency(agencyId);
-      // Load depots for selected agency
+      fetchRoutesByAgency(userId);
+      // Load depots for selected user
       void loadDepotsForAgency();
-      // Load buses for selected agency
+      // Load buses for selected user
       void loadBusesForAgency();
     } else {
       setRoutes([]);
@@ -919,7 +919,7 @@ export default function ShiftsPage() {
     setSelectedIds([]);
     setStopsByTrip({});
     setElevationByTrip({});
-  }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
+  }, [userId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
 
   
 
@@ -943,10 +943,10 @@ export default function ShiftsPage() {
   useEffect(() => {
     let cancelled = false;
     async function loadShifts() {
-      if (!token || !effectiveBaseUrl || !agencyId) return;
+      if (!token || !effectiveBaseUrl || !userId) return;
       try {
         setLoading(true);
-        const url = joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/?skip=0&limit=1000&user_id=${encodeURIComponent(agencyId)}`);
+        const url = joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/?skip=0&limit=1000&user_id=${encodeURIComponent(userId)}`);
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         const all = (await res.json()) as ShiftRead[];
@@ -963,7 +963,7 @@ export default function ShiftsPage() {
     }
     void loadShifts();
     return () => { cancelled = true; };
-  }, [token, effectiveBaseUrl, agencyId, refreshNonce]);
+  }, [token, effectiveBaseUrl, userId, refreshNonce]);
 
   
 
@@ -1114,11 +1114,11 @@ export default function ShiftsPage() {
                     <button
                       className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
                       style={{backgroundColor: '#002AA7'}}
-                      disabled={!token || !agencyId}
+                      disabled={!token || !userId}
                       onClick={() => {
                         setShowStartShiftDialog(true);
                       }}
-                      title={!token ? t("depots.authRequired") : (!agencyId ? t("depots.selectAgencyBackend") : t("shifts.startHint", 'Start a new shift'))}
+                      title={!token ? t("depots.authRequired") : (!userId ? t("depots.selectAgencyBackend") : t("shifts.startHint", 'Start a new shift'))}
                     >
                       {t("shifts.createButton", 'Create shift')}
                     </button>
@@ -1149,9 +1149,9 @@ export default function ShiftsPage() {
                     className="px-3 py-2 border rounded-lg"
                     value={routeDbId}
                     onChange={(e) => setRouteDbId(e.target.value)}
-                    disabled={!agencyId || routes.length === 0}
+                    disabled={!userId || routes.length === 0}
                   >
-                    <option value="">{agencyId
+                    <option value="">{userId
                       ? (routes.length ? t("shift.selectRoutePlaceholder") : t("shift.loadingRoutes"))
                       : t("shift.selectAgencyFirst")}</option>
                     {routes.map((r) => (
@@ -1175,7 +1175,7 @@ export default function ShiftsPage() {
                   <button
                     className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
                     style={{backgroundColor: '#002AA7'}}
-                    disabled={!token || !agencyId || !(routeDbId || routeId) || !hasLoadedForRouteDay || !creatingShift}
+                    disabled={!token || !userId || !(routeDbId || routeId) || !hasLoadedForRouteDay || !creatingShift}
                     onClick={() => {
                       setModalError("");
                       setModalDepotId("");
@@ -1189,7 +1189,7 @@ export default function ShiftsPage() {
                   <button
                     className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
                     style={{ backgroundColor: returnDepotInfo ? "#6b7280" : "#74C244" }}
-                    disabled={!token || !agencyId || !(routeDbId || routeId) || !leaveDepotInfo || selectedIds.length === 0 || !creatingShift}
+                    disabled={!token || !userId || !(routeDbId || routeId) || !leaveDepotInfo || selectedIds.length === 0 || !creatingShift}
                     onClick={() => {
                       setModalError("");
                       setModalDepotId("");
@@ -1558,7 +1558,7 @@ export default function ShiftsPage() {
                 <label className="block text-sm text-gray-700 mb-1">{t("depotModal.depotLabel")}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={modalDepotId} onChange={(e) => setModalDepotId(e.target.value)}>
                   <option value="">{t("depotModal.selectDepot")}</option>
-                  {depots.filter((d) => d.user_id === agencyId && d.stop_id).map((d) => (
+                  {depots.filter((d) => d.user_id === userId && d.stop_id).map((d) => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
@@ -1616,7 +1616,7 @@ export default function ShiftsPage() {
                 <label className="block text-sm text-gray-700 mb-1">{t("shifts.busLabel", 'Bus')}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={shiftBusId} onChange={(e) => setShiftBusId(e.target.value)}>
                   <option value="">{t("shifts.selectBus", 'Select bus')}</option>
-                  {buses.filter((b) => b.user_id === agencyId).map((b) => (
+                  {buses.filter((b) => b.user_id === userId).map((b) => (
                     <option key={b.id} value={b.id}>{b.name}</option>
                   ))}
                 </select>

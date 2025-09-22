@@ -97,7 +97,7 @@ export default function BusesPage() {
         <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#002AA7'}} disabled={!token || !userId} onClick={() => setShowCreate((v) => !v)} title={!token ? (t('depots.authRequired') as any) : !userId ? (t('depots.selectAgencyBackend') as any) : ''}>
           {t('buses.createButton', showCreate ? 'Close' : 'Create bus')}
         </button>
-        <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#6b7280'}} disabled={!token || !agencyId} onClick={() => { void loadModels(); void loadBuses(); }}>
+        <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#6b7280'}} disabled={!token || !userId} onClick={() => { void loadModels(); void loadBuses(); }}>
           {t('common.refresh', 'Refresh')}
         </button>
       </div>

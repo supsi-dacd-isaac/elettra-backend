@@ -86,7 +86,7 @@ export default function DepotsPage() {
         <div className="mb-2 text-xs px-3 py-2 rounded" style={{backgroundColor: '#f0f9ff', color: '#74C244', borderColor: '#74C244', border: '1px solid'}}>{notice}</div>
       )}
       {mode === 'create' ? (
-        <CreateDepotView token={token} agencyId={userId} baseUrl={baseUrl} onCancel={() => setMode('list')} onCreated={(dep?: any) => {
+        <CreateDepotView token={token} userId={userId} baseUrl={baseUrl} onCancel={() => setMode('list')} onCreated={(dep?: any) => {
           setNotice(dep?.name ? t('depots.createdWithName', { name: dep.name }) as string : (t('depots.created') as string));
           setTimeout(() => setNotice(''), 3000);
           void loadDepotsForAgency();
