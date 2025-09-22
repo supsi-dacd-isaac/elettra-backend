@@ -298,7 +298,7 @@ export default function ShiftsPage() {
   const [filter, setFilter] = useState<'all' | 'mine'>('all');
   const [sort, setSort] = useState<'updatedDesc' | 'nameAsc'>('updatedDesc');
   // Depots management
-  type Depot = { id: string; agency_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
+  type Depot = { id: string; user_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
   const [depots, setDepots] = useState<Depot[]>([]);
   // Depots state kept for planner flow only
   const [_depotsLoading, _setDepotsLoading] = useState<boolean>(false);
@@ -306,7 +306,7 @@ export default function ShiftsPage() {
   // Bus models management (page moved out)
   
   // Buses management
-  type Bus = { id: string; agency_id: string; name: string; specs?: any; bus_model_id?: string | null };
+  type Bus = { id: string; user_id: string; name: string; specs?: any; bus_model_id?: string | null };
   const [buses, setBuses] = useState<Bus[]>([]);
   const [_busesLoading, _setBusesLoading] = useState<boolean>(false);
   const [_busesError, _setBusesError] = useState<string>("");
@@ -838,7 +838,7 @@ export default function ShiftsPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Depot[];
-      setDepots(Array.isArray(all) ? all.filter((d) => d.agency_id === agencyId) : []);
+      setDepots(Array.isArray(all) ? all.filter((d) => d.user_id === agencyId) : []);
       } catch (e: any) {
       setDepots([]);
       _setDepotsError(e?.message || String(e));
@@ -860,7 +860,7 @@ export default function ShiftsPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Bus[];
-      setBuses(Array.isArray(all) ? all.filter((b) => b.agency_id === agencyId) : []);
+      setBuses(Array.isArray(all) ? all.filter((b) => b.user_id === agencyId) : []);
     } catch (e: any) {
       setBuses([]);
       _setBusesError(e?.message || String(e));
@@ -946,7 +946,7 @@ export default function ShiftsPage() {
       if (!token || !effectiveBaseUrl || !agencyId) return;
       try {
         setLoading(true);
-        const url = joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/?skip=0&limit=1000&agency_id=${encodeURIComponent(agencyId)}`);
+        const url = joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/?skip=0&limit=1000&user_id=${encodeURIComponent(agencyId)}`);
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         const all = (await res.json()) as ShiftRead[];
@@ -1558,7 +1558,7 @@ export default function ShiftsPage() {
                 <label className="block text-sm text-gray-700 mb-1">{t("depotModal.depotLabel")}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={modalDepotId} onChange={(e) => setModalDepotId(e.target.value)}>
                   <option value="">{t("depotModal.selectDepot")}</option>
-                  {depots.filter((d) => d.agency_id === agencyId && d.stop_id).map((d) => (
+                  {depots.filter((d) => d.user_id === agencyId && d.stop_id).map((d) => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
@@ -1616,7 +1616,7 @@ export default function ShiftsPage() {
                 <label className="block text-sm text-gray-700 mb-1">{t("shifts.busLabel", 'Bus')}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={shiftBusId} onChange={(e) => setShiftBusId(e.target.value)}>
                   <option value="">{t("shifts.selectBus", 'Select bus')}</option>
-                  {buses.filter((b) => b.agency_id === agencyId).map((b) => (
+                  {buses.filter((b) => b.user_id === agencyId).map((b) => (
                     <option key={b.id} value={b.id}>{b.name}</option>
                   ))}
                 </select>

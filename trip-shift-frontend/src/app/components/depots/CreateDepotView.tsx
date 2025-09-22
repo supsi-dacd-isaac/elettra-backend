@@ -102,7 +102,7 @@ export default function CreateDepotView({ token, agencyId, baseUrl, onCancel, on
     if (longitude != null && (longitude < -180 || longitude > 180)) { setError(t('createDepot.errors.longitudeRange') as string); return; }
     try {
       setLoading(true);
-      const payload: any = { agency_id: agencyId, name: name.trim() };
+      const payload: any = { user_id: agencyId, name: name.trim() };
       if (address.trim()) payload.address = address.trim();
       if (latitude != null) payload.latitude = latitude;
       if (longitude != null) payload.longitude = longitude;

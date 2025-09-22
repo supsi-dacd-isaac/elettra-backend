@@ -4,7 +4,7 @@ import { useAuth } from '../auth/AuthContext.tsx';
 import CreateDepotView from '../components/depots/CreateDepotView.tsx';
 import Panel from '../components/ui/Panel.tsx';
 
-type Depot = { id: string; agency_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
+type Depot = { id: string; user_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
 type UserMe = { id: string; company_id?: string };
 
 function joinUrl(base: string, path: string): string {
@@ -29,7 +29,7 @@ export default function DepotsPage() {
   const { t } = useTranslation();
   const { token } = useAuth();
   const baseUrl = useMemo(() => getEffectiveBaseUrl(), []);
-  const [agencyId, setAgencyId] = useState<string>('');
+  const [userId, setUserId] = useState<string>('');
   const [depots, setDepots] = useState<Depot[]>([]);
   const [depotsLoading, setDepotsLoading] = useState<boolean>(false);
   const [depotsError, setDepotsError] = useState<string>('');
@@ -46,7 +46,7 @@ export default function DepotsPage() {
         const meRes = await fetch(joinUrl(baseUrl, '/auth/me'), { headers: { Authorization: `Bearer ${token}` } });
         if (meRes.ok) {
           const me = (await meRes.json()) as UserMe;
-          if (!cancelled && me?.company_id) setAgencyId(me.company_id);
+          if (!cancelled && me?.id) setUserId(me.id);
         }
       } catch {}
     }
@@ -55,7 +55,7 @@ export default function DepotsPage() {
   }, [token, baseUrl]);
 
   const loadDepotsForAgency = async () => {
-    if (!baseUrl || !token || !agencyId) return;
+    if (!baseUrl || !token || !userId) return;
     try {
       setDepotsError('');
       setDepotsLoading(true);
@@ -63,7 +63,7 @@ export default function DepotsPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Depot[];
-      setDepots(Array.isArray(all) ? all.filter((d) => d.agency_id === agencyId) : []);
+      setDepots(Array.isArray(all) ? all.filter((d) => d.user_id === userId) : []);
     } catch (e: any) {
       setDepots([]);
       setDepotsError(e?.message || String(e));
@@ -72,13 +72,13 @@ export default function DepotsPage() {
     }
   };
 
-  useEffect(() => { void loadDepotsForAgency(); }, [token, baseUrl, agencyId]);
+  useEffect(() => { void loadDepotsForAgency(); }, [token, baseUrl, userId]);
 
   return (
     <Panel>
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-medium">{t('depots.title')}</h2>
-        <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#002AA7'}} disabled={!token || !agencyId} onClick={() => setMode('create')} title={!token ? (t('depots.loginFirst') as any) : !agencyId ? (t('depots.selectAgencyFirst') as any) : (t('depots.createNewHint') as any)}>
+        <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#002AA7'}} disabled={!token || !userId} onClick={() => setMode('create')} title={!token ? (t('depots.loginFirst') as any) : !userId ? (t('depots.selectAgencyFirst') as any) : (t('depots.createNewHint') as any)}>
           {t('depots.createButton')}
         </button>
       </div>
@@ -86,7 +86,7 @@ export default function DepotsPage() {
         <div className="mb-2 text-xs px-3 py-2 rounded" style={{backgroundColor: '#f0f9ff', color: '#74C244', borderColor: '#74C244', border: '1px solid'}}>{notice}</div>
       )}
       {mode === 'create' ? (
-        <CreateDepotView token={token} agencyId={agencyId} baseUrl={baseUrl} onCancel={() => setMode('list')} onCreated={(dep?: any) => {
+        <CreateDepotView token={token} agencyId={userId} baseUrl={baseUrl} onCancel={() => setMode('list')} onCreated={(dep?: any) => {
           setNotice(dep?.name ? t('depots.createdWithName', { name: dep.name }) as string : (t('depots.created') as string));
           setTimeout(() => setNotice(''), 3000);
           void loadDepotsForAgency();

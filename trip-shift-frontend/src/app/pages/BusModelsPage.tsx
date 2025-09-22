@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth/AuthContext.tsx';
 import Panel from '../components/ui/Panel.tsx';
 
-type BusModel = { id: string; agency_id: string; name: string; description?: string | null; specs?: any; manufacturer?: string | null };
+type BusModel = { id: string; user_id: string; name: string; description?: string | null; specs?: any; manufacturer?: string | null };
 
 type UserMe = { id: string; company_id?: string };
 
@@ -29,7 +29,7 @@ export default function BusModelsPage() {
   const { t } = useTranslation();
   const { token } = useAuth();
   const baseUrl = useMemo(() => getEffectiveBaseUrl(), []);
-  const [agencyId, setAgencyId] = useState<string>('');
+  const [userId, setUserId] = useState<string>('');
   const [models, setModels] = useState<BusModel[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
@@ -50,7 +50,7 @@ export default function BusModelsPage() {
         const meRes = await fetch(joinUrl(baseUrl, '/auth/me'), { headers: { Authorization: `Bearer ${token}` } });
         if (meRes.ok) {
           const me = (await meRes.json()) as UserMe;
-          if (!cancelled && me?.company_id) setAgencyId(me.company_id);
+          if (!cancelled && me?.id) setUserId(me.id);
         }
       } catch {}
     }
@@ -59,7 +59,7 @@ export default function BusModelsPage() {
   }, [token, baseUrl]);
 
   const loadModels = async () => {
-    if (!baseUrl || !token || !agencyId) return;
+    if (!baseUrl || !token || !userId) return;
     try {
       setError('');
       setLoading(true);
@@ -67,7 +67,7 @@ export default function BusModelsPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as BusModel[];
-      setModels(Array.isArray(all) ? all.filter((m) => m.agency_id === agencyId) : []);
+      setModels(Array.isArray(all) ? all.filter((m) => m.user_id === userId) : []);
     } catch (e: any) {
       setModels([]);
       setError(e?.message || String(e));
@@ -76,12 +76,12 @@ export default function BusModelsPage() {
     }
   };
 
-  useEffect(() => { void loadModels(); }, [token, baseUrl, agencyId]);
+  useEffect(() => { void loadModels(); }, [token, baseUrl, userId]);
 
   return (
     <Panel>
       <div className="flex gap-2 mb-2">
-        <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#002AA7'}} disabled={!token} onClick={() => setShowCreate((v) => !v)} title={!token ? (t('depots.authRequired') as any) : ''}>
+        <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#002AA7'}} disabled={!token || !userId} onClick={() => setShowCreate((v) => !v)} title={!token ? (t('depots.authRequired') as any) : ''}>
           {t('busModels.createButton', showCreate ? 'Close' : 'Create model')}
         </button>
         <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#6b7280'}} disabled={!token} onClick={() => void loadModels()}>
@@ -96,12 +96,12 @@ export default function BusModelsPage() {
           <textarea className="w-full px-2 py-1 border rounded font-mono text-xs" rows={3} placeholder={t('busModels.form.specs', 'Specs (JSON)') as string} value={newSpecsText} onChange={(e) => setNewSpecsText(e.target.value)} />
           <div className="flex gap-2">
             <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#74C244'}} disabled={!token || creating || !newName.trim()} onClick={async () => {
-              if (!baseUrl || !token || !agencyId) return;
+              if (!baseUrl || !token || !userId) return;
               try {
                 setCreating(true);
                 let specs: any = {};
                 if (newSpecsText.trim()) { try { specs = JSON.parse(newSpecsText); } catch { alert(t('busModels.parseError', 'Invalid JSON in specs') as any); setCreating(false); return; } }
-                const res = await fetch(joinUrl(baseUrl, '/api/v1/agency/bus-models/'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ agency_id: agencyId, name: newName, description: newDescription || null, manufacturer: newManufacturer || null, specs }) });
+                const res = await fetch(joinUrl(baseUrl, '/api/v1/agency/bus-models/'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ user_id: userId, name: newName, description: newDescription || null, manufacturer: newManufacturer || null, specs }) });
                 if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                 const created = (await res.json()) as BusModel;
                 setModels((prev) => [created, ...prev]);
@@ -133,7 +133,7 @@ export default function BusModelsPage() {
                     <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#74C244'}} onClick={async () => {
                       if (!baseUrl || !token) return;
                       try {
-                        const payload: any = { agency_id: agencyId };
+                        const payload: any = { user_id: userId };
                         if (editing.name !== undefined) payload.name = editing.name;
                         if (editing.description !== undefined) payload.description = editing.description;
                         if (editing.manufacturer !== undefined) payload.manufacturer = editing.manufacturer;
