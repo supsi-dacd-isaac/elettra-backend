@@ -58,11 +58,11 @@ def test_login_malformed_email(client, record):
 
 def test_access_without_token(client, record):
     # Use a protected endpoint to verify auth enforcement
-    r = client.get(f"{API_BASE}/agency/buses/")
+    r = client.get(f"{API_BASE}/user/buses/")
     record("access_no_token", r.status_code in (401, 403), f"status={r.status_code}")
 
 def test_access_with_invalid_token(client, record):
-    r = client.get(f"{API_BASE}/agency/buses/", headers={"Authorization": "Bearer invalid"})
+    r = client.get(f"{API_BASE}/user/buses/", headers={"Authorization": "Bearer invalid"})
     record("access_invalid_token", r.status_code == 401, f"status={r.status_code}")
 
 @pytest.mark.parametrize("auth_header", [
@@ -72,7 +72,7 @@ def test_access_with_invalid_token(client, record):
     "Bearertoken",
 ])
 def test_malformed_auth_headers(client, record, auth_header):
-    r = client.get(f"{API_BASE}/agency/buses/", headers={"Authorization": auth_header})
+    r = client.get(f"{API_BASE}/user/buses/", headers={"Authorization": auth_header})
     record(f"malformed_header:{auth_header}", r.status_code in (401, 403), f"status={r.status_code}")
 
 def test_register_invalid_payloads(client, record):
@@ -89,7 +89,7 @@ def test_register_invalid_payloads(client, record):
 
 def test_expired_token(client, record):
     token = _expired_token()
-    r = client.get(f"{API_BASE}/agency/buses/", headers={"Authorization": f"Bearer {token}"})
+    r = client.get(f"{API_BASE}/user/buses/", headers={"Authorization": f"Bearer {token}"})
     record("expired_token", r.status_code == 401, f"status={r.status_code}")
 
 def test_swagger_available(client, record):

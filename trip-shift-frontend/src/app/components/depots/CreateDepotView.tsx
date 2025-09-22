@@ -106,7 +106,7 @@ export default function CreateDepotView({ token, userId, baseUrl, onCancel, onCr
       if (address.trim()) payload.address = address.trim();
       if (latitude != null) payload.latitude = latitude;
       if (longitude != null) payload.longitude = longitude;
-      const res = await fetch(joinUrl(baseUrl, '/api/v1/agency/depots/'), {
+      const res = await fetch(joinUrl(baseUrl, '/api/v1/user/depots/'), {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);

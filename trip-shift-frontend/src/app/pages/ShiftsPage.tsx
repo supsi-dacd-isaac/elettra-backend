@@ -656,7 +656,7 @@ export default function ShiftsPage() {
         return;
       }
       setExportMessage(t("selected.exporting"));
-      const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/agency/shifts/"), {
+      const res = await fetch(joinUrl(effectiveBaseUrl, "/api/v1/user/shifts/"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: shiftName.trim(), bus_id: shiftBusId, trip_ids: combined.map((tr) => tr.id) }),
@@ -834,7 +834,7 @@ export default function ShiftsPage() {
     try {
       _setDepotsError("");
       _setDepotsLoading(true);
-      const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/depots/?skip=0&limit=1000");
+      const url = joinUrl(effectiveBaseUrl, "/api/v1/user/depots/?skip=0&limit=1000");
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Depot[];
@@ -856,7 +856,7 @@ export default function ShiftsPage() {
     try {
       _setBusesError("");
       _setBusesLoading(true);
-      const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/buses/?skip=0&limit=1000");
+      const url = joinUrl(effectiveBaseUrl, "/api/v1/user/buses/?skip=0&limit=1000");
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Bus[];
@@ -946,7 +946,7 @@ export default function ShiftsPage() {
       if (!token || !effectiveBaseUrl || !userId) return;
       try {
         setLoading(true);
-        const url = joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/?skip=0&limit=1000&user_id=${encodeURIComponent(userId)}`);
+        const url = joinUrl(effectiveBaseUrl, `/api/v1/user/shifts/?skip=0&limit=1000&user_id=${encodeURIComponent(userId)}`);
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         const all = (await res.json()) as ShiftRead[];
@@ -1053,7 +1053,7 @@ export default function ShiftsPage() {
             if (!effectiveBaseUrl || !token) return;
             if (!window.confirm(t('shifts.confirmDelete', { name: s.name }) as any)) return;
             try {
-              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/${encodeURIComponent(s.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+              const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/user/shifts/${encodeURIComponent(s.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
               if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
               setShifts((prev) => prev.filter((x) => x.id !== s.id));
             } catch (e: any) {

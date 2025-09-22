@@ -9,7 +9,7 @@ from datetime import datetime, UTC
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from app.routers import agency, auth, gtfs, simulation
+from app.routers import agency, auth, gtfs, simulation, user as user_router
 from app.core.config import get_cached_settings
 from app.schemas.health import HealthCheckResponse, ServiceStatus
 from app.database import get_async_session
@@ -76,6 +76,7 @@ app.add_middleware(
 # Include authentication and API routers
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(agency.router, prefix="/api/v1/agency", tags=["Agency"])
+app.include_router(user_router.router, prefix="/api/v1/user", tags=["User"])
 app.include_router(gtfs.router, prefix="/api/v1/gtfs", tags=["GTFS"])
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])
 

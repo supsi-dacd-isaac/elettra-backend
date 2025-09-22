@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 __report_module__ = "buses_crud"
 
-API_BASE = "/api/v1/agency"
+API_BASE = "/api/v1/user"
 AUTH_BASE = "/auth"
 
 

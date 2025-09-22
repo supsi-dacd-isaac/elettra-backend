@@ -61,7 +61,7 @@ export default function BusesPage() {
   const loadModels = async () => {
     if (!baseUrl || !token || !userId) return;
     try {
-      const url = joinUrl(baseUrl, '/api/v1/agency/bus-models/?skip=0&limit=1000');
+      const url = joinUrl(baseUrl, '/api/v1/user/bus-models/?skip=0&limit=1000');
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as BusModel[];
@@ -76,7 +76,7 @@ export default function BusesPage() {
     try {
       setError('');
       setLoading(true);
-      const url = joinUrl(baseUrl, '/api/v1/agency/buses/?skip=0&limit=1000');
+      const url = joinUrl(baseUrl, '/api/v1/user/buses/?skip=0&limit=1000');
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Bus[];
@@ -116,7 +116,7 @@ export default function BusesPage() {
                 setCreating(true);
                 let specs: any = {};
                 if (newSpecsText.trim()) { try { specs = JSON.parse(newSpecsText); } catch { alert(t('buses.parseError', 'Invalid JSON in specs') as any); setCreating(false); return; } }
-                const res = await fetch(joinUrl(baseUrl, '/api/v1/agency/buses/'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ user_id: userId, name: newName, bus_model_id: newModelId || null, specs }) });
+                const res = await fetch(joinUrl(baseUrl, '/api/v1/user/buses/'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ user_id: userId, name: newName, bus_model_id: newModelId || null, specs }) });
                 if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                 const created = (await res.json()) as Bus;
                 setBuses((prev) => [created, ...prev]);
@@ -154,7 +154,7 @@ export default function BusesPage() {
                         if (editing.name !== undefined) payload.name = editing.name;
                         if (editing.bus_model_id !== undefined) payload.bus_model_id = editing.bus_model_id || null;
                         if (editing.specsText !== undefined) { try { payload.specs = editing.specsText ? JSON.parse(editing.specsText as string) : {}; } catch { alert(t('buses.parseError', 'Invalid JSON in specs') as any); return; } }
-                        const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/buses/${encodeURIComponent(b.id)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+                        const res = await fetch(joinUrl(baseUrl, `/api/v1/user/buses/${encodeURIComponent(b.id)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
                         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                         const updated = (await res.json()) as Bus;
                         setBuses((prev) => prev.map((x) => x.id === b.id ? updated : x));
@@ -188,7 +188,7 @@ export default function BusesPage() {
                         if (!baseUrl || !token) return;
                         if (!window.confirm(t('buses.confirmDelete', { name: b.name }) as any)) return;
                         try {
-                          const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/buses/${encodeURIComponent(b.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                          const res = await fetch(joinUrl(baseUrl, `/api/v1/user/buses/${encodeURIComponent(b.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
                           if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                           setBuses((prev) => prev.filter((x) => x.id !== b.id));
                         } catch (e: any) { alert(t('buses.deleteFailed', { error: e?.message || String(e) }) as any); }

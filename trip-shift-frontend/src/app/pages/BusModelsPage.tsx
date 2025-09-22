@@ -63,7 +63,7 @@ export default function BusModelsPage() {
     try {
       setError('');
       setLoading(true);
-      const url = joinUrl(baseUrl, '/api/v1/agency/bus-models/?skip=0&limit=1000');
+      const url = joinUrl(baseUrl, '/api/v1/user/bus-models/?skip=0&limit=1000');
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as BusModel[];
@@ -101,7 +101,7 @@ export default function BusModelsPage() {
                 setCreating(true);
                 let specs: any = {};
                 if (newSpecsText.trim()) { try { specs = JSON.parse(newSpecsText); } catch { alert(t('busModels.parseError', 'Invalid JSON in specs') as any); setCreating(false); return; } }
-                const res = await fetch(joinUrl(baseUrl, '/api/v1/agency/bus-models/'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ user_id: userId, name: newName, description: newDescription || null, manufacturer: newManufacturer || null, specs }) });
+                const res = await fetch(joinUrl(baseUrl, '/api/v1/user/bus-models/'), { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ user_id: userId, name: newName, description: newDescription || null, manufacturer: newManufacturer || null, specs }) });
                 if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                 const created = (await res.json()) as BusModel;
                 setModels((prev) => [created, ...prev]);
@@ -138,7 +138,7 @@ export default function BusModelsPage() {
                         if (editing.description !== undefined) payload.description = editing.description;
                         if (editing.manufacturer !== undefined) payload.manufacturer = editing.manufacturer;
                         if (editing.specsText !== undefined) { try { payload.specs = editing.specsText ? JSON.parse(editing.specsText as string) : {}; } catch { alert(t('busModels.parseError', 'Invalid JSON in specs') as any); return; } }
-                        const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/bus-models/${encodeURIComponent(m.id)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+                        const res = await fetch(joinUrl(baseUrl, `/api/v1/user/bus-models/${encodeURIComponent(m.id)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
                         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                         const updated = (await res.json()) as BusModel;
                         setModels((prev) => prev.map((x) => x.id === m.id ? updated : x));
@@ -173,7 +173,7 @@ export default function BusModelsPage() {
                         if (!baseUrl || !token) return;
                         if (!window.confirm(t('busModels.confirmDelete', { name: m.name }) as any)) return;
                         try {
-                          const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/bus-models/${encodeURIComponent(m.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                          const res = await fetch(joinUrl(baseUrl, `/api/v1/user/bus-models/${encodeURIComponent(m.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
                           if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                           setModels((prev) => prev.filter((x) => x.id !== m.id));
                         } catch (e: any) { alert(t('busModels.deleteFailed', { error: e?.message || String(e) }) as any); }

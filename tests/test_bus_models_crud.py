@@ -10,7 +10,7 @@ import uuid
 
 __report_module__ = "bus_models_crud"
 
-API_BASE = "/api/v1/agency"
+API_BASE = "/api/v1/user"
 AUTH_BASE = "/auth"
 
 

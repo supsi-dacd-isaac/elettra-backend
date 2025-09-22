@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 __report_module__ = "depot_crud"  # used by report_collector for report filename
 
-API_BASE = "/api/v1/agency"
+API_BASE = "/api/v1/user"
 AUTH_BASE = "/auth"
 
 # Test data - read from environment variables

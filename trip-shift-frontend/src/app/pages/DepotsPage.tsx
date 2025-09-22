@@ -59,7 +59,7 @@ export default function DepotsPage() {
     try {
       setDepotsError('');
       setDepotsLoading(true);
-      const url = joinUrl(baseUrl, '/api/v1/agency/depots/?skip=0&limit=1000');
+      const url = joinUrl(baseUrl, '/api/v1/user/depots/?skip=0&limit=1000');
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Depot[];
@@ -124,7 +124,7 @@ export default function DepotsPage() {
                             if (editing.address !== undefined) payload.address = editing.address;
                             if (editing.latitude !== undefined) payload.latitude = editing.latitude;
                             if (editing.longitude !== undefined) payload.longitude = editing.longitude;
-                            const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+                            const res = await fetch(joinUrl(baseUrl, `/api/v1/user/depots/${encodeURIComponent(d.id)}`), { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
                             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                             const updated = (await res.json()) as Depot;
                             setDepots((prev) => prev.map((x) => (x.id === d.id ? updated : x)));
@@ -160,7 +160,7 @@ export default function DepotsPage() {
                             if (!baseUrl || !token) return;
                             if (!window.confirm(t('depots.confirmDelete', { name: d.name }) as any)) return;
                             try {
-                              const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                              const res = await fetch(joinUrl(baseUrl, `/api/v1/user/depots/${encodeURIComponent(d.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
                               if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
                               setDepots((prev) => prev.filter((x) => x.id !== d.id));
                             } catch (e: any) { alert(t('depots.deleteFailed', { error: e?.message || e }) as any); }
