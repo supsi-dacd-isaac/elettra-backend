@@ -44,11 +44,7 @@ export type TripX = Trip & {
   arrival_sec: number;
 };
 
-type Agency = {
-  id: string;
-  gtfs_agency_id: string;
-  agency_name: string;
-};
+// Agency type removed as agency selection moved to User page
 
 type CurrentUser = {
   id: string;
@@ -90,19 +86,7 @@ type ElevationProfile = {
   records: ElevationRecord[];
 };
 
-// Shifts types (backend responses)
-type ShiftStructureItem = {
-  id: string;
-  trip_id: string;
-  shift_id: string;
-  sequence_number: number;
-};
-type ShiftRead = {
-  id: string;
-  name: string;
-  bus_id?: string | null;
-  structure: ShiftStructureItem[];
-};
+// Shift types removed from planner; saved shifts live on Shifts page
 
 // ---------- Utils ----------
 function parseGtfsTimeToSeconds(t: string): number {
@@ -322,11 +306,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
   const [_busesLoading, _setBusesLoading] = useState<boolean>(false);
   const [_busesError, _setBusesError] = useState<string>("");
   // Shifts management
-  const [shifts, setShifts] = useState<ShiftRead[]>([]);
-  const [shiftsLoading, setShiftsLoading] = useState<boolean>(false);
-  const [shiftsError, setShiftsError] = useState<string>("");
-  const [shiftEdges, setShiftEdges] = useState<Record<string, { fromStop: string; fromTime: string; toStop: string; toTime: string }>>({});
-  const [shiftEdgesLoading, setShiftEdgesLoading] = useState<Record<string, boolean>>({});
+  
   // Depot flow state
   const [hasLoadedForRouteDay, setHasLoadedForRouteDay] = useState<boolean>(false);
   const [leaveDepotInfo, setLeaveDepotInfo] = useState<null | { depotId: string; timeHHMM: string }>(null);
@@ -345,11 +325,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
   const [transfersByEdge, setTransfersByEdge] = useState<Record<string, { depHHMM: string; arrHHMM: string }>>({});
 
   // Agency/Route selection
-  const [agencies, setAgencies] = useState<Agency[]>([]);
-  const [agencyId, setAgencyId] = useState<string>(""); // database UUID for agency
-  const [agencyQuery, setAgencyQuery] = useState<string>(""); // typeahead query / display label
-  const [agencyOpen, setAgencyOpen] = useState<boolean>(false);
-  const [agencyHighlight, setAgencyHighlight] = useState<number>(-1);
+  const { agencyId, setAgencyId } = useAuth(); // global agency selection
   const [routes, setRoutes] = useState<RouteRead[]>([]);
   const [routeDbId, setRouteDbId] = useState<string>(ENV_ROUTE_ID); // database UUID for route
 
@@ -660,36 +636,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
     return combined;
   }
 
-  // Fetch and cache shift edges (first and last trip stop/time)
-  async function fetchShiftEdges(shift: ShiftRead) {
-    try {
-      if (!shift || !shift.structure || shift.structure.length === 0) return;
-      const firstTripId = shift.structure[0].trip_id;
-      const lastTripId = shift.structure[shift.structure.length - 1].trip_id;
-      setShiftEdgesLoading((prev) => ({ ...prev, [shift.id]: true }));
-      const urlFirst = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(firstTripId)}`);
-      const urlLast = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(lastTripId)}`);
-      const [resFirst, resLast] = await Promise.all([
-        fetch(urlFirst, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
-        fetch(urlLast, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
-      ]);
-      if (resFirst.ok && resLast.ok) {
-        const firstStops = (await resFirst.json()) as TripStop[];
-        const lastStops = (await resLast.json()) as TripStop[];
-        const first = firstStops?.[0];
-        const last = lastStops?.[lastStops.length - 1];
-        const fromStop = first?.stop_name || '';
-        const fromTime = (first?.departure_time || first?.arrival_time || '').slice(0, 5);
-        const toStop = last?.stop_name || '';
-        const toTime = (last?.arrival_time || last?.departure_time || '').slice(0, 5);
-        setShiftEdges((prev) => ({ ...prev, [shift.id]: { fromStop, fromTime, toStop, toTime } }));
-      }
-    } catch {
-      // ignore per-item errors
-    } finally {
-      setShiftEdgesLoading((prev) => ({ ...prev, [shift.id]: false }));
-    }
-  }
+  
 
   async function handleSaveShift() {
     try {
@@ -711,8 +658,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
       });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
-      // Refresh shifts list
-      void loadShiftsForAgency();
+      
 
       // Keep exporting JSON as before
       setExportMessage(t("export.preparingDownload"));
@@ -812,18 +758,6 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
   }
 
   // ---- Agencies/Routes fetching ----
-  async function fetchAgencies() {
-    if (!effectiveBaseUrl || !token) return;
-    try {
-      const url = joinUrl(effectiveBaseUrl, "/api/v1/agency/agencies/?limit=1000");
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const data = (await res.json()) as Agency[];
-      setAgencies(Array.isArray(data) ? data : []);
-    } catch (e) {
-      // silent fail; user might not be logged in yet
-    }
-  }
 
   async function fetchRoutesByAgency(aid: string) {
     if (!effectiveBaseUrl || !token || !aid) return;
@@ -884,33 +818,9 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
   }, [effectiveBaseUrl, token, agencyId]);
 
   // Load shifts for selected agency
-  const loadShiftsForAgency = useCallback(async () => {
-    if (!effectiveBaseUrl || !token || !agencyId) return;
-    try {
-      setShiftsError("");
-      setShiftsLoading(true);
-      const url = joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/?skip=0&limit=1000&agency_id=${encodeURIComponent(agencyId)}`);
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const all = (await res.json()) as ShiftRead[];
-      setShifts(Array.isArray(all) ? all : []);
-      // Preload edges for first page few items
-      const toPreload = (Array.isArray(all) ? all.slice(0, 10) : []);
-      for (const s of toPreload) void fetchShiftEdges(s);
-    } catch (e: any) {
-      setShifts([]);
-      setShiftsError(e?.message || String(e));
-    } finally {
-      setShiftsLoading(false);
-    }
-  }, [effectiveBaseUrl, token, agencyId]);
+  
 
-  // When token becomes available, load agencies
-  useEffect(() => {
-    if (token) {
-      fetchAgencies();
-    }
-  }, [token, effectiveBaseUrl]);
+  
 
   // When token is set (pasted or from env), fetch current user and preselect agency
   useEffect(() => {
@@ -945,13 +855,10 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
       void loadDepotsForAgency();
       // Load buses for selected agency
       void loadBusesForAgency();
-      // Load shifts for selected agency
-      void loadShiftsForAgency();
     } else {
       setRoutes([]);
       setDepots([]);
       setBuses([]);
-      setShifts([]);
     }
     // Reset depot flow completely on agency change
     setHasLoadedForRouteDay(false);
@@ -960,7 +867,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
     setSelectedIds([]);
     setStopsByTrip({});
     setElevationByTrip({});
-  }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency, loadShiftsForAgency]);
+  }, [agencyId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
 
   
 
@@ -980,24 +887,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
     }
   }, [routeDbId, routeId, day, token, effectiveBaseUrl]);
 
-  // Filter and sort agencies by name/id
-  const filteredAgencies = useMemo(() => {
-    const label = (a: Agency) => (a.agency_name || a.gtfs_agency_id || "").toString();
-    const q = agencyQuery.trim().toLowerCase();
-    const list = q ? agencies.filter((a) => label(a).toLowerCase().includes(q)) : agencies.slice();
-    return list.sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base" }));
-  }, [agencies, agencyQuery]);
-
-  function agencyLabel(a?: Agency) {
-    return (a?.agency_name || a?.gtfs_agency_id || "").toString();
-  }
-
-  // Keep visible query in sync with selected agencyId
-  useEffect(() => {
-    if (!agencyId) return; // do not overwrite user typing when nothing selected
-    const sel = agencies.find((x) => x.id === agencyId);
-    if (sel) setAgencyQuery(agencyLabel(sel));
-  }, [agencyId, agencies]);
+  
 
   async function ensureStopsForTrip(tripDbId: string) {
     if (!tripDbId) return;
@@ -1227,76 +1117,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <div className="relative">
-                  <input
-                    className="w-full px-3 py-2 border rounded-lg"
-                    placeholder={token ? t("shift.selectAgencyPlaceholder") : t("shift.loginFirstPlaceholder")}
-                    value={agencyQuery}
-                    disabled={!token}
-                    onFocus={() => token && setAgencyOpen(true)}
-                    onChange={(e) => {
-                      setAgencyQuery(e.target.value);
-                      setAgencyOpen(true);
-                      setAgencyHighlight(-1);
-                      if (agencyId) setAgencyId(""); // clear selection when typing
-                    }}
-                    onKeyDown={(e) => {
-                      if (!agencyOpen && (e.key === "ArrowDown" || e.key === "Enter")) {
-                        setAgencyOpen(true);
-                        return;
-                      }
-                      if (!agencyOpen) return;
-                      if (e.key === "ArrowDown") {
-                        e.preventDefault();
-                        setAgencyHighlight((h) => Math.min((filteredAgencies.length - 1), h + 1));
-                      } else if (e.key === "ArrowUp") {
-                        e.preventDefault();
-                        setAgencyHighlight((h) => Math.max(-1, h - 1));
-                      } else if (e.key === "Enter") {
-                        e.preventDefault();
-                        const pick = agencyHighlight >= 0 ? filteredAgencies[agencyHighlight] : filteredAgencies[0];
-                        if (pick) {
-                          setAgencyId(pick.id);
-                          setAgencyQuery(agencyLabel(pick));
-                          setAgencyOpen(false);
-                          setAgencyHighlight(-1);
-                        }
-                      } else if (e.key === "Escape") {
-                        setAgencyOpen(false);
-                        setAgencyHighlight(-1);
-                      }
-                    }}
-                    onBlur={() => {
-                      // Close after click selection
-                      setTimeout(() => setAgencyOpen(false), 100);
-                    }}
-                  />
-                  {agencyOpen && token && filteredAgencies.length > 0 && (
-                    <ul className="absolute z-10 mt-1 w-full max-h-48 overflow-auto border rounded-lg bg-white shadow">
-                      {filteredAgencies.map((a, idx) => (
-                        <li
-                          key={a.id}
-                          className={
-                            "px-3 py-2 cursor-pointer text-sm " +
-                            (idx === agencyHighlight ? "text-white" : "hover:bg-gray-100")
-                          }
-                          style={idx === agencyHighlight ? {backgroundColor: '#002AA7'} : {}}
-                          onMouseEnter={() => setAgencyHighlight(idx)}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            setAgencyId(a.id);
-                            setAgencyQuery(agencyLabel(a));
-                            setAgencyOpen(false);
-                            setAgencyHighlight(-1);
-                          }}
-                        >
-                          {agencyLabel(a)}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+              <div className="grid grid-cols-1 gap-2 mt-2">
                 <select
                   className="px-3 py-2 border rounded-lg"
                   value={routeDbId}
@@ -1320,61 +1141,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
                   ))}
                 </select>
               </div>
-              {/* Shifts list inside Shift Planning panel */}
-              <div className="mt-3 p-2 rounded-lg border">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm font-medium">{t("shifts.listTitle", 'Saved shifts')}</div>
-                  <div className="flex items-center gap-2">
-                    {shiftsLoading && <span className="text-xs text-gray-500">{t("common.loading")}</span>}
-                    <button
-                      className="px-2 py-1 rounded text-white text-xs hover:opacity-90 disabled:opacity-50"
-                      style={{backgroundColor: '#6b7280'}}
-                      disabled={!token || !agencyId}
-                      onClick={() => void loadShiftsForAgency()}
-                      title={!token ? t("depots.authRequired") : (!agencyId ? t("depots.selectAgencyBackend") : '')}
-                    >
-                      {t("common.refresh", 'Refresh')}
-                    </button>
-                  </div>
-                </div>
-                {shiftsError && <div className="text-sm text-red-600">{shiftsError}</div>}
-                {(!shiftsLoading && shifts.length === 0) ? (
-                  <div className="text-sm text-gray-600">{t("shifts.empty", 'No shifts')}</div>
-                ) : (
-                  <ul className="space-y-2">
-                    {shifts.map((s) => (
-                      <li key={s.id} className="border rounded-lg p-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="text-sm">
-                            <div className="font-medium">{s.name}</div>
-                            <div className="text-gray-600">{t("shifts.tripCount", { count: s.structure?.length || 0 })}</div>
-                            <div className="text-gray-600">
-                              {(() => {
-                                const edge = shiftEdges[s.id];
-                                const loading = shiftEdgesLoading[s.id];
-                                if (loading) return <span className="text-xs text-gray-500">{t("common.loading")}</span>;
-                                if (!edge) { void fetchShiftEdges(s); return <span className="text-xs text-gray-500">{t("common.loading")}</span>; }
-                                return <>{t("shifts.summary", edge as any)}</>;
-                              })()}
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
-                              if (!effectiveBaseUrl || !token) return;
-                              if (!window.confirm(t("shifts.confirmDelete", { name: s.name }) as any)) return;
-                              try {
-                                const res = await fetch(joinUrl(effectiveBaseUrl, `/api/v1/agency/shifts/${encodeURIComponent(s.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-                                if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                                setShifts((prev) => prev.filter((x) => x.id !== s.id));
-                              } catch (e: any) { alert(t("shifts.deleteFailed", { error: e?.message || String(e) })); }
-                            }}>{t("common.delete")}</button>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              {/* Saved shifts panel removed here; shown at top of Shifts page */}
             </div>
           </div>
 

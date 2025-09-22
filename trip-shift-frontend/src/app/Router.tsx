@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import AppLayout from './layouts/AppLayout.tsx';
 import LoginPage from './pages/LoginPage.tsx';
-import PlannerPage from './pages/PlannerPage.tsx';
+// Planner removed; route will redirect to Shifts
 import ShiftsPage from './pages/ShiftsPage.tsx';
 import DepotsPage from './pages/DepotsPage.tsx';
 import BusModelsPage from './pages/BusModelsPage.tsx';
@@ -21,9 +21,9 @@ export default function AppRouter() {
     <BrowserRouter>
       <Routes>
         <Route element={<AppLayout />}> 
-          <Route index element={<Navigate to="/planner" replace />} />
+          <Route index element={<Navigate to="/shifts" replace />} />
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/planner" element={<Protected><PlannerPage /></Protected>} />
+          <Route path="/planner" element={<Navigate to="/shifts" replace />} />
           <Route path="/user" element={<Protected><UserPage /></Protected>} />
           <Route path="/shifts" element={<Protected><ShiftsPage /></Protected>} />
           <Route path="/depots" element={<Protected><DepotsPage /></Protected>} />

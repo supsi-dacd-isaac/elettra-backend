@@ -1,8 +1,10 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 type AuthContextValue = {
   token: string;
   setToken: (t: string) => void;
+  agencyId: string;
+  setAgencyId: (id: string) => void;
   logout: () => void;
 };
 
@@ -19,6 +21,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return '';
     }
   });
+  const [agencyId, setAgencyIdState] = useState<string>('');
 
   const setToken = useCallback((t: string) => {
     setTokenState(t);
@@ -29,11 +32,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   }, []);
 
+  const setAgencyId = useCallback((id: string) => {
+    setAgencyIdState(id || '');
+  }, []);
+
+  // When token changes, fetch /auth/me to preselect agency
+  useEffect(() => {
+    let cancelled = false;
+    async function syncAgencyFromMe() {
+      if (!token) return;
+      try {
+        const base = (() => {
+          const VITE = (typeof import.meta !== 'undefined' ? (import.meta as any).env : {}) || {};
+          const envBase = VITE.VITE_API_BASE_URL || '';
+          if (envBase) return envBase as string;
+          if (typeof window !== 'undefined') {
+            const host = window.location.hostname;
+            if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:8002';
+            if (/^10\./.test(host)) return `http://${host}:8002`;
+            if (host === 'isaac-elettra.dacd.supsi.ch') return 'http://isaac-elettra.dacd.supsi.ch:8002';
+          }
+          return 'http://localhost:8002';
+        })();
+        const res = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const me = await res.json();
+        if (!cancelled && me?.company_id && !agencyId) setAgencyIdState(me.company_id);
+      } catch {}
+    }
+    void syncAgencyFromMe();
+    return () => { cancelled = true; };
+  }, [token]);
+
   const logout = useCallback(() => {
     setToken('');
+    setAgencyIdState('');
   }, [setToken]);
 
-  const value = useMemo<AuthContextValue>(() => ({ token, setToken, logout }), [token, setToken, logout]);
+  const value = useMemo<AuthContextValue>(() => ({ token, setToken, agencyId, setAgencyId, logout }), [token, setToken, agencyId, setAgencyId, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

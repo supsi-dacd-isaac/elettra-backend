@@ -60,7 +60,7 @@ export default function AppLayout() {
           </div>
         </div>
         <nav className="mx-auto max-w-7xl px-4 pb-2 flex gap-3 text-sm">
-          <NavLink to="/planner" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.planner', 'Planner')}</NavLink>
+          {/* Planner removed */}
           <NavLink to="/shifts" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.shifts', 'Shifts')}</NavLink>
           <NavLink to="/depots" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.depots', 'Depots')}</NavLink>
           <NavLink to="/fleet/models" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.busModels', 'Bus models')}</NavLink>
