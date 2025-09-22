@@ -1103,29 +1103,25 @@ export default function ShiftsPage() {
             </div>
           </div>
 
-          <div className="p-3 md:p-4 bg-white border border-neutral-200 rounded-xl shadow-sm" role="region" aria-labelledby="planner-accordion-title">
-            <h2 id="planner-accordion-title" className="text-lg font-medium mb-3">{t("shift.title")}</h2>
-            <div className="space-y-2 text-sm">
-              {/* Create Shift panel */}
-              <details className="rounded-lg border" open>
-                <summary className="px-2 py-1 cursor-pointer select-none">
-                  <span className="text-sm font-medium">{t("shifts.createTitle", 'Shift creation')}</span>
-                </summary>
-                <div className="p-2 border-t">
-        <div className="flex items-center justify-between mb-2">
+          <div className="p-3 md:p-4 bg-white border border-neutral-200 rounded-xl shadow-sm">
+            <h2 className="text-lg font-medium mb-3">{t("shift.title")}</h2>
+            <div className="space-y-4 text-sm">
+              {/* Shift Creation */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
                   <div className="text-sm font-medium">{t("shifts.createTitle", 'Shift creation')}</div>
                   {!creatingShift ? (
-            <button
+                    <button
                       className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
                       style={{backgroundColor: '#002AA7'}}
-              disabled={!token || !agencyId}
+                      disabled={!token || !agencyId}
                       onClick={() => {
                         setShowStartShiftDialog(true);
                       }}
                       title={!token ? t("depots.authRequired") : (!agencyId ? t("depots.selectAgencyBackend") : t("shifts.startHint", 'Start a new shift'))}
                     >
                       {t("shifts.createButton", 'Create shift')}
-            </button>
+                    </button>
                   ) : (
                     <div className="text-xs text-gray-700">
                       {t("shifts.current", 'Creating')}: <span className="font-medium">{shiftName || '—'}</span>
@@ -1136,8 +1132,8 @@ export default function ShiftsPage() {
                           setShiftBusId("");
                           handleReset();
                         }}>{t("common.cancel")}</button>
-          </div>
-        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
                 {!creatingShift && (
@@ -1146,14 +1142,38 @@ export default function ShiftsPage() {
                 {creatingShift && (
                   <div className="text-xs text-gray-600">{t("shifts.enabledHint", 'Day and route are now enabled. Proceed with depot, trips, return then Save shift.')}</div>
                 )}
+              </div>
+
+              {/* Route/Day Selection */}
+              <div>
+                <div className="text-sm font-medium mb-2">Route/Day</div>
+                <div className="grid grid-cols-1 gap-2">
+                  <select
+                    className="px-3 py-2 border rounded-lg"
+                    value={routeDbId}
+                    onChange={(e) => setRouteDbId(e.target.value)}
+                    disabled={!agencyId || routes.length === 0}
+                  >
+                    <option value="">{agencyId
+                      ? (routes.length ? t("shift.selectRoutePlaceholder") : t("shift.loadingRoutes"))
+                      : t("shift.selectAgencyFirst")}</option>
+                    {routes.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {(r.route_short_name || r.route_long_name || r.route_id) as string}
+                      </option>
+                    ))}
+                  </select>
+                  <select className="px-3 py-2 border rounded-lg" value={day} onChange={(e) => setDay(e.target.value)}>
+                    {DAYS.map((d) => (
+                      <option key={d} value={d}>{t(`days.${d}`)}</option>
+                    ))}
+                  </select>
                 </div>
-              </details>
-              {/* Depot flow panel */}
-              <details className="rounded-lg border">
-                <summary className="px-2 py-1 cursor-pointer select-none">
-                  <span className="text-sm font-medium">{t("shift.depotFlow")}</span>
-                </summary>
-                <div className="p-2 border-t">
+              </div>
+
+              {/* Depot Flow */}
+              <div>
+                <div className="text-sm font-medium mb-2">{t("shift.depotFlow")}</div>
                 <div className="flex items-center gap-2">
                   <button
                     className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
@@ -1194,42 +1214,7 @@ export default function ShiftsPage() {
                 {returnDepotInfo && (
                   <div className="mt-1 text-xs text-gray-700">{t("shift.returnSummary", { time: returnDepotInfo.timeHHMM })}</div>
                 )}
-                </div>
-              </details>
-
-              {/* Route/Day panel */}
-              <details className="rounded-lg border">
-                <summary className="px-2 py-1 cursor-pointer select-none">
-                  <span className="text-sm font-medium">Route/Day</span>
-                </summary>
-                <div className="p-2 border-t">
-                <div className="grid grid-cols-1 gap-2 mt-2">
-                <select
-                  className="px-3 py-2 border rounded-lg"
-                  value={routeDbId}
-                  onChange={(e) => setRouteDbId(e.target.value)}
-                  disabled={!agencyId || routes.length === 0}
-                >
-                  <option value="">{agencyId
-                    ? (routes.length ? t("shift.selectRoutePlaceholder") : t("shift.loadingRoutes"))
-                    : t("shift.selectAgencyFirst")}</option>
-                  {routes.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {(r.route_short_name || r.route_long_name || r.route_id) as string}
-                    </option>
-                  ))}
-                </select>
               </div>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <select className="px-3 py-2 border rounded-lg" value={day} onChange={(e) => setDay(e.target.value)}>
-                  {DAYS.map((d) => (
-                    <option key={d} value={d}>{t(`days.${d}`)}</option>
-                  ))}
-                </select>
-              </div>
-                </div>
-              </details>
-              {/* Saved shifts panel removed here; shown at top of Shifts page */}
             </div>
           </div>
 
