@@ -143,16 +143,35 @@ export default function DepotsPage() {
                         <div className="text-xs text-gray-500">{typeof d.latitude === 'number' && typeof d.longitude === 'number' ? `${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}` : ''}</div>
                       </div>
                       <div className="flex gap-2">
-                        <button className="px-2 py-1 rounded text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} onClick={() => { setEditingDepotId(d.id); setEditing({}); }}>{t('common.edit')}</button>
-                        <button className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700" onClick={async () => {
-                          if (!baseUrl || !token) return;
-                          if (!window.confirm(t('depots.confirmDelete', { name: d.name }) as any)) return;
-                          try {
-                            const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-                            if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-                            setDepots((prev) => prev.filter((x) => x.id !== d.id));
-                          } catch (e: any) { alert(t('depots.deleteFailed', { error: e?.message || e }) as any); }
-                        }}>{t('common.delete')}</button>
+                        <button 
+                          className="px-2 py-1 rounded text-white text-sm hover:opacity-90 relative group" 
+                          style={{backgroundColor: '#002AA7'}} 
+                          onClick={() => { setEditingDepotId(d.id); setEditing({}); }}
+                          title={t('common.edit') as string}
+                        >
+                          <i className="fa-solid fa-pen-to-square"></i>
+                          <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                            {t('common.edit')}
+                          </span>
+                        </button>
+                        <button 
+                          className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700 relative group" 
+                          onClick={async () => {
+                            if (!baseUrl || !token) return;
+                            if (!window.confirm(t('depots.confirmDelete', { name: d.name }) as any)) return;
+                            try {
+                              const res = await fetch(joinUrl(baseUrl, `/api/v1/agency/depots/${encodeURIComponent(d.id)}`), { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+                              if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+                              setDepots((prev) => prev.filter((x) => x.id !== d.id));
+                            } catch (e: any) { alert(t('depots.deleteFailed', { error: e?.message || e }) as any); }
+                          }}
+                          title={t('common.delete') as string}
+                        >
+                          <i className="fa-solid fa-trash"></i>
+                          <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                            {t('common.delete')}
+                          </span>
+                        </button>
                       </div>
                     </div>
                   )}

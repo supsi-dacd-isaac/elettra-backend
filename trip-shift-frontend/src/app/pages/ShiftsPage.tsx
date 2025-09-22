@@ -1136,9 +1136,6 @@ export default function ShiftsPage() {
                     </div>
                   )}
                 </div>
-                {!creatingShift && (
-                  <div className="text-xs text-gray-600">{t("shifts.createHint", 'Click "Create shift" to begin. You will enter the name and select a bus. Then select day/route and construct the shift.')}</div>
-                )}
                 {creatingShift && (
                   <div className="text-xs text-gray-600">{t("shifts.enabledHint", 'Day and route are now enabled. Proceed with depot, trips, return then Save shift.')}</div>
                 )}
@@ -1312,8 +1309,8 @@ export default function ShiftsPage() {
               {/* Overlay hint when trips are loaded but Leave depot not set or shift not started */}
               {((rawTrips.length > 0 && !leaveDepotInfo) || !creatingShift) && (
                 <div className="absolute inset-0 z-10 flex items-start justify-center pointer-events-none">
-                  <div className="mt-12 px-4 py-2 rounded-lg text-sm shadow" style={{color: '#3B3C48', backgroundColor: '#f8f9fa', borderColor: '#dee2e6', border: '1px solid'}}>
-                    {!creatingShift ? t("shifts.overlayCreateFirst", 'Click "Create shift" and set name + bus to begin') : t("available.leaveDepotOverlay")}
+                  <div className="mt-4 px-4 py-2 rounded-lg text-sm shadow" style={{color: '#3B3C48', backgroundColor: '#f8f9fa', borderColor: '#dee2e6', border: '1px solid'}}>
+                    {!creatingShift ? t("shifts.createHint", 'Click "Create shift" to begin. You will enter the name and select a bus. Then select day/route and construct the shift.') : t("available.leaveDepotOverlay")}
                   </div>
                 </div>
               )}
@@ -1379,6 +1376,23 @@ export default function ShiftsPage() {
                   const retOk = hasCore && lastArr !== undefined && parseHHMMToSec(returnDepotInfo!.timeHHMM) > lastArr;
                   const validState = Boolean(retOk);
                   const busName = buses.find((b) => b.id === shiftBusId)?.name || "";
+                  const routeSelected = Boolean(routeDbId || routeId);
+                  const daySelected = Boolean(day);
+                  const stepTitle = !creatingShift
+                    ? (t("shifts.createFirst", 'Create shift to enable saving') as any)
+                    : (!routeSelected || !daySelected
+                        ? (t("selected.saveStepRouteDay", 'Select route and day') as any)
+                        : (!leaveDepotInfo
+                            ? (t("selected.saveStepLeaveDepot", 'Click "Leave depot" to start') as any)
+                            : (selectedTrips.length === 0
+                                ? (t("selected.saveStepSelectTrip", 'Select a trip to add to the shift') as any)
+                                : (!returnDepotInfo
+                                    ? (t("selected.saveStepReturnDepot", 'Click "Return to depot" to complete the shift') as any)
+                                    : (!retOk
+                                        ? (t("selected.exportHintReturn") as any)
+                                        : (!shiftName.trim() || !shiftBusId
+                                            ? (t("shifts.nameBusRequired", 'Name and bus are required') as any)
+                                            : ""))))));
                   return (
                     <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-white/95 backdrop-blur border-b flex items-center justify-between gap-2">
                       <div className="flex items-center gap-3 text-sm">
@@ -1394,10 +1408,15 @@ export default function ShiftsPage() {
                           className="px-3 py-1.5 rounded-lg text-white hover:opacity-90 disabled:opacity-50"
                           style={{backgroundColor: '#74C244'}}
                           disabled={!validState || !creatingShift || !shiftName.trim() || !shiftBusId}
-                          title={!creatingShift ? (t("shifts.createFirst", 'Create shift to enable saving') as any) : (!hasCore ? t("selected.exportHintIncomplete") : (!retOk ? t("selected.exportHintReturn") : (!shiftName.trim() || !shiftBusId ? (t("shifts.nameBusRequired", 'Name and bus are required') as any) : "")))}
+                          title={stepTitle}
                         >
                           {exporting ? (exportMessage || t("shifts.saving", 'Saving shift...')) : t("shifts.saveButton", 'Save shift')}
                         </button>
+                        {stepTitle && (
+                          <div className="text-xs text-gray-600">
+                            {stepTitle}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -1461,8 +1480,9 @@ export default function ShiftsPage() {
                                 }}
                               >↓</button>
                               <button
-                                className="px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700 text-xs"
+                                className="px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700 text-xs relative group"
                                 aria-label="Remove"
+                                title={t("common.remove") as string}
                                 onClick={() => {
                                   setSelectedIds((prev) => prev.filter((id) => id !== trip.id));
                                   setTransfersByEdge((prev) => {
@@ -1473,7 +1493,12 @@ export default function ShiftsPage() {
                                     return next;
                                   });
                                 }}
-                              >×</button>
+                              >
+                                <i className="fa-solid fa-trash"></i>
+                                <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                                  {t("common.remove")}
+                                </span>
+                              </button>
                             </div>
                           </div>
                         </div>

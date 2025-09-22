@@ -124,18 +124,26 @@ export default function SavedShiftsPanel(props: SavedShiftsPanelProps) {
                 <div className="flex gap-2">
                   {onView && (
                     <button
-                      className="px-2 py-1 rounded bg-blue-600 text-white text-sm hover:bg-blue-700"
+                      className="px-2 py-1 rounded bg-blue-600 text-white text-sm hover:bg-blue-700 relative group"
                       onClick={() => onView(s)}
+                      title={t('saved.view', 'View') as string}
                     >
-                      {t('saved.view', 'View')}
+                      <i className="fa-solid fa-eye"></i>
+                      <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                        {t('saved.view', 'View')}
+                      </span>
                     </button>
                   )}
                   {onDelete && (
                     <button
-                      className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700"
+                      className="px-2 py-1 rounded bg-red-600 text-white text-sm hover:bg-red-700 relative group"
                       onClick={() => onDelete(s)}
+                      title={t('common.delete') as string}
                     >
-                      {t('common.delete')}
+                      <i className="fa-solid fa-trash"></i>
+                      <span className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs text-white bg-gray-800 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                        {t('common.delete')}
+                      </span>
                     </button>
                   )}
                 </div>

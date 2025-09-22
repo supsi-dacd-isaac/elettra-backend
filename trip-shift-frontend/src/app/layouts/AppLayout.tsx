@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { SUPPORTED_LANGUAGES, setAppLanguage } from '../../i18n';
 import { useAuth } from '../auth/AuthContext';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 
 function LanguageSwitcher() {
   const { t, i18n } = useTranslation();
@@ -29,6 +29,7 @@ function AuthStatus() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [me, setMe] = useState<any>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const baseUrl = useMemo(() => {
     const VITE = (typeof import.meta !== 'undefined' ? (import.meta as any).env : {}) || {};
     const envBase = (VITE as any).VITE_API_BASE_URL || '';
@@ -55,6 +56,23 @@ function AuthStatus() {
     void loadMe();
     return () => { cancelled = true; };
   }, [token, baseUrl]);
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [open]);
   if (!token) {
     return (
       <div className="flex items-center gap-2">
@@ -65,7 +83,7 @@ function AuthStatus() {
     );
   }
   return (
-    <div className="relative">
+    <div className="relative" ref={dropdownRef}>
       <button aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}}>
         {(me?.full_name || me?.email || 'User') as string}
       </button>
