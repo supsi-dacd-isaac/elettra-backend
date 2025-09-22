@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth/AuthContext.tsx';
 import CreateDepotView from '../components/depots/CreateDepotView.tsx';
+import Panel from '../components/ui/Panel.tsx';
 
 type Depot = { id: string; agency_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
 type UserMe = { id: string; company_id?: string };
@@ -74,7 +75,7 @@ export default function DepotsPage() {
   useEffect(() => { void loadDepotsForAgency(); }, [token, baseUrl, agencyId]);
 
   return (
-    <div className="p-3 rounded-2xl bg-white shadow-sm border">
+    <Panel>
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-medium">{t('depots.title')}</h2>
         <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#002AA7'}} disabled={!token || !agencyId} onClick={() => setMode('create')} title={!token ? (t('depots.loginFirst') as any) : !agencyId ? (t('depots.selectAgencyFirst') as any) : (t('depots.createNewHint') as any)}>
@@ -161,7 +162,7 @@ export default function DepotsPage() {
           )}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 

@@ -203,7 +203,11 @@
     "export": "Auswahl exportieren",
     "exporting": "Export wird ausgeführt...",
     "exportHintIncomplete": "Depotfahrten festlegen und Fahrten auswählen",
-    "exportHintReturn": "Rückfahrtszeit muss nach der letzten Ankunft liegen"
+    "exportHintReturn": "Rückfahrtszeit muss nach der letzten Ankunft liegen",
+    "validation": {
+      "ok": "OK",
+      "error": "Ungültig"
+    }
   },
   "summary": {
     "title": "Auswahlübersicht",
@@ -212,6 +216,22 @@
     "nextCandidates": "Nächste Kandidaten:",
     "lastArrival": "Letzte Ankunft:",
     "atStop": "an {{stop}}"
+  },
+  "saved": {
+    "title": "Gespeicherte Schichten",
+    "filter": {
+      "label": "Filter",
+      "all": "Alle",
+      "mine": "Meine"
+    },
+    "sort": {
+      "label": "Sortieren",
+      "updatedDesc": "Aktualisiert ▼",
+      "nameAsc": "Name A→Z"
+    },
+    "view": "Anzeigen",
+    "updated": "Aktualisiert {{value}}",
+    "empty": "Noch keine gespeicherten Schichten."
   },
   "selfTests": {
     "title": "Selbsttest",

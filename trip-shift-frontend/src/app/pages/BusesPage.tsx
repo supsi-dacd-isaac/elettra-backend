@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth/AuthContext.tsx';
+import Panel from '../components/ui/Panel.tsx';
 
 type BusModel = { id: string; agency_id: string; name: string };
 type Bus = { id: string; agency_id: string; name: string; specs?: any; bus_model_id?: string | null };
@@ -91,7 +92,7 @@ export default function BusesPage() {
   useEffect(() => { void loadModels(); void loadBuses(); }, [token, baseUrl, agencyId]);
 
   return (
-    <div className="p-3 rounded-2xl bg-white shadow-sm border">
+    <Panel>
       <div className="flex gap-2 mb-2">
         <button className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" style={{backgroundColor: '#002AA7'}} disabled={!token || !agencyId} onClick={() => setShowCreate((v) => !v)} title={!token ? (t('depots.authRequired') as any) : !agencyId ? (t('depots.selectAgencyBackend') as any) : ''}>
           {t('buses.createButton', showCreate ? 'Close' : 'Create bus')}
@@ -187,6 +188,6 @@ export default function BusesPage() {
           ))}
         </ul>
       )}
-    </div>
+    </Panel>
   );
 }

@@ -203,7 +203,11 @@
     "export": "Export selection",
     "exporting": "Exporting...",
     "exportHintIncomplete": "Set depot legs and select trips",
-    "exportHintReturn": "Return time must be later than last trip arrival"
+    "exportHintReturn": "Return time must be later than last trip arrival",
+    "validation": {
+      "ok": "OK",
+      "error": "Invalid"
+    }
   },
   "summary": {
     "title": "Selection summary",
@@ -212,6 +216,22 @@
     "nextCandidates": "Next candidates:",
     "lastArrival": "Last arrival:",
     "atStop": "at {{stop}}"
+  },
+  "saved": {
+    "title": "Saved shifts",
+    "filter": {
+      "label": "Filter",
+      "all": "All",
+      "mine": "Mine"
+    },
+    "sort": {
+      "label": "Sort",
+      "updatedDesc": "Updated ▼",
+      "nameAsc": "Name A→Z"
+    },
+    "view": "View",
+    "updated": "Updated {{value}}",
+    "empty": "No saved shifts yet."
   },
   "selfTests": {
     "title": "Self-tests",

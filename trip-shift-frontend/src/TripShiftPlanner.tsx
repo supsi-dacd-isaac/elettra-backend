@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { SUPPORTED_LANGUAGES, setAppLanguage, type SupportedLanguage } from "./i18n";
 import { useAuth } from "./app/auth/AuthContext.tsx";
+import Panel from "./app/components/ui/Panel";
 
 /**
  * Trip Shift Planner — single‑file React demo (TypeScript + Tailwind)
@@ -991,10 +992,11 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
       </header>
       )}
 
-      <main className="mx-auto max-w-7xl px-4 py-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <main className="grid grid-cols-1 lg:grid-cols-3 gap-4" id="planner-controls">
         {/* Left: Controls */}
         <section className="lg:col-span-1 space-y-4">
-          <div className="p-3 rounded-2xl bg-white shadow-sm border">
+          {/* Planner Controls Accordion */}
+          <div className="p-3 md:p-4 bg-white border border-neutral-200 rounded-xl shadow-sm" aria-label="Planner controls">
             <h2 className="text-lg font-medium mb-3">{t("filters.title")}</h2>
             <div className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
@@ -1029,14 +1031,15 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
             </div>
           </div>
 
-          
-
-          <div className="p-3 rounded-2xl bg-white shadow-sm border">
-            <h2 className="text-lg font-medium mb-3">{t("shift.title")}</h2>
-            
+          <div className="p-3 md:p-4 bg-white border border-neutral-200 rounded-xl shadow-sm" role="region" aria-labelledby="planner-accordion-title">
+            <h2 id="planner-accordion-title" className="text-lg font-medium mb-3">{t("shift.title")}</h2>
             <div className="space-y-2 text-sm">
-              {/* Create Shift flow */}
-              <div className="p-2 rounded-lg border">
+              {/* Create Shift panel */}
+              <details className="rounded-lg border" open>
+                <summary className="px-2 py-1 cursor-pointer select-none">
+                  <span className="text-sm font-medium">{t("shifts.createTitle", 'Shift creation')}</span>
+                </summary>
+                <div className="p-2 border-t">
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-sm font-medium">{t("shifts.createTitle", 'Shift creation')}</div>
                   {!creatingShift ? (
@@ -1071,10 +1074,14 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
                 {creatingShift && (
                   <div className="text-xs text-gray-600">{t("shifts.enabledHint", 'Day and route are now enabled. Proceed with depot, trips, return then Save shift.')}</div>
                 )}
-              </div>
-              {/* Depot flow */}
-              <div className="p-2 rounded-lg border">
-                <div className="text-sm font-medium mb-2">{t("shift.depotFlow")}</div>
+                </div>
+              </details>
+              {/* Depot flow panel */}
+              <details className="rounded-lg border">
+                <summary className="px-2 py-1 cursor-pointer select-none">
+                  <span className="text-sm font-medium">{t("shift.depotFlow")}</span>
+                </summary>
+                <div className="p-2 border-t">
                 <div className="flex items-center gap-2">
                   <button
                     className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
@@ -1115,9 +1122,16 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
                 {returnDepotInfo && (
                   <div className="mt-1 text-xs text-gray-700">{t("shift.returnSummary", { time: returnDepotInfo.timeHHMM })}</div>
                 )}
-              </div>
+                </div>
+              </details>
 
-              <div className="grid grid-cols-1 gap-2 mt-2">
+              {/* Route/Day panel */}
+              <details className="rounded-lg border">
+                <summary className="px-2 py-1 cursor-pointer select-none">
+                  <span className="text-sm font-medium">Route/Day</span>
+                </summary>
+                <div className="p-2 border-t">
+                <div className="grid grid-cols-1 gap-2 mt-2">
                 <select
                   className="px-3 py-2 border rounded-lg"
                   value={routeDbId}
@@ -1141,6 +1155,8 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
                   ))}
                 </select>
               </div>
+                </div>
+              </details>
               {/* Saved shifts panel removed here; shown at top of Shifts page */}
             </div>
           </div>
@@ -1154,7 +1170,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
           
 
 
-          <div className="p-3 rounded-2xl bg-white shadow-sm border">
+          <div className="p-3 md:p-4 bg-white border border-neutral-200 rounded-xl shadow-sm">
             <h2 className="text-lg font-medium mb-3">{t("summary.title")}</h2>
             <ul className="space-y-2 text-sm">
               <li>
@@ -1174,7 +1190,7 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
             </ul>
           </div>
 
-          <div className="p-3 rounded-2xl bg-white shadow-sm border">
+          <div className="p-3 md:p-4 bg-white border border-neutral-200 rounded-xl shadow-sm">
             <h2 className="text-lg font-medium mb-3">{t("selfTests.title")}</h2>
             <ul className="text-xs space-y-1">
               {tests.map((t, i) => (
@@ -1190,14 +1206,15 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
         {
           <>
             {/* Middle: Available trips */}
-            <section className="relative lg:col-span-2 p-3 rounded-2xl bg-white shadow-sm border min-h-[60vh] flex flex-col">
-              <div className="flex items-baseline justify-between mb-3">
-                <h2 className="text-lg font-medium">{t("available.title")}</h2>
-                <span className="text-sm text-gray-600">
-                  {t("available.subtitle")}
-                  {loading ? ` · ${t("common.loading")}` : ""}
-                </span>
-              </div>
+            <section className="relative lg:col-span-2 w-full min-h-[60vh] flex flex-col">
+              <Panel className="flex-1 flex flex-col">
+                <div className="flex items-baseline justify-between mb-3">
+                  <h2 className="text-lg font-medium">{t("available.title")}</h2>
+                  <span className="text-sm text-gray-600">
+                    {t("available.subtitle")}
+                    {loading ? ` · ${t("common.loading")}` : ""}
+                  </span>
+                </div>
               <div className="flex items-center justify-between mb-2 text-sm">
                 <div>
                   {t("available.showingRange", {
@@ -1290,14 +1307,48 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
                   <div className="text-sm text-gray-600">{t("available.noMatches", { filterLabel: t("filters.showDisconnected") })}</div>
                 ) : null}
               </div>
+              </Panel>
             </section>
 
             {/* Right: Selected shift */}
-            <section className="lg:col-span-3 p-4 rounded-2xl bg-white shadow-sm border">
-              <div className="flex items-baseline justify-between mb-3">
-                <h2 className="text-lg font-medium">{t("selected.title")}</h2>
+            <section className="lg:col-span-3">
+              <Panel>
+                <div className="flex items-baseline justify-between mb-3">
+                  <h2 className="text-lg font-medium">{t("selected.title")}</h2>
                 <span className="text-sm text-gray-600">{t("selected.subtitle")}</span>
               </div>
+              {/* Sticky Save strip */}
+              {(
+                () => {
+                  const hasCore = selectedTrips.length > 0 && !!leaveDepotInfo && !!returnDepotInfo;
+                  const lastArr = selectedTrips.length > 0 ? selectedTrips[selectedTrips.length - 1].arrival_sec : undefined;
+                  const retOk = hasCore && lastArr !== undefined && parseHHMMToSec(returnDepotInfo!.timeHHMM) > lastArr;
+                  const validState = Boolean(retOk);
+                  const busName = buses.find((b) => b.id === shiftBusId)?.name || "";
+                  return (
+                    <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-white/95 backdrop-blur border-b flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-3 text-sm">
+                        <div><span className="text-gray-600">Name:</span> <span className="font-medium">{shiftName || "—"}</span></div>
+                        <div><span className="text-gray-600">Bus:</span> <span className="font-medium">{busName || (shiftBusId || "—")}</span></div>
+                        <div className={`px-2 py-0.5 rounded-full text-xs ${validState ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'}`}>{validState ? t('selected.validation.ok', 'OK') : t('selected.validation.error', 'Invalid')}</div>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <button onClick={handleUndo} className="px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200">{t("selected.undo")}</button>
+                        <button onClick={handleReset} className="px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200">{t("selected.reset")}</button>
+                        <button
+                          onClick={handleSaveShift}
+                          className="px-3 py-1.5 rounded-lg text-white hover:opacity-90 disabled:opacity-50"
+                          style={{backgroundColor: '#74C244'}}
+                          disabled={!validState || !creatingShift || !shiftName.trim() || !shiftBusId}
+                          title={!creatingShift ? (t("shifts.createFirst", 'Create shift to enable saving') as any) : (!hasCore ? t("selected.exportHintIncomplete") : (!retOk ? t("selected.exportHintReturn") : (!shiftName.trim() || !shiftBusId ? (t("shifts.nameBusRequired", 'Name and bus are required') as any) : "")))}
+                        >
+                          {exporting ? (exportMessage || t("shifts.saving", 'Saving shift...')) : t("shifts.saveButton", 'Save shift')}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+              )()}
               <div className="space-y-3">
                 {!leaveDepotInfo && selectedTrips.length === 0 && (
                   <div className="text-sm text-gray-600">{t("selected.empty")}</div>
@@ -1322,7 +1373,55 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
                       <li key={trip.id} className="p-3 border rounded-xl flex flex-col gap-1">
                         <div className="flex items-center justify-between">
                           <div className="font-medium">{trip.start_stop_name} → {trip.end_stop_name}</div>
-                          <div className="text-xs text-gray-600">{t("selected.tripNumber", { index: idx + 1 })}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-xs text-gray-600">{t("selected.tripNumber", { index: idx + 1 })}</div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-xs"
+                                aria-label="Move up"
+                                disabled={idx === 0}
+                                onClick={() => {
+                                  if (idx === 0) return;
+                                  setSelectedIds((prev) => {
+                                    const next = [...prev];
+                                    const tmp = next[idx - 1];
+                                    next[idx - 1] = next[idx];
+                                    next[idx] = tmp;
+                                    return next;
+                                  });
+                                }}
+                              >↑</button>
+                              <button
+                                className="px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-xs"
+                                aria-label="Move down"
+                                disabled={idx === selectedIds.length - 1}
+                                onClick={() => {
+                                  if (idx === selectedIds.length - 1) return;
+                                  setSelectedIds((prev) => {
+                                    const next = [...prev];
+                                    const tmp = next[idx + 1];
+                                    next[idx + 1] = next[idx];
+                                    next[idx] = tmp;
+                                    return next;
+                                  });
+                                }}
+                              >↓</button>
+                              <button
+                                className="px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700 text-xs"
+                                aria-label="Remove"
+                                onClick={() => {
+                                  setSelectedIds((prev) => prev.filter((id) => id !== trip.id));
+                                  setTransfersByEdge((prev) => {
+                                    const next: Record<string, { depHHMM: string; arrHHMM: string }> = {};
+                                    Object.entries(prev).forEach(([k, v]) => {
+                                      if (!k.includes(trip.id)) next[k] = v;
+                                    });
+                                    return next;
+                                  });
+                                }}
+                              >×</button>
+                            </div>
+                          </div>
                         </div>
                         <div className="text-sm">
                           <span className="inline-block mr-4">{t("selected.departure", { time: formatDayHHMM(trip.departure_sec) })}</span>
@@ -1361,27 +1460,8 @@ export default function TripShiftPlanner(props?: { embedded?: boolean }) {
                   </div>
                 )}
               </div>
-            <div className="mt-3 flex gap-2 text-sm">
-              <button onClick={handleUndo} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">{t("selected.undo")}</button>
-              <button onClick={handleReset} className="px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200">{t("selected.reset")}</button>
-              {(() => {
-                const hasCore = selectedTrips.length > 0 && !!leaveDepotInfo && !!returnDepotInfo;
-                const lastArr = selectedTrips.length > 0 ? selectedTrips[selectedTrips.length - 1].arrival_sec : undefined;
-                const retOk = hasCore && lastArr !== undefined && parseHHMMToSec(returnDepotInfo!.timeHHMM) > lastArr;
-                const canExport = Boolean(retOk);
-                return (
-                  <button
-                    onClick={handleSaveShift}
-                    className="px-3 py-2 rounded-lg text-white hover:opacity-90 disabled:opacity-50"
-                    style={{backgroundColor: '#74C244'}}
-                    disabled={!canExport || !creatingShift || !shiftName.trim() || !shiftBusId}
-                    title={!creatingShift ? (t("shifts.createFirst", 'Create shift to enable saving') as any) : (!hasCore ? t("selected.exportHintIncomplete") : (!retOk ? t("selected.exportHintReturn") : (!shiftName.trim() || !shiftBusId ? (t("shifts.nameBusRequired", 'Name and bus are required') as any) : "")))}
-                  >
-                    {exporting ? (exportMessage || t("shifts.saving", 'Saving shift...')) : t("shifts.saveButton", 'Save shift')}
-                  </button>
-                );
-              })()}
-            </div>
+            {/* Bottom action bar removed in favor of sticky strip */}
+              </Panel>
             </section>
           </>
         }

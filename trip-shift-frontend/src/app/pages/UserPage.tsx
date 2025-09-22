@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth/AuthContext.tsx';
+import Panel from '../components/ui/Panel.tsx';
 
 type CurrentUser = { id: string; company_id?: string; email: string; full_name: string; role: string };
 type AgencyRead = { id: string; agency_name?: string | null; gtfs_agency_id?: string | null };
@@ -62,7 +63,7 @@ export default function UserPage() {
 
   return (
     <div className="space-y-4">
-      <div className="p-3 rounded-2xl bg-white shadow-sm border">
+      <Panel>
         <h2 className="text-lg font-medium mb-2">{t('auth.userInfoTitle')}</h2>
         {loading && <div className="text-sm text-gray-600">{t('common.loading')}</div>}
         {!loading && (
@@ -74,15 +75,15 @@ export default function UserPage() {
             <button onClick={logout} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}}>{t('auth.logout')}</button>
           </div>
         )}
-      </div>
+      </Panel>
 
-      <div className="p-3 rounded-2xl bg-white shadow-sm border">
+      <Panel>
         <h2 className="text-lg font-medium mb-2">{t('shift.selectAgencyPlaceholder')}</h2>
         <div className="text-sm">
           <p className="text-gray-600 mb-2">{t('depots.selectAgencyBackend')}</p>
           <AgencySelector token={token} selectedId={agencyId} onSelect={setAgencyId} />
         </div>
-      </div>
+      </Panel>
     </div>
   );
 }

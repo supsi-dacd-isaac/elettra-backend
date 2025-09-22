@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useTranslation } from 'react-i18next';
+import Panel from '../components/ui/Panel.tsx';
 
 export default function LoginPage() {
   const { t } = useTranslation();
@@ -53,7 +54,8 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="max-w-md mx-auto bg-white border rounded-2xl p-4">
+    <div className="max-w-md mx-auto">
+      <Panel>
       <h2 className="text-lg font-medium mb-3">{t('auth.title')}</h2>
       {error && <div className="mb-2 text-sm text-red-600">{error}</div>}
       <div className="space-y-3">
@@ -65,6 +67,7 @@ export default function LoginPage() {
           {t(loading ? 'auth.loggingIn' : 'auth.login')}
         </button>
       </div>
+      </Panel>
     </div>
   );
 }

@@ -203,7 +203,11 @@
     "export": "Exporter la sélection",
     "exporting": "Export en cours...",
     "exportHintIncomplete": "Définissez les trajets dépôt et sélectionnez des courses",
-    "exportHintReturn": "L'heure de retour doit être postérieure à la dernière arrivée"
+    "exportHintReturn": "L'heure de retour doit être postérieure à la dernière arrivée",
+    "validation": {
+      "ok": "OK",
+      "error": "Invalide"
+    }
   },
   "summary": {
     "title": "Résumé de la sélection",
@@ -212,6 +216,22 @@
     "nextCandidates": "Candidats suivants :",
     "lastArrival": "Dernière arrivée :",
     "atStop": "à {{stop}}"
+  },
+  "saved": {
+    "title": "Services enregistrés",
+    "filter": {
+      "label": "Filtrer",
+      "all": "Tous",
+      "mine": "Les miens"
+    },
+    "sort": {
+      "label": "Trier",
+      "updatedDesc": "Mis à jour ▼",
+      "nameAsc": "Nom A→Z"
+    },
+    "view": "Voir",
+    "updated": "Mis à jour {{value}}",
+    "empty": "Aucun service enregistré pour l'instant."
   },
   "selfTests": {
     "title": "Auto-tests",

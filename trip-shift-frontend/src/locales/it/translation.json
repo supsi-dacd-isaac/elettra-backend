@@ -203,7 +203,11 @@
     "export": "Esporta selezione",
     "exporting": "Esportazione in corso...",
     "exportHintIncomplete": "Imposta le tratte da/per deposito e seleziona le corse",
-    "exportHintReturn": "L'orario di rientro deve essere successivo all'ultimo arrivo"
+    "exportHintReturn": "L'orario di rientro deve essere successivo all'ultimo arrivo",
+    "validation": {
+      "ok": "OK",
+      "error": "Non valido"
+    }
   },
   "summary": {
     "title": "Riepilogo selezione",
@@ -212,6 +216,22 @@
     "nextCandidates": "Candidati successivi:",
     "lastArrival": "Ultimo arrivo:",
     "atStop": "a {{stop}}"
+  },
+  "saved": {
+    "title": "Turni salvati",
+    "filter": {
+      "label": "Filtro",
+      "all": "Tutti",
+      "mine": "Miei"
+    },
+    "sort": {
+      "label": "Ordina",
+      "updatedDesc": "Aggiornati ▼",
+      "nameAsc": "Nome A→Z"
+    },
+    "view": "Apri",
+    "updated": "Aggiornato {{value}}",
+    "empty": "Ancora nessun turno salvato."
   },
   "selfTests": {
     "title": "Auto-test",
