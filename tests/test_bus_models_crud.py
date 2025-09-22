@@ -29,14 +29,20 @@ def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def current_user_id(client: TestClient, token: str) -> str:
+    r = client.get(f"{AUTH_BASE}/me", headers=auth_headers(token))
+    assert r.status_code == 200, f"fetch /me failed: {r.text}"
+    return r.json()["id"]
+
+
 def create_bus_model(client: TestClient, token: str, name: str = "Test Model") -> str | None:
     payload = {
         "name": name,
         "manufacturer": "Test Maker",
         "specs": {"battery_kwh": 300}
     }
-    # Agency id required now
-    payload["agency_id"] = os.getenv("TEST_AGENCY_ID")
+    # User id required now
+    payload["user_id"] = current_user_id(client, token)
     r = client.post(f"{API_BASE}/bus-models/", json=payload, headers=auth_headers(token))
     if r.status_code == 200:
         return r.json()["id"]
@@ -73,7 +79,7 @@ def test_create_read_update_delete_bus_model(client: TestClient, record):
         "manufacturer": "Maker",
         "specs": {"battery_kwh": 250},
         "description": "Initial description",
-        "agency_id": os.getenv("TEST_AGENCY_ID")
+        "user_id": current_user_id(client, token)
     }, headers=hdrs)
     record("bm_create", r.status_code == 200, f"status={r.status_code}")
     model = r.json()
@@ -123,11 +129,11 @@ def test_bus_model_invalid_agency_fk(client: TestClient, record):
         record("bm_fk_auth_failed", False, "login failed")
         return
     hdrs = auth_headers(token)
-    bad_agency = str(uuid.uuid4())
+    bad_user = str(uuid.uuid4())
     r = client.post(f"{API_BASE}/bus-models/", json={
         "name": "Invalid FK Model",
         "specs": {},
-        "agency_id": bad_agency
+        "user_id": bad_user
     }, headers=hdrs)
     record("bm_create_invalid_fk", r.status_code == 400, f"status={r.status_code}")
 

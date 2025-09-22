@@ -28,11 +28,8 @@ class GtfsAgencies(Base):
     agency_fare_url: Mapped[Optional[str]] = mapped_column(Text)
     agency_email: Mapped[Optional[str]] = mapped_column(Text)
 
-    buses_models: Mapped[list['BusesModels']] = relationship('BusesModels', back_populates='agency')
-    depots: Mapped[list['Depots']] = relationship('Depots', back_populates='agency')
     gtfs_routes: Mapped[list['GtfsRoutes']] = relationship('GtfsRoutes', back_populates='agency')
     users: Mapped[list['Users']] = relationship('Users', back_populates='company')
-    buses: Mapped[list['Buses']] = relationship('Buses', back_populates='agency')
 
 
 class GtfsCalendar(Base):
@@ -114,45 +111,6 @@ class WeatherMeasurements(Base):
     pressure: Mapped[Optional[int]] = mapped_column(Integer)
 
 
-class BusesModels(Base):
-    __tablename__ = 'buses_models'
-    __table_args__ = (
-        ForeignKeyConstraint(['agency_id'], ['gtfs_agencies.id'], name='buses_models_gtfs_agencies_fk'),
-        PrimaryKeyConstraint('id', name='buses_models_pkey'),
-        UniqueConstraint('name', name='buses_models_company_id_name_key')
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    specs: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
-    agency_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    manufacturer: Mapped[Optional[str]] = mapped_column(Text)
-    description: Mapped[Optional[str]] = mapped_column(String)
-
-    agency: Mapped['GtfsAgencies'] = relationship('GtfsAgencies', back_populates='buses_models')
-    buses: Mapped[list['Buses']] = relationship('Buses', back_populates='bus_model')
-
-
-class Depots(Base):
-    __tablename__ = 'depots'
-    __table_args__ = (
-        ForeignKeyConstraint(['agency_id'], ['gtfs_agencies.id'], ondelete='RESTRICT', onupdate='CASCADE', name='depots_agency_fk'),
-        ForeignKeyConstraint(['stop_id'], ['gtfs_stops.id'], ondelete='CASCADE', onupdate='CASCADE', name='depots_gtfs_stops_fk'),
-        PrimaryKeyConstraint('id', name='depots_pkey'),
-        Index('depots_agency_id_idx', 'agency_id')
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
-    agency_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    address: Mapped[Optional[str]] = mapped_column(Text)
-    features: Mapped[Optional[dict]] = mapped_column(JSONB)
-    stop_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
-
-    agency: Mapped['GtfsAgencies'] = relationship('GtfsAgencies', back_populates='depots')
-    stop: Mapped[Optional['GtfsStops']] = relationship('GtfsStops', back_populates='depots')
-
-
 class GtfsRoutes(Base):
     __tablename__ = 'gtfs_routes'
     __table_args__ = (
@@ -197,28 +155,49 @@ class Users(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
 
     company: Mapped['GtfsAgencies'] = relationship('GtfsAgencies', back_populates='users')
+    buses_models: Mapped[list['BusesModels']] = relationship('BusesModels', back_populates='user')
+    depots: Mapped[list['Depots']] = relationship('Depots', back_populates='user')
+    buses: Mapped[list['Buses']] = relationship('Buses', back_populates='user')
     simulation_runs: Mapped[list['SimulationRuns']] = relationship('SimulationRuns', back_populates='user')
 
 
-class Buses(Base):
-    __tablename__ = 'buses'
+class BusesModels(Base):
+    __tablename__ = 'buses_models'
     __table_args__ = (
-        ForeignKeyConstraint(['agency_id'], ['gtfs_agencies.id'], ondelete='CASCADE', name='bus_models_company_id_fkey'),
-        ForeignKeyConstraint(['bus_model_id'], ['buses_models.id'], ondelete='RESTRICT', onupdate='CASCADE', name='buses_bus_model_id_fkey'),
-        PrimaryKeyConstraint('id', name='buses_pkey'),
-        UniqueConstraint('agency_id', 'name', name='buses_company_id_name_key'),
-        Index('idx_buses_bus_model_id', 'bus_model_id')
+        ForeignKeyConstraint(['user_id'], ['users.id'], name='buses_models_users_fk'),
+        PrimaryKeyConstraint('id', name='buses_models_pkey'),
+        UniqueConstraint('name', name='buses_models_company_id_name_key')
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
-    agency_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     specs: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
-    bus_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    manufacturer: Mapped[Optional[str]] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(String)
 
-    agency: Mapped['GtfsAgencies'] = relationship('GtfsAgencies', back_populates='buses')
-    bus_model: Mapped[Optional['BusesModels']] = relationship('BusesModels', back_populates='buses')
-    shifts: Mapped[list['Shifts']] = relationship('Shifts', back_populates='bus')
+    user: Mapped['Users'] = relationship('Users', back_populates='buses_models')
+    buses: Mapped[list['Buses']] = relationship('Buses', back_populates='bus_model')
+
+
+class Depots(Base):
+    __tablename__ = 'depots'
+    __table_args__ = (
+        ForeignKeyConstraint(['stop_id'], ['gtfs_stops.id'], ondelete='CASCADE', onupdate='CASCADE', name='depots_gtfs_stops_fk'),
+        ForeignKeyConstraint(['user_id'], ['users.id'], name='depots_users_fk'),
+        PrimaryKeyConstraint('id', name='depots_pkey'),
+        Index('depots_agency_id_idx', 'user_id')
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    address: Mapped[Optional[str]] = mapped_column(Text)
+    features: Mapped[Optional[dict]] = mapped_column(JSONB)
+    stop_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    stop: Mapped[Optional['GtfsStops']] = relationship('GtfsStops', back_populates='depots')
+    user: Mapped['Users'] = relationship('Users', back_populates='depots')
 
 
 class GtfsTrips(Base):
@@ -274,6 +253,27 @@ class Variants(Base):
     simulation_runs: Mapped[list['SimulationRuns']] = relationship('SimulationRuns', back_populates='variant')
 
 
+class Buses(Base):
+    __tablename__ = 'buses'
+    __table_args__ = (
+        ForeignKeyConstraint(['bus_model_id'], ['buses_models.id'], ondelete='RESTRICT', onupdate='CASCADE', name='buses_bus_model_id_fkey'),
+        ForeignKeyConstraint(['user_id'], ['users.id'], name='buses_users_fk'),
+        PrimaryKeyConstraint('id', name='buses_pkey'),
+        UniqueConstraint('user_id', 'name', name='buses_company_id_name_key'),
+        Index('idx_buses_bus_model_id', 'bus_model_id')
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    specs: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    bus_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    bus_model: Mapped[Optional['BusesModels']] = relationship('BusesModels', back_populates='buses')
+    user: Mapped['Users'] = relationship('Users', back_populates='buses')
+    shifts: Mapped[list['Shifts']] = relationship('Shifts', back_populates='bus')
+
+
 class GtfsStopsTimes(Base):
     __tablename__ = 'gtfs_stops_times'
     __table_args__ = (
@@ -301,23 +301,6 @@ class GtfsStopsTimes(Base):
     trip: Mapped['GtfsTrips'] = relationship('GtfsTrips', back_populates='gtfs_stops_times')
 
 
-class Shifts(Base):
-    __tablename__ = 'shifts'
-    __table_args__ = (
-        ForeignKeyConstraint(['bus_id'], ['buses.id'], ondelete='CASCADE', onupdate='CASCADE', name='shifts_bus_id_fkey'),
-        PrimaryKeyConstraint('id', name='shifts_pkey'),
-        Index('idx_shifts_bus_id', 'bus_id'),
-        Index('shifts_name_idx', 'name')
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    bus_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
-
-    bus: Mapped[Optional['Buses']] = relationship('Buses', back_populates='shifts')
-    shifts_structures: Mapped[list['ShiftsStructures']] = relationship('ShiftsStructures', back_populates='shift')
-
-
 class SimulationRuns(Base):
     __tablename__ = 'simulation_runs'
     __table_args__ = (
@@ -339,6 +322,23 @@ class SimulationRuns(Base):
 
     user: Mapped['Users'] = relationship('Users', back_populates='simulation_runs')
     variant: Mapped['Variants'] = relationship('Variants', back_populates='simulation_runs')
+
+
+class Shifts(Base):
+    __tablename__ = 'shifts'
+    __table_args__ = (
+        ForeignKeyConstraint(['bus_id'], ['buses.id'], ondelete='CASCADE', onupdate='CASCADE', name='shifts_bus_id_fkey'),
+        PrimaryKeyConstraint('id', name='shifts_pkey'),
+        Index('idx_shifts_bus_id', 'bus_id'),
+        Index('shifts_name_idx', 'name')
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    bus_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+
+    bus: Mapped[Optional['Buses']] = relationship('Buses', back_populates='shifts')
+    shifts_structures: Mapped[list['ShiftsStructures']] = relationship('ShiftsStructures', back_populates='shift')
 
 
 class ShiftsStructures(Base):

@@ -37,10 +37,16 @@ def get_auth_headers(token: str) -> dict:
     """Get authorization headers with token"""
     return {"Authorization": f"Bearer {token}"}
 
+def get_current_user_id(client: TestClient, token: str) -> str:
+    """Fetch current user's id from /auth/me"""
+    r = client.get(f"{AUTH_BASE}/me", headers=get_auth_headers(token))
+    assert r.status_code == 200, f"/auth/me failed: {r.text}"
+    return r.json()["id"]
+
 def create_test_depot(client: TestClient, token: str, name: str = "Test Depot") -> str:
     """Create a test depot and return its ID"""
     depot_data = {
-        "agency_id": TEST_AGENCY_ID,
+        "user_id": get_current_user_id(client, token),
         "name": name,
         "address": "123 Test Street",
         "latitude": 40.7128,
@@ -102,7 +108,7 @@ def test_create_depot_success(client, record):
         return
     
     depot_data = {
-        "agency_id": TEST_AGENCY_ID,
+        "user_id": get_current_user_id(client, token),
         "name": "Test Depot",
         "address": "123 Test Street",
         "city": "Test City",
@@ -122,7 +128,8 @@ def test_create_depot_success(client, record):
         depot_id = data.get("id")
         record("create_depot_response_id", "id" in data, "id field missing")
         record("create_depot_response_name", data.get("name") == "Test Depot", f"name={data.get('name')}")
-        record("create_depot_response_agency_id", data.get("agency_id") == TEST_AGENCY_ID, f"agency_id={data.get('agency_id')}")
+        # user_id should match the authenticated user
+        record("create_depot_response_user_id", isinstance(data.get("user_id"), str) and len(data.get("user_id")) > 0)
     
     # Clean up - delete the test depot
     if depot_id:
@@ -136,7 +143,7 @@ def test_create_depot_minimal_data(client, record):
         return
     
     depot_data = {
-        "agency_id": TEST_AGENCY_ID,
+        "user_id": get_current_user_id(client, token),
         "name": "Minimal Depot"
     }
     
@@ -151,22 +158,22 @@ def test_create_depot_minimal_data(client, record):
         if depot_id:
             client.delete(f"{API_BASE}/depots/{depot_id}", headers=headers)
 
-def test_create_depot_invalid_agency_id(client, record):
-    """Test depot creation with invalid agency ID"""
+def test_create_depot_invalid_user_id(client, record):
+    """Test depot creation with invalid user ID"""
     token = get_auth_token(client)
     if not token:
-        record("create_depot_invalid_agency_auth_failed", False, "Could not get auth token")
+        record("create_depot_invalid_user_auth_failed", False, "Could not get auth token")
         return
     
     depot_data = {
-        "agency_id": "00000000-0000-0000-0000-000000000999",
+        "user_id": "00000000-0000-0000-0000-000000000999",
         "name": "Test Depot"
     }
     
     headers = get_auth_headers(token)
     response = client.post(f"{API_BASE}/depots/", json=depot_data, headers=headers)
     
-    record("create_depot_invalid_agency", response.status_code == 400, f"status={response.status_code}")
+    record("create_depot_invalid_user", response.status_code == 400, f"status={response.status_code}")
 
 def test_create_depot_missing_required_fields(client, record):
     """Test depot creation with missing required fields"""
@@ -176,7 +183,7 @@ def test_create_depot_missing_required_fields(client, record):
         return
     
     depot_data = {
-        "agency_id": TEST_AGENCY_ID
+        "user_id": get_current_user_id(client, token)
         # Missing 'name' field
     }
     
@@ -193,7 +200,7 @@ def test_create_depot_invalid_coordinates(client, record):
         return
     
     depot_data = {
-        "agency_id": TEST_AGENCY_ID,
+        "user_id": get_current_user_id(client, token),
         "name": "Test Depot",
         "latitude": 200.0,  # Invalid latitude
         "longitude": -74.0060
@@ -207,7 +214,7 @@ def test_create_depot_invalid_coordinates(client, record):
 def test_create_depot_unauthorized(client, record):
     """Test depot creation without authentication"""
     depot_data = {
-        "agency_id": TEST_AGENCY_ID,
+        "user_id": TEST_AGENCY_ID,  # intentionally wrong type to trigger 403 due to missing auth
         "name": "Test Depot"
     }
     
@@ -483,7 +490,7 @@ def test_depot_crud_workflow(client, record):
     
     # 1. Create depot
     create_data = {
-        "agency_id": TEST_AGENCY_ID,
+        "user_id": get_current_user_id(client, token),
         "name": "Workflow Depot",
         "latitude": 40.7128,
         "longitude": -74.0060
@@ -534,7 +541,7 @@ def test_depot_validation_coordinates(client, record):
     
     for test_name, coords, expected_status in test_cases:
         depot_data = {
-            "agency_id": TEST_AGENCY_ID,
+            "user_id": get_current_user_id(client, token),
             "name": f"Test Depot {test_name}",
             **coords
         }

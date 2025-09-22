@@ -33,15 +33,20 @@ def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def current_user_id(client: TestClient, token: str) -> str:
+    r = client.get(f"{AUTH_BASE}/me", headers=auth_headers(token))
+    assert r.status_code == 200, f"fetch /me failed: {r.text}"
+    return r.json()["id"]
+
+
 def ensure_bus(client: TestClient, token: str) -> str:
     hdrs = auth_headers(token)
-    agency_id = os.getenv("TEST_AGENCY_ID")
-    assert agency_id, "TEST_AGENCY_ID missing in test.env"
+    user_id = current_user_id(client, token)
     # Create a simple bus; model is optional
     r = client.post(
         f"{API_BASE}/buses/",
         json={
-            "agency_id": agency_id,
+            "user_id": user_id,
             "name": f"Test Bus for Shifts {uuid.uuid4()}",
             "specs": {},
             "bus_model_id": None,

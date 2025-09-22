@@ -91,10 +91,10 @@ async def read_agency(agency_id: UUID, db: AsyncSession = Depends(get_async_sess
 # Bus Models endpoints (authenticated users only)
 @router.post("/bus-models/", response_model=BusesModelsRead)
 async def create_bus_model(bus_model: BusesModelsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate agency exists
-    agency = await db.get(GtfsAgencies, bus_model.agency_id)
-    if agency is None:
-        raise HTTPException(status_code=400, detail="Agency not found")
+    # Validate user exists
+    user = await db.get(Users, bus_model.user_id)
+    if user is None:
+        raise HTTPException(status_code=400, detail="User not found")
     db_bus_model = BusesModels(**bus_model.model_dump(exclude_unset=True))
     db.add(db_bus_model)
     await db.commit()
@@ -121,11 +121,11 @@ async def update_bus_model(model_id: UUID, bus_model_update: BusesModelsUpdate, 
         raise HTTPException(status_code=404, detail="Bus model not found")
 
     update_data = bus_model_update.model_dump(exclude_unset=True, exclude={'id'})
-    # Validate agency if being changed
-    if 'agency_id' in update_data:
-        agency = await db.get(GtfsAgencies, update_data['agency_id'])
-        if agency is None:
-            raise HTTPException(status_code=400, detail="Agency not found")
+    # Validate user if being changed
+    if 'user_id' in update_data:
+        user = await db.get(Users, update_data['user_id'])
+        if user is None:
+            raise HTTPException(status_code=400, detail="User not found")
     for field, value in update_data.items():
         setattr(db_bus_model, field, value)
 
@@ -145,10 +145,10 @@ async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_
 # Buses endpoints (authenticated users only)
 @router.post("/buses/", response_model=BusesRead)
 async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate agency
-    agency = await db.get(GtfsAgencies, bus.agency_id)
-    if agency is None:
-        raise HTTPException(status_code=400, detail="Agency not found")
+    # Validate user
+    user = await db.get(Users, bus.user_id)
+    if user is None:
+        raise HTTPException(status_code=400, detail="User not found")
     # Validate bus model if provided
     if bus.bus_model_id is not None:
         bm = await db.get(BusesModels, bus.bus_model_id)
@@ -180,10 +180,10 @@ async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = D
         raise HTTPException(status_code=404, detail="Bus not found")
     update_data = bus_update.model_dump(exclude_unset=True, exclude={'id'})
     # Validate foreign keys if changing
-    if 'agency_id' in update_data:
-        agency = await db.get(GtfsAgencies, update_data['agency_id'])
-        if agency is None:
-            raise HTTPException(status_code=400, detail="Agency not found")
+    if 'user_id' in update_data:
+        user = await db.get(Users, update_data['user_id'])
+        if user is None:
+            raise HTTPException(status_code=400, detail="User not found")
     if 'bus_model_id' in update_data and update_data['bus_model_id'] is not None:
         bm = await db.get(BusesModels, update_data['bus_model_id'])
         if bm is None:
@@ -213,11 +213,11 @@ def _validate_coords(lat: Optional[float], lon: Optional[float]):
 # Depot endpoints (authenticated users only)
 @router.post("/depots/", response_model=DepotReadWithLocation)
 async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate coords and agency
+    # Validate coords and user
     _validate_coords(depot.latitude, depot.longitude)
-    agency = await db.get(GtfsAgencies, depot.agency_id)
-    if agency is None:
-        raise HTTPException(status_code=400, detail="Agency not found")
+    user = await db.get(Users, depot.user_id)
+    if user is None:
+        raise HTTPException(status_code=400, detail="User not found")
 
     # 1) Create GTFS stop for this depot
     generated_stop_id = f"depot_{uuid4()}"
@@ -231,7 +231,7 @@ async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get
     
     # 2) Create depot referencing the stop
     db_depot = Depots(
-        agency_id=depot.agency_id,
+        user_id=depot.user_id,
         name=depot.name,
         address=depot.address,
         features=depot.features,
@@ -245,7 +245,7 @@ async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get
 
     return DepotReadWithLocation(
         id=db_depot.id,
-        agency_id=db_depot.agency_id,
+        user_id=db_depot.user_id,
         name=db_depot.name,
         address=db_depot.address,
         features=db_depot.features,
@@ -266,7 +266,7 @@ async def read_depots(skip: int = 0, limit: int = 100, db: AsyncSession = Depend
     return [
         DepotReadWithLocation(
             id=dep.id,
-            agency_id=dep.agency_id,
+            user_id=dep.user_id,
             name=dep.name,
             address=dep.address,
             features=dep.features,
@@ -291,7 +291,7 @@ async def read_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_sessio
     dep, lat, lon = row
     return DepotReadWithLocation(
         id=dep.id,
-        agency_id=dep.agency_id,
+        user_id=dep.user_id,
         name=dep.name,
         address=dep.address,
         features=dep.features,
@@ -351,7 +351,7 @@ async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: Asy
 
     return DepotReadWithLocation(
         id=db_depot.id,
-        agency_id=db_depot.agency_id,
+        user_id=db_depot.user_id,
         name=db_depot.name,
         address=db_depot.address,
         features=db_depot.features,
@@ -408,13 +408,13 @@ async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(g
 
 
 @router.get("/shifts/", response_model=List[ShiftReadWithStructure])
-async def list_shifts(skip: int = 0, limit: int = 100, bus_id: Optional[UUID] = None, agency_id: Optional[UUID] = None, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def list_shifts(skip: int = 0, limit: int = 100, bus_id: Optional[UUID] = None, user_id: Optional[UUID] = None, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     q = select(Shifts)
     if bus_id is not None:
         q = q.where(Shifts.bus_id == bus_id)
-    if agency_id is not None:
-        # Filter shifts by agency via their bus agency_id
-        q = q.join(Buses, isouter=True).where((Buses.agency_id == agency_id))
+    if user_id is not None:
+        # Filter shifts by user via their bus user_id
+        q = q.join(Buses, isouter=True).where((Buses.user_id == user_id))
     q = q.offset(skip).limit(limit)
     shifts = (await db.execute(q)).scalars().all()
 

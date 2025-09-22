@@ -38,7 +38,7 @@ class GtfsStopsReadWithTimes(BaseModel):
 
 
 class DepotCreateRequest(BaseModel):
-    agency_id: UUID
+    user_id: UUID
     name: str
     address: Optional[str] = None
     features: Optional[dict | list | None] = None
@@ -56,7 +56,7 @@ class DepotUpdateRequest(BaseModel):
 
 class DepotReadWithLocation(BaseModel):
     id: UUID
-    agency_id: UUID
+    user_id: UUID
     name: str
     address: Optional[str]
     features: Optional[dict | list | None]
