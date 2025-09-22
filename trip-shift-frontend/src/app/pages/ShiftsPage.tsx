@@ -1308,7 +1308,7 @@ export default function ShiftsPage() {
 
               {/* Overlay hint when trips are loaded but Leave depot not set or shift not started */}
               {((rawTrips.length > 0 && !leaveDepotInfo) || !creatingShift) && (
-                <div className="absolute inset-0 z-10 flex items-start justify-center pointer-events-none">
+                <div className="absolute inset-0 z-0 flex items-start justify-center pointer-events-none">
                   <div className="mt-4 px-4 py-2 rounded-lg text-sm shadow" style={{color: '#3B3C48', backgroundColor: '#f8f9fa', borderColor: '#dee2e6', border: '1px solid'}}>
                     {!creatingShift ? t("shifts.createHint", 'Click "Create shift" to begin. You will enter the name and select a bus. Then select day/route and construct the shift.') : t("available.leaveDepotOverlay")}
                   </div>

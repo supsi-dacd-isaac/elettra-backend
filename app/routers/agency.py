@@ -75,7 +75,8 @@ async def create_agency(agency: GtfsAgenciesCreate, db: AsyncSession = Depends(g
     return db_agency
 
 @router.get("/agencies/", response_model=List[GtfsAgenciesRead])
-async def read_agencies(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def read_agencies(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session)):
+    """List all agencies - public endpoint for registration"""
     result = await db.execute(select(GtfsAgencies).offset(skip).limit(limit))
     agencies = result.scalars().all()
     return agencies
