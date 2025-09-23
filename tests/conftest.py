@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 import platform
 import json
 import time
+import uuid
+import asyncio
 
 # Ensure project root on sys.path so `import main` works when pytest changes CWD
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -66,6 +68,41 @@ USE_COLOR = os.getenv("TEST_REPORT_COLOR") == "1"
 def client():
     with TestClient(app) as c:
         yield c
+
+## Removed autouse temp-user provision to avoid overriding seeded users
+
+# -----------------------------
+# Global safety net: delete any leftover ephemeral users after the test session
+# Ephemeral patterns: tmp_*@example.com, strong_*@example.com, updated_*@example.com
+# -----------------------------
+def _dsn_for_asyncpg() -> str:
+    dsn = settings.database_url
+    if dsn.startswith("postgresql+asyncpg://"):
+        dsn = "postgresql://" + dsn.split("://", 1)[1]
+    return dsn
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cleanup_ephemeral_users_after_session():
+    # run tests
+    yield
+    # cleanup step
+    async def _cleanup():
+        import asyncpg
+        conn = await asyncpg.connect(_dsn_for_asyncpg())
+        try:
+            await conn.execute(
+                """
+                DELETE FROM users
+                WHERE email LIKE 'tmp_%@example.com'
+                   OR email LIKE 'strong_%@example.com'
+                   OR email LIKE 'updated_%@example.com'
+                """
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_cleanup())
 
 # -----------------------------
 # Async HTTP client fixture (function scope to avoid event loop scope issues)

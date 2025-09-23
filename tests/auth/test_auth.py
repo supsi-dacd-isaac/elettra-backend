@@ -3,11 +3,17 @@ Run with: pytest -k auth
 Generates a human-readable report in tests/reports/ via report_collector fixture.
 """
 
+import os
+import uuid
+import time
+import asyncio
 import pytest
 from jose import jwt
 from datetime import datetime, timedelta, UTC
+from fastapi.testclient import TestClient
 
 from app.core.config import get_cached_settings
+# Direct DB cleanup via asyncpg to avoid event-loop conflicts
 
 __report_module__ = "auth"  # used by report_collector for report filename
 settings = get_cached_settings()
@@ -23,6 +29,63 @@ API_BASE = "/api/v1"
 def _expired_token():
     payload = {"sub": "fake-user-id", "exp": datetime.now(UTC) - timedelta(minutes=1)}
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+
+def get_auth_token(client: TestClient) -> str | None:
+    """Get authentication token for testing"""
+    token = os.getenv("TEST_API_TOKEN")
+    if token:
+        return token
+    email = os.getenv("TEST_LOGIN_EMAIL")
+    password = os.getenv("TEST_LOGIN_PASSWORD")
+    if not email or not password:
+        return None
+    r = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
+    if r.status_code != 200:
+        return None
+    return r.json().get("access_token")
+
+def auth_headers(token: str) -> dict:
+    """Create authorization headers"""
+    return {"Authorization": f"Bearer {token}"}
+
+# -----------------------------
+# Temp user helpers (ensure no DB garbage)
+# -----------------------------
+
+def _register_temp_user(client: TestClient, *, password: str = "TempPass123!") -> tuple[str, str]:
+    """Create a temporary user for mutation tests and return (email, password)."""
+    email = f"tmp_{uuid.uuid4().hex[:10]}@example.com"
+    valid_company_id = "0be70f7c-5bed-41ba-9ef8-8ddcafb807b9"
+    r = client.post(f"{AUTH_BASE}/register", json={
+        "company_id": valid_company_id,
+        "email": email,
+        "full_name": "Temp User",
+        "password": password,
+        "role": "viewer",
+    })
+    # 200 = created, 400 = already exists (shouldn't happen with random email)
+    assert r.status_code == 200, f"temp user register failed: status={r.status_code} body={r.text}"
+    return email, password
+
+
+def _dsn_for_asyncpg() -> str:
+    dsn = settings.database_url
+    if dsn.startswith("postgresql+asyncpg://"):
+        dsn = "postgresql://" + dsn.split("://", 1)[1]
+    return dsn
+
+
+async def _delete_user_async(email: str) -> None:
+    import asyncpg
+    conn = await asyncpg.connect(_dsn_for_asyncpg())
+    try:
+        await conn.execute("DELETE FROM users WHERE email = $1", email)
+    finally:
+        await conn.close()
+
+
+def _delete_user(email: str) -> None:
+    asyncio.run(_delete_user_async(email))
 
 # -----------------------------
 # Tests (sync via TestClient)
@@ -147,3 +210,125 @@ def test_logout_with_valid_token(client, record):
 def test_sql_injection_attempts(client, record, injection):
     r = client.post(f"{AUTH_BASE}/login", json={"email": injection, "password": "x"})
     record(f"sql_injection:{injection[:15]}", r.status_code == 401, f"status={r.status_code}")
+
+# -----------------------------
+# Password Validation Tests
+# -----------------------------
+
+def test_register_weak_password(client, record):
+    """Test registration with weak password"""
+    # Use a valid company_id from the database
+    valid_company_id = "0be70f7c-5bed-41ba-9ef8-8ddcafb807b9"  # Basler Verkehrsbetriebe
+    
+    weak_passwords = [
+        "short",  # Too short
+        "nouppercase123!",  # No uppercase
+        "NoNumbers!",  # No digits
+        "NoSpecial123",  # No special chars
+    ]
+    
+    for weak_password in weak_passwords:
+        r = client.post(f"{AUTH_BASE}/register", json={
+            "company_id": valid_company_id,
+            "email": f"test{weak_password}@example.com",
+            "full_name": "Test User",
+            "password": weak_password,
+            "role": "viewer"
+        })
+        record(f"register_weak_password_{weak_password[:10]}", r.status_code == 422, f"status={r.status_code}")
+
+def test_register_strong_password(client, record):
+    """Test registration with strong password"""
+    # Use a valid company_id from the database
+    valid_company_id = "0be70f7c-5bed-41ba-9ef8-8ddcafb807b9"  # Basler Verkehrsbetriebe
+    temp_email = f"strong_{uuid.uuid4().hex[:10]}@example.com"
+    try:
+        r = client.post(f"{AUTH_BASE}/register", json={
+            "company_id": valid_company_id,
+            "email": temp_email,
+            "full_name": "Test User",
+            "password": "StrongPassword123!",
+            "role": "viewer"
+        })
+        record("register_strong_password", r.status_code == 200, f"status={r.status_code}")
+    finally:
+        _delete_user(temp_email)
+
+def test_update_password_weak(client, record):
+    """Test password update with weak password using a temporary user"""
+    # Create temp user to avoid mutating shared credentials
+    email, current_password = _register_temp_user(client, password="TempPass123!")
+    try:
+        # Login as temp user
+        login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": current_password})
+        assert login.status_code == 200, f"temp login failed: {login.text}"
+        token = login.json().get("access_token")
+
+        weak_passwords = [
+            "short",  # Too short
+            "nouppercase123!",  # No uppercase
+            "NoNumbers!",  # No digits
+            "NoSpecial123",  # No special chars
+        ]
+
+        for weak_password in weak_passwords:
+            r = client.put(f"{AUTH_BASE}/me/password",
+                           json={"current_password": current_password, "new_password": weak_password},
+                           headers=auth_headers(token))
+            record(f"update_password_weak_{weak_password[:10]}", r.status_code == 422, f"status={r.status_code}")
+    finally:
+        _delete_user(email)
+
+def test_update_password_strong(client, record):
+    """Test password update with strong password using a temporary user"""
+    # Create temp user to avoid mutating shared credentials
+    email, current_password = _register_temp_user(client, password="TempPass123!")
+    try:
+        # Login as temp user
+        login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": current_password})
+        assert login.status_code == 200, f"temp login failed: {login.text}"
+        token = login.json().get("access_token")
+
+        r = client.put(f"{AUTH_BASE}/me/password",
+                       json={"current_password": current_password, "new_password": "NewStrongPassword123!"},
+                       headers=auth_headers(token))
+        record("update_password_strong", r.status_code == 200, f"status={r.status_code}")
+    finally:
+        _delete_user(email)
+
+def test_update_profile(client, record):
+    """Test user profile update using a temporary user (no mutation of seeded users)."""
+    # Create temp user
+    email, password = _register_temp_user(client, password="TempPass123!")
+    try:
+        # Login as temp user
+        login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
+        assert login.status_code == 200, f"temp login failed: {login.text}"
+        token = login.json().get("access_token")
+
+        r = client.put(
+            f"{AUTH_BASE}/me",
+            json={"full_name": "Updated Name", "email": f"updated_{uuid.uuid4().hex[:6]}@example.com"},
+            headers=auth_headers(token),
+        )
+        record("update_profile", r.status_code in [200, 400], f"status={r.status_code}")
+    finally:
+        _delete_user(email)
+
+
+def test_delete_me_ephemeral_user(client, record):
+    """Create a temp user, delete via DELETE /auth/me, ensure it's gone."""
+    # Register temp user
+    email, password = _register_temp_user(client, password="TempPass123!")
+    # Login as temp user
+    login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
+    assert login.status_code == 200, f"temp login failed: {login.text}"
+    token = login.json().get("access_token")
+
+    # Delete self
+    r = client.delete(f"{AUTH_BASE}/me", headers=auth_headers(token))
+    record("delete_me_status", r.status_code == 204, f"status={r.status_code} body={r.text}")
+
+    # Verify user cannot login anymore
+    relog = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
+    record("delete_me_login_blocked", relog.status_code == 401, f"status={relog.status_code}")

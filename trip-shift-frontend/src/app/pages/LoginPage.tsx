@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [regFullName, setRegFullName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regPasswordConfirm, setRegPasswordConfirm] = useState('');
   const [regAgencyId, setRegAgencyId] = useState('');
   const [regRole, setRegRole] = useState<'viewer' | 'analyst' | 'admin'>('viewer');
   const [regLoading, setRegLoading] = useState(false);
@@ -97,8 +98,14 @@ export default function LoginPage() {
     setRegError('');
     setNotice('');
     // Basic validation
-    if (!regFullName || !regEmail || !regPassword || !regAgencyId) {
+    if (!regFullName || !regEmail || !regPassword || !regPasswordConfirm || !regAgencyId) {
       setRegError(t('auth.provideCredentials') as string);
+      return;
+    }
+    
+    // Password confirmation validation
+    if (regPassword !== regPasswordConfirm) {
+      setRegError(t('auth.passwordsDoNotMatch') as string);
       return;
     }
     try {
@@ -126,6 +133,7 @@ export default function LoginPage() {
       setRegFullName('');
       setRegEmail('');
       setRegPassword('');
+      setRegPasswordConfirm('');
       setRegAgencyId('');
       setRegRole('viewer');
     } catch (e: any) {
@@ -168,7 +176,13 @@ export default function LoginPage() {
             <div className="space-y-2">
               <input className="w-full px-3 py-2 border rounded-lg" placeholder={t('auth.fullNamePlaceholder') as string} value={regFullName} onChange={(e) => setRegFullName(e.target.value)} />
               <input className="w-full px-3 py-2 border rounded-lg" placeholder={t('auth.emailPlaceholder') as string} value={regEmail} onChange={(e) => setRegEmail(e.target.value)} />
-              <input className="w-full px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordPlaceholder') as string} value={regPassword} onChange={(e) => setRegPassword(e.target.value)} />
+              <div>
+                <input className="w-full px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordPlaceholder') as string} value={regPassword} onChange={(e) => setRegPassword(e.target.value)} />
+                <div className="mt-1 text-xs text-gray-600">
+                  {t('auth.passwordRequirements') as string}
+                </div>
+              </div>
+              <input className="w-full px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordConfirmPlaceholder') as string} value={regPasswordConfirm} onChange={(e) => setRegPasswordConfirm(e.target.value)} />
               <div>
                 <label className="block text-sm mb-1">{t('auth.selectAgencyLabel')}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={regAgencyId} onChange={(e) => setRegAgencyId(e.target.value)} disabled={agenciesLoading || agencies.length === 0}>
