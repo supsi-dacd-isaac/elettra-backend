@@ -687,6 +687,9 @@ export default function ShiftsPage() {
       setShiftName("");
       setShiftBusId("");
       handleReset();
+      
+      // Refresh the shifts list to show the newly created shift
+      setRefreshNonce((n) => n + 1);
     } catch (e: any) {
       alert(t("export.failed", { error: e?.message || e }));
     } finally {
