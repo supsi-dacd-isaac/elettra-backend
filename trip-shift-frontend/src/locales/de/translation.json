@@ -229,7 +229,7 @@
     "exportHintReturn": "Rückfahrtszeit muss nach der letzten Ankunft liegen",
     "validation": {
       "ok": "OK",
-      "error": "Ungültig"
+      "error": "Unvollständig"
     }
   },
   "summary": {

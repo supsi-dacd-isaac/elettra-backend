@@ -229,7 +229,7 @@
     "exportHintReturn": "L'orario di rientro deve essere successivo all'ultimo arrivo",
     "validation": {
       "ok": "OK",
-      "error": "Non valido"
+      "error": "Incompleto"
     }
   },
   "summary": {

@@ -229,7 +229,7 @@
     "exportHintReturn": "Return time must be later than last trip arrival",
     "validation": {
       "ok": "OK",
-      "error": "Invalid"
+      "error": "Incomplete"
     }
   },
   "summary": {
