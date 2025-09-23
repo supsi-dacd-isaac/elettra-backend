@@ -21,22 +21,6 @@ from app.core.config import get_settings
 router = APIRouter()
 settings = get_settings()
 
-@router.post("/login", response_model=Token)
-async def login(user_credentials: UserLogin, db: AsyncSession = Depends(get_async_session)):
-    """Authenticate user and return access token"""
-    user = await authenticate_user(user_credentials.email, user_credentials.password, db)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
-    access_token = create_access_token(
-        data={"sub": str(user.id)}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
 @router.get("/check-email/{email}")
 async def check_email_availability(email: str, db: AsyncSession = Depends(get_async_session)):
     """Check if an email is available for registration"""
@@ -73,15 +57,26 @@ async def register(user_data: UserRegister, db: AsyncSession = Depends(get_async
     await db.refresh(db_user)
     return db_user
 
+@router.post("/login", response_model=Token)
+async def login(user_credentials: UserLogin, db: AsyncSession = Depends(get_async_session)):
+    """Authenticate user and return access token"""
+    user = await authenticate_user(user_credentials.email, user_credentials.password, db)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    access_token = create_access_token(
+        data={"sub": str(user.id)}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
 @router.get("/me", response_model=UsersRead)
 async def read_users_me(current_user: Users = Depends(get_current_user)):
     """Get current user information"""
     return current_user
-
-@router.post("/logout", response_model=LogoutResponse)
-async def logout(current_user: Users = Depends(get_current_user)):
-    """Logout user (client should remove token from storage)"""
-    return {"message": "Successfully logged out"}
 
 @router.put("/me", response_model=UserProfileRead)
 async def update_user_profile(
@@ -138,6 +133,11 @@ async def update_user_password(
     
     return {"message": "Password updated successfully"}
 
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(current_user: Users = Depends(get_current_user)):
+    """Logout user (client should remove token from storage)"""
+    return {"message": "Successfully logged out"}
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_current_user(

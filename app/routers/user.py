@@ -23,20 +23,6 @@ from app.core.auth import get_current_user
 router = APIRouter()
 
 
-# Bus Models endpoints (authenticated users only)
-@router.post("/bus-models/", response_model=BusesModelsRead)
-async def create_bus_model(bus_model: BusesModelsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate user exists
-    user = await db.get(Users, bus_model.user_id)
-    if user is None:
-        raise HTTPException(status_code=400, detail="User not found")
-    db_bus_model = BusesModels(**bus_model.model_dump(exclude_unset=True))
-    db.add(db_bus_model)
-    await db.commit()
-    await db.refresh(db_bus_model)
-    return db_bus_model
-
-
 @router.get("/bus-models/", response_model=List[BusesModelsRead])
 async def read_bus_models(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     result = await db.execute(select(BusesModels).offset(skip).limit(limit))
@@ -51,6 +37,18 @@ async def read_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_se
         raise HTTPException(status_code=404, detail="Bus model not found")
     return bus_model
 
+
+@router.post("/bus-models/", response_model=BusesModelsRead)
+async def create_bus_model(bus_model: BusesModelsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    # Validate user exists
+    user = await db.get(Users, bus_model.user_id)
+    if user is None:
+        raise HTTPException(status_code=400, detail="User not found")
+    db_bus_model = BusesModels(**bus_model.model_dump(exclude_unset=True))
+    db.add(db_bus_model)
+    await db.commit()
+    await db.refresh(db_bus_model)
+    return db_bus_model
 
 @router.put("/bus-models/{model_id}", response_model=BusesModelsRead)
 async def update_bus_model(model_id: UUID, bus_model_update: BusesModelsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
@@ -83,22 +81,6 @@ async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_
 
 
 # Buses endpoints (authenticated users only)
-@router.post("/buses/", response_model=BusesRead)
-async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate user
-    user = await db.get(Users, bus.user_id)
-    if user is None:
-        raise HTTPException(status_code=400, detail="User not found")
-    # Validate bus model if provided
-    if bus.bus_model_id is not None:
-        bm = await db.get(BusesModels, bus.bus_model_id)
-        if bm is None:
-            raise HTTPException(status_code=400, detail="Bus model not found")
-    db_bus = Buses(**bus.model_dump(exclude_unset=True))
-    db.add(db_bus)
-    await db.commit()
-    await db.refresh(db_bus)
-    return db_bus
 
 
 @router.get("/buses/", response_model=List[BusesRead])
@@ -115,6 +97,23 @@ async def read_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), 
         raise HTTPException(status_code=404, detail="Bus not found")
     return bus
 
+
+@router.post("/buses/", response_model=BusesRead)
+async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    # Validate user
+    user = await db.get(Users, bus.user_id)
+    if user is None:
+        raise HTTPException(status_code=400, detail="User not found")
+    # Validate bus model if provided
+    if bus.bus_model_id is not None:
+        bm = await db.get(BusesModels, bus.bus_model_id)
+        if bm is None:
+            raise HTTPException(status_code=400, detail="Bus model not found")
+    db_bus = Buses(**bus.model_dump(exclude_unset=True))
+    db.add(db_bus)
+    await db.commit()
+    await db.refresh(db_bus)
+    return db_bus
 
 @router.put("/buses/{bus_id}", response_model=BusesRead)
 async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):

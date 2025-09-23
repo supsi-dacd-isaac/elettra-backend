@@ -9,6 +9,7 @@ from datetime import datetime, UTC
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import textwrap
 from app.routers import agency, auth, gtfs, simulation, user as user_router
 from app.core.config import get_cached_settings
 from app.schemas.health import HealthCheckResponse, ServiceStatus
@@ -45,17 +46,54 @@ async def lifespan(app: FastAPI):
 # FastAPI app instance
 app = FastAPI(
     title=settings.app_name,
-    description="""
-    ## Elettra - Swiss Public Transport Electrification Tool
-    
-    Backend API for GTFS data management and related operations.
-    
-    ### Main Features:
-    - **GTFS Data Management**: Agencies, Routes, Stops
-    - **Bus Models Management**: Bus specifications and configurations
-    - **User Management**: Access control and authentication
-    - **Simulation Management**: Run and track simulations
-    """,
+    description=textwrap.dedent(
+        """
+        # Elettra - Swiss Public Bus Electrification Tool
+        
+        Comprehensive backend API for public transport electrification planning and simulation.
+        
+        ## Core Features
+        
+        ### Authentication & User Management
+        - JWT-based authentication system
+        - User registration, login, and profile management
+        - Role-based access control (admin, analyst, user)
+        - Agency-level user management
+        
+        ### GTFS Data Management
+        - Agencies: Transit agency management
+        - Routes: GTFS route definitions and variants
+        - Trips: Trip planning with auxiliary trips (depot, transfer, service)
+        - Stops: Stop management and stop times
+        - Calendar: Service calendar management
+        - Variants: Route variant analysis
+        
+        ### Fleet Management
+        - Bus Models: Electric bus specifications and configurations
+        - Buses: Fleet management with depot assignments
+        - Depots: Depot locations and capacity management
+        - Shifts: Shift planning and scheduling
+        
+        ### Simulation & Analysis
+        - Simulation Runs: Electrification simulation execution
+        - Results Analysis: Simulation outcome analysis
+        - Weather Integration: PVGIS TMY weather data
+        - Elevation Profiles: SwissTopo elevation data integration
+        
+        ### External Services Integration
+        - OSRM Routing: Driving distance calculations
+        - SwissTopo: Elevation profile generation
+        - PVGIS: Weather data for solar calculations
+        - MinIO: File storage for elevation profiles
+        
+        ## Technical Features
+        - Async PostgreSQL database operations
+        - Comprehensive health monitoring
+        - CORS support for frontend integration
+        - Detailed API documentation with Swagger UI
+        - Error handling and validation
+        """
+    ).strip(),
     version=settings.app_version,
     debug=settings.debug,
     lifespan=lifespan,

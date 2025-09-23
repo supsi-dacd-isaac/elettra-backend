@@ -46,14 +46,6 @@ router = APIRouter()
 
 
 # GTFS Routes endpoints (authenticated users only)
-@router.post("/gtfs-routes/", response_model=GtfsRoutesRead)
-async def create_route(route: GtfsRoutesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_route = GtfsRoutes(**route.model_dump(exclude_unset=True))
-    db.add(db_route)
-    await db.commit()
-    await db.refresh(db_route)
-    return db_route
-
 @router.get("/gtfs-routes/", response_model=List[GtfsRoutesRead])
 async def read_routes(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     result = await db.execute(select(GtfsRoutes).offset(skip).limit(limit))
@@ -66,6 +58,14 @@ async def read_route(route_id: UUID, db: AsyncSession = Depends(get_async_sessio
     if route is None:
         raise HTTPException(status_code=404, detail="Route not found")
     return route
+
+@router.post("/gtfs-routes/", response_model=GtfsRoutesRead)
+async def create_route(route: GtfsRoutesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_route = GtfsRoutes(**route.model_dump(exclude_unset=True))
+    db.add(db_route)
+    await db.commit()
+    await db.refresh(db_route)
+    return db_route
 
 @router.get("/gtfs-routes/by-agency/{agency_id}", response_model=List[GtfsRoutesRead])
 async def read_routes_by_agency(agency_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):

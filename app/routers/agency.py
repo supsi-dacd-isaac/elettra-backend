@@ -17,19 +17,6 @@ from app.core.auth import get_current_user, require_admin, get_password_hash
 router = APIRouter()
 
 # Users endpoints (admin only)
-@router.post("/users/", response_model=UsersRead, dependencies=[Depends(require_admin)])
-async def create_user(user: UsersCreate, db: AsyncSession = Depends(get_async_session)):
-    # Hash the password if provided
-    user_data = user.model_dump(exclude_unset=True)
-    if 'password' in user_data:
-        user_data['password_hash'] = get_password_hash(user_data.pop('password'))
-
-    db_user = Users(**user_data)
-    db.add(db_user)
-    await db.commit()
-    await db.refresh(db_user)
-    return db_user
-
 @router.get("/users/", response_model=List[UsersRead], dependencies=[Depends(require_admin)])
 async def read_users(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session)):
     result = await db.execute(select(Users).offset(skip).limit(limit))
@@ -42,6 +29,19 @@ async def read_user(user_id: UUID, db: AsyncSession = Depends(get_async_session)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+@router.post("/users/", response_model=UsersRead, dependencies=[Depends(require_admin)])
+async def create_user(user: UsersCreate, db: AsyncSession = Depends(get_async_session)):
+    # Hash the password if provided
+    user_data = user.model_dump(exclude_unset=True)
+    if 'password' in user_data:
+        user_data['password_hash'] = get_password_hash(user_data.pop('password'))
+
+    db_user = Users(**user_data)
+    db.add(db_user)
+    await db.commit()
+    await db.refresh(db_user)
+    return db_user
 
 @router.put("/users/{user_id}", response_model=UsersRead, dependencies=[Depends(require_admin)])
 async def update_user(user_id: UUID, user_update: UsersUpdate, db: AsyncSession = Depends(get_async_session)):
@@ -58,14 +58,6 @@ async def update_user(user_id: UUID, user_update: UsersUpdate, db: AsyncSession 
     return db_user
 
 # GTFS Agencies endpoints (authenticated users only)
-@router.post("/agencies/", response_model=GtfsAgenciesRead)
-async def create_agency(agency: GtfsAgenciesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_agency = GtfsAgencies(**agency.model_dump(exclude_unset=True))
-    db.add(db_agency)
-    await db.commit()
-    await db.refresh(db_agency)
-    return db_agency
-
 @router.get("/agencies/", response_model=List[GtfsAgenciesRead])
 async def read_agencies(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session)):
     """List all agencies - public endpoint for registration"""
@@ -79,3 +71,11 @@ async def read_agency(agency_id: UUID, db: AsyncSession = Depends(get_async_sess
     if agency is None:
         raise HTTPException(status_code=404, detail="Agency not found")
     return agency
+
+@router.post("/agencies/", response_model=GtfsAgenciesRead)
+async def create_agency(agency: GtfsAgenciesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    db_agency = GtfsAgencies(**agency.model_dump(exclude_unset=True))
+    db.add(db_agency)
+    await db.commit()
+    await db.refresh(db_agency)
+    return db_agency
