@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 12vqELAoXgtmQzLhYR0ufbJAHHiqOYFRFkXVE1a2NTKS8VIgkICBbvNHAIZ66W6
+\restrict Kxz9lPbW9grmO7MaVusV0UxFiLqidxVrulAwkpOe7E43FXyh1uyXuXCAvdKepPs
 
 -- Dumped from database version 16.10
 -- Dumped by pg_dump version 16.10 (Ubuntu 16.10-0ubuntu0.24.04.1)
@@ -656,7 +656,7 @@ ALTER TABLE ONLY public.buses
 --
 
 ALTER TABLE ONLY public.buses_models
-    ADD CONSTRAINT buses_models_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT buses_models_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -664,7 +664,7 @@ ALTER TABLE ONLY public.buses_models
 --
 
 ALTER TABLE ONLY public.buses
-    ADD CONSTRAINT buses_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT buses_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -680,7 +680,7 @@ ALTER TABLE ONLY public.depots
 --
 
 ALTER TABLE ONLY public.depots
-    ADD CONSTRAINT depots_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT depots_users_fk FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -783,5 +783,5 @@ ALTER TABLE ONLY public.variants
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 12vqELAoXgtmQzLhYR0ufbJAHHiqOYFRFkXVE1a2NTKS8VIgkICBbvNHAIZ66W6
+\unrestrict Kxz9lPbW9grmO7MaVusV0UxFiLqidxVrulAwkpOe7E43FXyh1uyXuXCAvdKepPs
 

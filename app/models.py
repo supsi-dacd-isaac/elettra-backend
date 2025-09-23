@@ -164,7 +164,7 @@ class Users(Base):
 class BusesModels(Base):
     __tablename__ = 'buses_models'
     __table_args__ = (
-        ForeignKeyConstraint(['user_id'], ['users.id'], name='buses_models_users_fk'),
+        ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE', name='buses_models_users_fk'),
         PrimaryKeyConstraint('id', name='buses_models_pkey'),
         UniqueConstraint('name', name='buses_models_company_id_name_key')
     )
@@ -184,7 +184,7 @@ class Depots(Base):
     __tablename__ = 'depots'
     __table_args__ = (
         ForeignKeyConstraint(['stop_id'], ['gtfs_stops.id'], ondelete='CASCADE', onupdate='CASCADE', name='depots_gtfs_stops_fk'),
-        ForeignKeyConstraint(['user_id'], ['users.id'], name='depots_users_fk'),
+        ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE', name='depots_users_fk'),
         PrimaryKeyConstraint('id', name='depots_pkey'),
         Index('depots_agency_id_idx', 'user_id')
     )
@@ -257,7 +257,7 @@ class Buses(Base):
     __tablename__ = 'buses'
     __table_args__ = (
         ForeignKeyConstraint(['bus_model_id'], ['buses_models.id'], ondelete='RESTRICT', onupdate='CASCADE', name='buses_bus_model_id_fkey'),
-        ForeignKeyConstraint(['user_id'], ['users.id'], name='buses_users_fk'),
+        ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE', name='buses_users_fk'),
         PrimaryKeyConstraint('id', name='buses_pkey'),
         UniqueConstraint('user_id', 'name', name='buses_company_id_name_key'),
         Index('idx_buses_bus_model_id', 'bus_model_id')
