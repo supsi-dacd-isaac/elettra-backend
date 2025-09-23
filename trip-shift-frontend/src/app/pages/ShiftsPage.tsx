@@ -831,7 +831,7 @@ export default function ShiftsPage() {
   }
 
   const loadDepotsForAgency = useCallback(async () => {
-    if (!effectiveBaseUrl || !token || !userId) return;
+    if (!effectiveBaseUrl || !token || !actualUserId) return;
     try {
       _setDepotsError("");
       _setDepotsLoading(true);
@@ -839,21 +839,21 @@ export default function ShiftsPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Depot[];
-      setDepots(Array.isArray(all) ? all.filter((d) => d.user_id === userId) : []);
+      setDepots(Array.isArray(all) ? all.filter((d) => d.user_id === actualUserId) : []);
       } catch (e: any) {
       setDepots([]);
       _setDepotsError(e?.message || String(e));
       } finally {
       _setDepotsLoading(false);
     }
-  }, [effectiveBaseUrl, token, userId]);
+  }, [effectiveBaseUrl, token, actualUserId]);
 
   // Load bus models (global, not per-agency)
   
 
   // Load buses for selected agency
   const loadBusesForAgency = useCallback(async () => {
-    if (!effectiveBaseUrl || !token || !userId) return;
+    if (!effectiveBaseUrl || !token || !actualUserId) return;
     try {
       _setBusesError("");
       _setBusesLoading(true);
@@ -861,14 +861,14 @@ export default function ShiftsPage() {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const all = (await res.json()) as Bus[];
-      setBuses(Array.isArray(all) ? all.filter((b) => b.user_id === userId) : []);
+      setBuses(Array.isArray(all) ? all.filter((b) => b.user_id === actualUserId) : []);
     } catch (e: any) {
       setBuses([]);
       _setBusesError(e?.message || String(e));
     } finally {
       _setBusesLoading(false);
     }
-  }, [effectiveBaseUrl, token, userId]);
+  }, [effectiveBaseUrl, token, actualUserId]);
 
   // Load shifts for selected agency
   
@@ -925,6 +925,13 @@ export default function ShiftsPage() {
     setStopsByTrip({});
     setElevationByTrip({});
   }, [userId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
+
+  // When the actual logged-in user id is known/changes, (re)load user-scoped resources
+  useEffect(() => {
+    if (!actualUserId || !token || !effectiveBaseUrl) return;
+    void loadDepotsForAgency();
+    void loadBusesForAgency();
+  }, [actualUserId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
 
   
 
@@ -1563,7 +1570,7 @@ export default function ShiftsPage() {
                 <label className="block text-sm text-gray-700 mb-1">{t("depotModal.depotLabel")}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={modalDepotId} onChange={(e) => setModalDepotId(e.target.value)}>
                   <option value="">{t("depotModal.selectDepot")}</option>
-                  {depots.filter((d) => d.user_id === userId && d.stop_id).map((d) => (
+                  {depots.filter((d) => d.stop_id).map((d) => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
@@ -1621,7 +1628,7 @@ export default function ShiftsPage() {
                 <label className="block text-sm text-gray-700 mb-1">{t("shifts.busLabel", 'Bus')}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={shiftBusId} onChange={(e) => setShiftBusId(e.target.value)}>
                   <option value="">{t("shifts.selectBus", 'Select bus')}</option>
-                  {buses.filter((b) => b.user_id === userId).map((b) => (
+                  {buses.map((b) => (
                     <option key={b.id} value={b.id}>{b.name}</option>
                   ))}
                 </select>

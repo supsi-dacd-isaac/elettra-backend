@@ -86,18 +86,8 @@ export default function SavedShiftsPanel(props: SavedShiftsPanelProps) {
             ))}
           </>
         ) : shifts.length === 0 ? (
-          <div className="py-4 text-sm text-gray-700 flex items-center justify-between">
-            <div>{t('saved.empty', 'No saved shifts yet.')}</div>
-            <button
-              onClick={() => {
-                const el = document.getElementById('planner-controls');
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              }}
-              className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50"
-              style={{backgroundColor: '#002AA7'}}
-            >
-              {t('shifts.createButton')}
-            </button>
+          <div className="py-4 text-sm text-gray-700">
+            {t('saved.empty', 'No saved shifts yet.')}
           </div>
         ) : (
           shifts.map((s) => {
