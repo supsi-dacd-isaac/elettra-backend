@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -21,6 +21,9 @@ export default function LoginPage() {
   const [regRole, setRegRole] = useState<'viewer' | 'analyst' | 'admin'>('viewer');
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState('');
+  const [regEmailError, setRegEmailError] = useState('');
+  const [emailChecking, setEmailChecking] = useState(false);
+  const emailTimeoutRef = useRef<number | null>(null);
   const [agencies, setAgencies] = useState<any[]>([]);
   const [agenciesLoading, setAgenciesLoading] = useState(false);
   const [agenciesError, setAgenciesError] = useState('');
@@ -94,6 +97,35 @@ export default function LoginPage() {
     }
   }
 
+  async function checkEmailAvailability(email: string) {
+    if (!email || !email.includes('@')) {
+      setRegEmailError('');
+      return;
+    }
+    
+    try {
+      setEmailChecking(true);
+      setRegEmailError('');
+      const base = getEffectiveBaseUrl();
+      const url = joinUrl(base, `/auth/check-email/${encodeURIComponent(email)}`);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = await res.json();
+      
+      if (!data.available) {
+        setRegEmailError(t('auth.emailAlreadyExists') as string);
+      } else {
+        setRegEmailError('');
+      }
+    } catch (e: any) {
+      console.error('Email check failed:', e);
+      // Don't show error for network issues, just clear any existing error
+      setRegEmailError('');
+    } finally {
+      setEmailChecking(false);
+    }
+  }
+
   async function handleRegister() {
     setRegError('');
     setNotice('');
@@ -106,6 +138,12 @@ export default function LoginPage() {
     // Password confirmation validation
     if (regPassword !== regPasswordConfirm) {
       setRegError(t('auth.passwordsDoNotMatch') as string);
+      return;
+    }
+    
+    // Email validation
+    if (regEmailError) {
+      setRegError(t('auth.emailAlreadyExists') as string);
       return;
     }
     try {
@@ -136,6 +174,7 @@ export default function LoginPage() {
       setRegPasswordConfirm('');
       setRegAgencyId('');
       setRegRole('viewer');
+      setRegEmailError('');
     } catch (e: any) {
       setRegError(e?.message || String(e));
     } finally {
@@ -175,7 +214,26 @@ export default function LoginPage() {
             {regError && <div className="mb-2 text-sm text-red-600">{regError}</div>}
             <div className="space-y-2">
               <input className="w-full px-3 py-2 border rounded-lg" placeholder={t('auth.fullNamePlaceholder') as string} value={regFullName} onChange={(e) => setRegFullName(e.target.value)} />
-              <input className="w-full px-3 py-2 border rounded-lg" placeholder={t('auth.emailPlaceholder') as string} value={regEmail} onChange={(e) => setRegEmail(e.target.value)} />
+              <div>
+                <input 
+                  className={`w-full px-3 py-2 border rounded-lg ${regEmailError ? 'border-red-500' : ''}`} 
+                  placeholder={t('auth.emailPlaceholder') as string} 
+                  value={regEmail} 
+                  onChange={(e) => {
+                    setRegEmail(e.target.value);
+                    // Clear previous timeout
+                    if (emailTimeoutRef.current) {
+                      clearTimeout(emailTimeoutRef.current);
+                    }
+                    // Set new timeout for debounced validation
+                    emailTimeoutRef.current = setTimeout(() => {
+                      checkEmailAvailability(e.target.value);
+                    }, 500);
+                  }}
+                />
+                {regEmailError && <div className="mt-1 text-xs text-red-600">{regEmailError}</div>}
+                {emailChecking && <div className="mt-1 text-xs text-gray-500">{t('common.loading')}</div>}
+              </div>
               <div>
                 <input className="w-full px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordPlaceholder') as string} value={regPassword} onChange={(e) => setRegPassword(e.target.value)} />
                 <div className="mt-1 text-xs text-gray-600">

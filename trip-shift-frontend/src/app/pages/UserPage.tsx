@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../auth/AuthContext.tsx';
 import Panel from '../components/ui/Panel.tsx';
@@ -31,6 +31,25 @@ export default function UserPage() {
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [agencyName, setAgencyName] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  
+  // Profile editing state
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({ full_name: '', email: '' });
+  const [profileError, setProfileError] = useState('');
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState('');
+  
+  // Password editing state
+  const [editingPassword, setEditingPassword] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ current_password: '', new_password: '', confirm_password: '' });
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  
+  // Email validation state
+  const [emailError, setEmailError] = useState('');
+  const [emailChecking, setEmailChecking] = useState(false);
+  const emailTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,6 +80,137 @@ export default function UserPage() {
     return () => { cancelled = true; };
   }, [token, baseUrl]);
 
+  // Email validation function
+  async function checkEmailAvailability(email: string) {
+    if (!email || !email.includes('@') || email === me?.email) {
+      setEmailError('');
+      return;
+    }
+    
+    try {
+      setEmailChecking(true);
+      setEmailError('');
+      const url = joinUrl(baseUrl, `/auth/check-email/${encodeURIComponent(email)}`);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = await res.json();
+      
+      if (!data.available) {
+        setEmailError(t('auth.emailAlreadyExists') as string);
+      } else {
+        setEmailError('');
+      }
+    } catch (e: any) {
+      console.error('Email check failed:', e);
+      setEmailError('');
+    } finally {
+      setEmailChecking(false);
+    }
+  }
+
+  // Profile update function
+  async function handleProfileUpdate() {
+    setProfileError('');
+    setProfileSuccess('');
+    
+    // Validation
+    if (!profileForm.full_name || !profileForm.email) {
+      setProfileError(t('auth.provideCredentials') as string);
+      return;
+    }
+    
+    if (emailError) {
+      setProfileError(t('auth.emailAlreadyExists') as string);
+      return;
+    }
+    
+    try {
+      setProfileLoading(true);
+      const url = joinUrl(baseUrl, '/auth/me');
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(profileForm)
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || `${res.status} ${res.statusText}`);
+      }
+      
+      const updatedUser = await res.json();
+      setMe(updatedUser);
+      setProfileSuccess(t('auth.profileUpdated') as string);
+      setEditingProfile(false);
+      
+      // Dispatch custom event to notify other components
+      window.dispatchEvent(new CustomEvent('userProfileUpdated'));
+    } catch (e: any) {
+      setProfileError(e?.message || String(e));
+    } finally {
+      setProfileLoading(false);
+    }
+  }
+
+  // Password update function
+  async function handlePasswordUpdate() {
+    setPasswordError('');
+    setPasswordSuccess('');
+    
+    // Validation
+    if (!passwordForm.current_password || !passwordForm.new_password || !passwordForm.confirm_password) {
+      setPasswordError(t('auth.provideCredentials') as string);
+      return;
+    }
+    
+    if (passwordForm.new_password !== passwordForm.confirm_password) {
+      setPasswordError(t('auth.passwordsDoNotMatch') as string);
+      return;
+    }
+    
+    try {
+      setPasswordLoading(true);
+      const url = joinUrl(baseUrl, '/auth/me/password');
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          current_password: passwordForm.current_password,
+          new_password: passwordForm.new_password
+        })
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.detail || `${res.status} ${res.statusText}`);
+      }
+      
+      setPasswordSuccess(t('auth.passwordUpdated') as string);
+      setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
+      setEditingPassword(false);
+      
+      // Dispatch custom event to notify other components
+      window.dispatchEvent(new CustomEvent('userProfileUpdated'));
+    } catch (e: any) {
+      setPasswordError(e?.message || String(e));
+    } finally {
+      setPasswordLoading(false);
+    }
+  }
+
+  // Initialize profile form when user data loads
+  useEffect(() => {
+    if (me) {
+      setProfileForm({ full_name: me.full_name, email: me.email });
+    }
+  }, [me]);
+
   return (
     <div className="space-y-4">
       <Panel>
@@ -68,11 +218,87 @@ export default function UserPage() {
         {loading && <div className="text-sm text-gray-600">{t('common.loading')}</div>}
         {!loading && (
           <div className="text-sm">
-            <div className="mb-1"><span className="font-semibold">{t('auth.userName')}:</span> {me?.full_name || '—'}</div>
-            <div className="mb-1"><span className="font-semibold">{t('auth.userEmail')}:</span> {me?.email || '—'}</div>
-            <div className="mb-1"><span className="font-semibold">{t('auth.agencyName')}:</span> {agencyName || '—'}</div>
-            <div className="mb-3"><span className="font-semibold">{t('auth.userRole')}:</span> {me?.role || '—'}</div>
-            <button onClick={logout} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}}>{t('auth.logout')}</button>
+            {!editingProfile ? (
+              <div>
+                <div className="mb-1"><span className="font-semibold">{t('auth.userName')}:</span> {me?.full_name || '—'}</div>
+                <div className="mb-1"><span className="font-semibold">{t('auth.userEmail')}:</span> {me?.email || '—'}</div>
+                <div className="mb-1"><span className="font-semibold">{t('auth.agencyName')}:</span> {agencyName || '—'}</div>
+                <div className="mb-3"><span className="font-semibold">{t('auth.userRole')}:</span> {me?.role || '—'}</div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setEditingProfile(true)} 
+                    className="px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                  >
+                    {t('auth.editProfile')}
+                  </button>
+                  <button 
+                    onClick={() => setEditingPassword(true)} 
+                    className="px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                  >
+                    {t('auth.changePassword')}
+                  </button>
+                  <button onClick={logout} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}}>{t('auth.logout')}</button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <h3 className="font-medium">{t('auth.editProfile')}</h3>
+                {profileError && <div className="text-red-600 text-xs">{profileError}</div>}
+                {profileSuccess && <div className="text-green-600 text-xs">{profileSuccess}</div>}
+                <div>
+                  <label className="block text-xs font-medium mb-1">{t('auth.userName')}</label>
+                  <input 
+                    className="w-full px-3 py-2 border rounded-lg text-sm" 
+                    value={profileForm.full_name}
+                    onChange={(e) => setProfileForm({...profileForm, full_name: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">{t('auth.userEmail')}</label>
+                  <input 
+                    className={`w-full px-3 py-2 border rounded-lg text-sm ${emailError ? 'border-red-500' : ''}`}
+                    value={profileForm.email}
+                    onChange={(e) => {
+                      setProfileForm({...profileForm, email: e.target.value});
+                      // Clear previous timeout
+                      if (emailTimeoutRef.current) {
+                        clearTimeout(emailTimeoutRef.current);
+                      }
+                      // Set new timeout for debounced validation
+                      emailTimeoutRef.current = setTimeout(() => {
+                        checkEmailAvailability(e.target.value);
+                      }, 500);
+                    }}
+                  />
+                  {emailError && <div className="text-red-600 text-xs mt-1">{emailError}</div>}
+                  {emailChecking && <div className="text-gray-500 text-xs mt-1">{t('common.loading')}</div>}
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={handleProfileUpdate}
+                    disabled={profileLoading || !!emailError}
+                    className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" 
+                    style={{backgroundColor: '#002AA7'}}
+                  >
+                    {profileLoading ? t('common.saving') : t('common.save')}
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setEditingProfile(false);
+                      setProfileError('');
+                      setProfileSuccess('');
+                      setEmailError('');
+                      if (me) {
+                        setProfileForm({ full_name: me.full_name, email: me.email });
+                      }
+                    }}
+                    className="px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Panel>
@@ -84,6 +310,83 @@ export default function UserPage() {
           <AgencySelector token={token} selectedId={userId} onSelect={setUserId} />
         </div>
       </Panel>
+
+      {/* Password Change Modal */}
+      {editingPassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <Panel className="max-w-md w-[95%]">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-base font-medium">{t('auth.changePassword')}</h3>
+              <button 
+                onClick={() => {
+                  setEditingPassword(false);
+                  setPasswordError('');
+                  setPasswordSuccess('');
+                  setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
+                }} 
+                className="text-sm text-neutral-600 hover:text-neutral-800"
+              >
+                {t('common.close')}
+              </button>
+            </div>
+            {passwordError && <div className="mb-2 text-sm text-red-600">{passwordError}</div>}
+            {passwordSuccess && <div className="mb-2 text-sm text-green-600">{passwordSuccess}</div>}
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">{t('auth.currentPassword')}</label>
+                <input 
+                  className="w-full px-3 py-2 border rounded-lg" 
+                  type="password"
+                  value={passwordForm.current_password}
+                  onChange={(e) => setPasswordForm({...passwordForm, current_password: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">{t('auth.newPassword')}</label>
+                <input 
+                  className="w-full px-3 py-2 border rounded-lg" 
+                  type="password"
+                  value={passwordForm.new_password}
+                  onChange={(e) => setPasswordForm({...passwordForm, new_password: e.target.value})}
+                />
+                <div className="mt-1 text-xs text-gray-600">
+                  {t('auth.passwordRequirements')}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">{t('auth.confirmNewPassword')}</label>
+                <input 
+                  className="w-full px-3 py-2 border rounded-lg" 
+                  type="password"
+                  value={passwordForm.confirm_password}
+                  onChange={(e) => setPasswordForm({...passwordForm, confirm_password: e.target.value})}
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button 
+                  onClick={handlePasswordUpdate}
+                  disabled={passwordLoading}
+                  className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90 disabled:opacity-50" 
+                  style={{backgroundColor: '#002AA7'}}
+                >
+                  {passwordLoading ? t('common.saving') : t('auth.changePassword')}
+                </button>
+                <button 
+                  onClick={() => {
+                    setEditingPassword(false);
+                    setPasswordError('');
+                    setPasswordSuccess('');
+                    setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
+                  }}
+                  className="px-3 py-2 rounded-lg border text-sm hover:bg-gray-50"
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </div>
+          </Panel>
+        </div>
+      )}
     </div>
   );
 }

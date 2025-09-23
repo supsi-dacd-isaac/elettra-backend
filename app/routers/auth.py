@@ -37,6 +37,14 @@ async def login(user_credentials: UserLogin, db: AsyncSession = Depends(get_asyn
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+@router.get("/check-email/{email}")
+async def check_email_availability(email: str, db: AsyncSession = Depends(get_async_session)):
+    """Check if an email is available for registration"""
+    result = await db.execute(select(Users).where(Users.email == email))
+    existing_user = result.scalar_one_or_none()
+    
+    return {"available": existing_user is None}
+
 @router.post("/register", response_model=UsersRead)
 async def register(user_data: UserRegister, db: AsyncSession = Depends(get_async_session)):
     """Register a new user"""

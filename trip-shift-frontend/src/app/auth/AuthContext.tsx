@@ -6,6 +6,7 @@ type AuthContextValue = {
   userId: string;
   setUserId: (id: string) => void;
   logout: () => void;
+  refreshUser: () => void;
 };
 
 const LS_TOKEN_KEY = 'elettra_jwt';
@@ -22,6 +23,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   });
   const [userId, setUserIdState] = useState<string>('');
+  const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
 
   const setToken = useCallback((t: string) => {
     setTokenState(t);
@@ -36,7 +38,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUserIdState(id || '');
   }, []);
 
-  // When token changes, fetch /auth/me to preselect agency
+  const refreshUser = useCallback(() => {
+    setRefreshTrigger(prev => prev + 1);
+  }, []);
+
+  // When token changes or refresh is triggered, fetch /auth/me to preselect agency
   useEffect(() => {
     let cancelled = false;
     async function syncAgencyFromMe() {
@@ -62,14 +68,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     void syncAgencyFromMe();
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, refreshTrigger]);
 
   const logout = useCallback(() => {
     setToken('');
     setUserIdState('');
   }, [setToken]);
 
-  const value = useMemo<AuthContextValue>(() => ({ token, setToken, userId, setUserId, logout }), [token, setToken, userId, setUserId, logout]);
+  const value = useMemo<AuthContextValue>(() => ({ token, setToken, userId, setUserId, logout, refreshUser }), [token, setToken, userId, setUserId, logout, refreshUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

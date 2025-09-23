@@ -25,10 +25,11 @@ function LanguageSwitcher() {
 
 function AuthStatus() {
   const { t } = useTranslation();
-  const { token, logout } = useAuth();
+  const { token, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [me, setMe] = useState<any>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const baseUrl = useMemo(() => {
     const VITE = (typeof import.meta !== 'undefined' ? (import.meta as any).env : {}) || {};
@@ -55,7 +56,20 @@ function AuthStatus() {
     }
     void loadMe();
     return () => { cancelled = true; };
-  }, [token, baseUrl]);
+  }, [token, baseUrl, refreshTrigger]);
+
+  // Listen for user profile updates
+  useEffect(() => {
+    function handleUserUpdate() {
+      refreshUser();
+      setRefreshTrigger(prev => prev + 1);
+    }
+
+    window.addEventListener('userProfileUpdated', handleUserUpdate);
+    return () => {
+      window.removeEventListener('userProfileUpdated', handleUserUpdate);
+    };
+  }, [refreshUser]);
 
   // Click outside to close dropdown
   useEffect(() => {

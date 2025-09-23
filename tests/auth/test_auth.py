@@ -332,3 +332,35 @@ def test_delete_me_ephemeral_user(client, record):
     # Verify user cannot login anymore
     relog = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
     record("delete_me_login_blocked", relog.status_code == 401, f"status={relog.status_code}")
+
+def test_check_email_availability(client, record):
+    """Test email availability check endpoint"""
+    # Test with non-existent email
+    r = client.get(f"{AUTH_BASE}/check-email/nonexistent@example.com")
+    record("check_email_nonexistent", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        data = r.json()
+        record("check_email_nonexistent_available", data.get("available") == True, f"data={data}")
+    
+    # Test with existing email (use test user email)
+    existing_email = os.getenv("TEST_LOGIN_EMAIL")
+    if existing_email:
+        r = client.get(f"{AUTH_BASE}/check-email/{existing_email}")
+        record("check_email_existing", r.status_code == 200, f"status={r.status_code}")
+        if r.status_code == 200:
+            data = r.json()
+            record("check_email_existing_not_available", data.get("available") == False, f"data={data}")
+
+def test_check_email_availability_with_temp_user(client, record):
+    """Test email availability check with temporary user"""
+    # Create temp user
+    email, password = _register_temp_user(client, password="TempPass123!")
+    try:
+        # Check that email is now unavailable
+        r = client.get(f"{AUTH_BASE}/check-email/{email}")
+        record("check_email_temp_user", r.status_code == 200, f"status={r.status_code}")
+        if r.status_code == 200:
+            data = r.json()
+            record("check_email_temp_user_not_available", data.get("available") == False, f"data={data}")
+    finally:
+        _delete_user(email)
