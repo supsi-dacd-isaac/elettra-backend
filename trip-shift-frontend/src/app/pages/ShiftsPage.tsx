@@ -331,6 +331,7 @@ export default function ShiftsPage() {
 
   // Agency/Route selection
   const { userId, setUserId } = useAuth(); // global user selection
+  const [actualUserId, setActualUserId] = useState<string>(""); // actual user ID for shifts
   const [routes, setRoutes] = useState<RouteRead[]>([]);
   const [routeDbId, setRouteDbId] = useState<string>(ENV_ROUTE_ID); // database UUID for route
 
@@ -885,6 +886,10 @@ export default function ShiftsPage() {
           if (me?.company_id && !userId) {
             setUserId(me.company_id);
           }
+          // Set the actual user ID for shifts loading
+          if (me?.id && !actualUserId) {
+            setActualUserId(me.id);
+          }
         }
       } catch {}
     })();
@@ -943,10 +948,10 @@ export default function ShiftsPage() {
   useEffect(() => {
     let cancelled = false;
     async function loadShifts() {
-      if (!token || !effectiveBaseUrl || !userId) return;
+      if (!token || !effectiveBaseUrl || !actualUserId) return;
       try {
         setLoading(true);
-        const url = joinUrl(effectiveBaseUrl, `/api/v1/user/shifts/?skip=0&limit=1000&user_id=${encodeURIComponent(userId)}`);
+        const url = joinUrl(effectiveBaseUrl, `/api/v1/user/shifts/?skip=0&limit=1000&user_id=${encodeURIComponent(actualUserId)}`);
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         const all = (await res.json()) as ShiftRead[];
@@ -963,7 +968,7 @@ export default function ShiftsPage() {
     }
     void loadShifts();
     return () => { cancelled = true; };
-  }, [token, effectiveBaseUrl, userId, refreshNonce]);
+  }, [token, effectiveBaseUrl, actualUserId, refreshNonce]);
 
   
 
