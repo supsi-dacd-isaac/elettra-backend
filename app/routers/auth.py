@@ -57,7 +57,7 @@ async def register(user_data: UserRegister, db: AsyncSession = Depends(get_async
         email=user_data.email,
         full_name=user_data.full_name,
         password_hash=hashed_password,
-        role=user_data.role
+        role="analyst"  # Automatically set all new users to analyst
     )
 
     db.add(db_user)

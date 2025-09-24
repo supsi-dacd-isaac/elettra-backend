@@ -41,7 +41,6 @@ export default function LoginPage() {
   const [regPasswordConfirm, setRegPasswordConfirm] = useState('');
   const [regPasswordError, setRegPasswordError] = useState('');
   const [regAgencyId, setRegAgencyId] = useState('');
-  const [regRole, setRegRole] = useState<'viewer' | 'analyst' | 'admin'>('viewer');
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState('');
   const [regEmailError, setRegEmailError] = useState('');
@@ -225,7 +224,6 @@ export default function LoginPage() {
         email: regEmail,
         full_name: regFullName,
         password: regPassword,
-        role: regRole,
       };
       const res = await fetch(url, {
         method: 'POST',
@@ -241,7 +239,6 @@ export default function LoginPage() {
       setRegPassword('');
       setRegPasswordConfirm('');
       setRegAgencyId('');
-      setRegRole('viewer');
       setRegEmailError('');
     } catch (e: any) {
       setRegError(e?.message || String(e));
@@ -261,7 +258,6 @@ export default function LoginPage() {
             <input className="px-3 py-2 border rounded-lg" placeholder={t('auth.emailPlaceholder') as string} value={email} onChange={(e) => setEmail(e.target.value)} />
             <input className="px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordPlaceholder') as string} value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
-          <p className="text-xs text-neutral-600">{t('auth.passwordGuidelines')}</p>
           <div className="flex items-center gap-2">
             <button onClick={loginWithCredentials} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{ backgroundColor: '#002AA7' }} disabled={loading}>
               {t(loading ? 'auth.loggingIn' : 'auth.login')}
@@ -335,14 +331,6 @@ export default function LoginPage() {
                   ))}
                 </select>
                 {agenciesError && <div className="mt-1 text-xs text-neutral-500">{t('auth.couldNotLoadAgencies')}</div>}
-              </div>
-              <div>
-                <label className="block text-sm mb-1">{t('auth.roleLabel')}</label>
-                <select className="w-full px-3 py-2 border rounded-lg" value={regRole} onChange={(e) => setRegRole(e.target.value as any)}>
-                  <option value="viewer">{t('auth.viewer')}</option>
-                  <option value="analyst">{t('auth.analyst')}</option>
-                  <option value="admin">{t('auth.admin')}</option>
-                </select>
               </div>
               <div className="flex items-center gap-2 pt-1">
                 <button onClick={handleRegister} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{ backgroundColor: '#002AA7' }} disabled={regLoading || !regAgencyId}>

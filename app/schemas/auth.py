@@ -162,7 +162,6 @@ class UserRegister(BaseModel):
     email: EmailStr
     full_name: str
     password: str = Field(..., min_length=1, description="Password must meet security requirements")
-    role: RoleEnum
     
     @field_validator('password')
     @classmethod
