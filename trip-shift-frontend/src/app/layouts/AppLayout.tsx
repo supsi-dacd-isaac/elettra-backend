@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { SUPPORTED_LANGUAGES, setAppLanguage } from '../../i18n';
 import { useAuth } from '../auth/AuthContext';
 import { useEffect, useMemo, useState, useRef } from 'react';
+import Footer from '../components/ui/Footer';
 
 function LanguageSwitcher() {
   const { t, i18n } = useTranslation();
@@ -121,7 +122,7 @@ function AuthStatus() {
 export default function AppLayout() {
   const { t } = useTranslation();
   return (
-    <div className="min-h-screen w-full bg-gray-50 text-gray-900">
+    <div className="min-h-screen w-full bg-gray-50 text-gray-900 flex flex-col">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="mx-auto max-w-7xl px-4 py-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-3">
@@ -145,9 +146,10 @@ export default function AppLayout() {
           <NavLink to="/user" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.user', 'User')}</NavLink>
         </nav>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-4">
+      <main className="mx-auto max-w-7xl px-4 py-4 flex-1">
         <Outlet />
       </main>
+      <Footer />
     </div>
   );
 }

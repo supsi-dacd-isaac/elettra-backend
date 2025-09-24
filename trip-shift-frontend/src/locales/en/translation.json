@@ -356,5 +356,10 @@
     "friday": "Friday",
     "saturday": "Saturday",
     "sunday": "Sunday"
+  },
+  "footer": {
+    "copyright": "© 2025 Elettra Trip Shift Planner",
+    "institution": "SUPSI - Scuola universitaria professionale della Svizzera italiana",
+    "privacyPolicy": "Privacy Policy"
   }
 }
