@@ -59,6 +59,19 @@ class Settings(BaseSettings):
     )
     # (If you later want to use cors.credentials/methods/headers, add fields + aliases.)
 
+    # ---- OIDC ----
+    oidc_issuer: Optional[str] = Field(default=None, validation_alias=AliasPath("auth", "oidc", "issuer"))
+    oidc_client_id: Optional[str] = Field(default=None, validation_alias=AliasPath("auth", "oidc", "client_id"))
+    oidc_client_secret: Optional[str] = Field(default=None, validation_alias=AliasPath("auth", "oidc", "client_secret"))
+    oidc_redirect_uri: Optional[str] = Field(default=None, validation_alias=AliasPath("auth", "oidc", "redirect_uri"))
+    oidc_scopes: str = Field(default="openid email profile", validation_alias=AliasPath("auth", "oidc", "scopes"))
+    oidc_default_role: str = Field(default="viewer", validation_alias=AliasPath("auth", "oidc", "default_role"))
+    oidc_default_company_id: Optional[str] = Field(default=None, validation_alias=AliasPath("auth", "oidc", "default_company_id"))
+    session_cookie_name: str = Field(default="elettra_access_token", validation_alias=AliasPath("auth", "oidc", "session_cookie_name"))
+    cookie_domain: Optional[str] = Field(default=None, validation_alias=AliasPath("auth", "oidc", "cookie_domain"))
+    cookie_secure: bool = Field(default=True, validation_alias=AliasPath("auth", "oidc", "cookie_secure"))
+    cookie_samesite: str = Field(default="lax", validation_alias=AliasPath("auth", "oidc", "cookie_samesite"))
+
     # ---- logging ----
     log_level: str = Field(..., validation_alias=AliasPath("logging", "level"))
     log_format: str = Field(
@@ -205,6 +218,20 @@ def get_settings() -> Settings:
         "APP_ALLOWED_ORIGINS": (["cors", "origins"], _as_csv_list),
         "APP_SECRET_KEY": (["auth", "secret_key"], str),
     }
+
+    override_env_map.update({
+        "OIDC_ISSUER": (["auth", "oidc", "issuer"], str),
+        "OIDC_CLIENT_ID": (["auth", "oidc", "client_id"], str),
+        "OIDC_CLIENT_SECRET": (["auth", "oidc", "client_secret"], str),
+        "OIDC_REDIRECT_URI": (["auth", "oidc", "redirect_uri"], str),
+        "OIDC_SCOPES": (["auth", "oidc", "scopes"], str),
+        "OIDC_DEFAULT_ROLE": (["auth", "oidc", "default_role"], str),
+        "OIDC_DEFAULT_COMPANY_ID": (["auth", "oidc", "default_company_id"], str),
+        "OIDC_COOKIE_NAME": (["auth", "oidc", "session_cookie_name"], str),
+        "OIDC_COOKIE_DOMAIN": (["auth", "oidc", "cookie_domain"], str),
+        "OIDC_COOKIE_SECURE": (["auth", "oidc", "cookie_secure"], _as_bool),
+        "OIDC_COOKIE_SAMESITE": (["auth", "oidc", "cookie_samesite"], str),
+    })
 
     for env_key, (path_keys, caster) in override_env_map.items():
         raw = os.environ.get(env_key)

@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
-from fastapi.security import HTTPBearer
+from datetime import timedelta
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from datetime import timedelta
+from authlib.integrations.starlette_client import OAuth
+from jose import JWTError
 
 from app.database import get_async_session
 from app.schemas.auth import UserLogin, Token, UserRegister, LogoutResponse, UserUpdate, UserPasswordUpdate, UserProfileRead
@@ -20,6 +23,16 @@ from app.core.config import get_settings
 
 router = APIRouter()
 settings = get_settings()
+
+oauth = OAuth()
+if settings.oidc_issuer and settings.oidc_client_id and settings.oidc_client_secret and settings.oidc_redirect_uri:
+    oauth.register(
+        name="eduid",
+        server_metadata_url=settings.oidc_issuer.rstrip("/") + "/.well-known/openid-configuration",
+        client_id=settings.oidc_client_id,
+        client_secret=settings.oidc_client_secret,
+        client_kwargs={"scope": settings.oidc_scopes},
+    )
 
 @router.get("/check-email/{email}")
 async def check_email_availability(email: str, db: AsyncSession = Depends(get_async_session)):
@@ -72,6 +85,64 @@ async def login(user_credentials: UserLogin, db: AsyncSession = Depends(get_asyn
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.get("/sso/login")
+async def sso_login(request: Request):
+    if "eduid" not in oauth:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OIDC login not configured")
+    return await oauth.eduid.authorize_redirect(request, settings.oidc_redirect_uri)
+
+
+@router.get("/sso/callback")
+async def sso_callback(request: Request, db: AsyncSession = Depends(get_async_session)):
+    if "eduid" not in oauth:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OIDC login not configured")
+    try:
+        token = await oauth.eduid.authorize_access_token(request)
+        userinfo = token.get("userinfo") or await oauth.eduid.parse_id_token(request, token)
+
+        email = (userinfo.get("email") or "").lower().strip()
+        name = userinfo.get("name") or userinfo.get("given_name") or email
+        if not email:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="edu-ID did not return an email")
+
+        result = await db.execute(select(Users).where(Users.email == email))
+        user = result.scalar_one_or_none()
+        if not user:
+            company_id = settings.oidc_default_company_id
+            if not company_id:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing company mapping for SSO user")
+
+            user = Users(
+                company_id=company_id,
+                email=email,
+                full_name=name,
+                role=settings.oidc_default_role,
+                password_hash=get_password_hash(secrets.token_hex(32)),
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+
+        # Issue cookie
+        access_token = create_access_token(data={"sub": str(user.id)})
+        response = Response(status_code=status.HTTP_302_FOUND)
+        response.headers["Location"] = "/"
+        cookie_kwargs = {
+            "key": settings.session_cookie_name,
+            "value": access_token,
+            "httponly": True,
+            "secure": settings.cookie_secure,
+            "samesite": (settings.cookie_samesite or "lax").capitalize(),
+            "path": "/",
+        }
+        if settings.cookie_domain:
+            cookie_kwargs["domain"] = settings.cookie_domain
+        response.set_cookie(**cookie_kwargs)
+        return response
+    except JWTError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid ID token") from exc
 
 @router.get("/me", response_model=UsersRead)
 async def read_users_me(current_user: Users = Depends(get_current_user)):
@@ -135,8 +206,15 @@ async def update_user_password(
 
 
 @router.post("/logout", response_model=LogoutResponse)
-async def logout(current_user: Users = Depends(get_current_user)):
-    """Logout user (client should remove token from storage)"""
+async def logout(response: Response):
+    """Logout user by clearing auth cookie"""
+    delete_kwargs = {
+        "key": settings.session_cookie_name,
+        "path": "/",
+    }
+    if settings.cookie_domain:
+        delete_kwargs["domain"] = settings.cookie_domain
+    response.delete_cookie(**delete_kwargs)
     return {"message": "Successfully logged out"}
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
