@@ -49,7 +49,17 @@
     "loggedIn": "Logged in. Token {{token}}",
     "loginFailed": "Login failed: {{error}}",
     "provideCredentials": "Provide email and password",
-    "passwordRequirements": "Password must be at least 8 characters with uppercase, digits, and special characters",
+    "passwordGuidelines": "Use at least 12 characters with upper/lowercase letters, numbers, symbols, and avoid common or sequential patterns",
+    "passwordRequirements": {
+      "length": "Password must be at least 12 characters long",
+      "lowercase": "Password must contain at least 1 lowercase letter",
+      "uppercase": "Password must contain at least 1 uppercase letter",
+      "digits": "Password must contain at least 1 digit",
+      "special": "Password must contain at least 1 special character",
+      "repeated": "Password cannot contain the same character three or more times in a row",
+      "sequential": "Password cannot contain sequential characters like 'abc' or '123'",
+      "common": "Password is too common"
+    },
     "passwordConfirmPlaceholder": "Confirm password",
     "passwordsDoNotMatch": "Passwords do not match",
     "emailAlreadyExists": "This email is already registered",

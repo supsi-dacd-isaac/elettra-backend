@@ -51,8 +51,10 @@ def auth_headers(token: str) -> dict:
 # -----------------------------
 # Temp user helpers (ensure no DB garbage)
 # -----------------------------
+STRONG_PASSWORD = "Tmp!Passw0rdXy"
 
-def _register_temp_user(client: TestClient, *, password: str = "TempPass123!") -> tuple[str, str]:
+
+def _register_temp_user(client: TestClient, *, password: str = "Tmp!Passw0rdXy") -> tuple[str, str]:
     """Create a temporary user for mutation tests and return (email, password)."""
     email = f"tmp_{uuid.uuid4().hex[:10]}@example.com"
     valid_company_id = "0be70f7c-5bed-41ba-9ef8-8ddcafb807b9"
@@ -221,10 +223,14 @@ def test_register_weak_password(client, record):
     valid_company_id = "0be70f7c-5bed-41ba-9ef8-8ddcafb807b9"  # Basler Verkehrsbetriebe
     
     weak_passwords = [
-        "short",  # Too short
-        "nouppercase123!",  # No uppercase
-        "NoNumbers!",  # No digits
-        "NoSpecial123",  # No special chars
+        "Short1!a",  # Too short
+        "nouppercase123!a",  # No uppercase letters
+        "NOLOWERCASE123!",  # No lowercase letters
+        "NoDigits!!!!aa",  # No digits
+        "NoSpecial1234a",  # No special characters
+        "ValidPassw0rd!123",  # Contains sequential characters
+        "ReeelllyStrong!!!",  # Contains repeated characters
+        "Password123!",  # Common password pattern
     ]
     
     for weak_password in weak_passwords:
@@ -247,7 +253,7 @@ def test_register_strong_password(client, record):
             "company_id": valid_company_id,
             "email": temp_email,
             "full_name": "Test User",
-            "password": "StrongPassword123!",
+            "password": "Str0ng!Passw@rdX",
             "role": "viewer"
         })
         record("register_strong_password", r.status_code == 200, f"status={r.status_code}")
@@ -257,7 +263,7 @@ def test_register_strong_password(client, record):
 def test_update_password_weak(client, record):
     """Test password update with weak password using a temporary user"""
     # Create temp user to avoid mutating shared credentials
-    email, current_password = _register_temp_user(client, password="TempPass123!")
+    email, current_password = _register_temp_user(client, password="Tmp!Passw0rdXy")
     try:
         # Login as temp user
         login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": current_password})
@@ -265,10 +271,14 @@ def test_update_password_weak(client, record):
         token = login.json().get("access_token")
 
         weak_passwords = [
-            "short",  # Too short
-            "nouppercase123!",  # No uppercase
-            "NoNumbers!",  # No digits
-            "NoSpecial123",  # No special chars
+            "Short1!a",  # Too short
+            "nouppercase123!a",  # No uppercase letters
+            "NOLOWERCASE123!",  # No lowercase letters
+            "NoDigits!!!!aa",  # No digits
+            "NoSpecial1234a",  # No special characters
+            "ValidPassw0rd!123",  # Contains sequential characters
+            "ReeelllyStrong!!!",  # Contains repeated characters
+            "Password123!",  # Common password pattern
         ]
 
         for weak_password in weak_passwords:
@@ -282,7 +292,7 @@ def test_update_password_weak(client, record):
 def test_update_password_strong(client, record):
     """Test password update with strong password using a temporary user"""
     # Create temp user to avoid mutating shared credentials
-    email, current_password = _register_temp_user(client, password="TempPass123!")
+    email, current_password = _register_temp_user(client, password="Tmp!Passw0rdXy")
     try:
         # Login as temp user
         login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": current_password})
@@ -290,7 +300,7 @@ def test_update_password_strong(client, record):
         token = login.json().get("access_token")
 
         r = client.put(f"{AUTH_BASE}/me/password",
-                       json={"current_password": current_password, "new_password": "NewStrongPassword123!"},
+                       json={"current_password": current_password, "new_password": "N3w!Str0ngPasswrd"},
                        headers=auth_headers(token))
         record("update_password_strong", r.status_code == 200, f"status={r.status_code}")
     finally:
@@ -299,7 +309,7 @@ def test_update_password_strong(client, record):
 def test_update_profile(client, record):
     """Test user profile update using a temporary user (no mutation of seeded users)."""
     # Create temp user
-    email, password = _register_temp_user(client, password="TempPass123!")
+    email, password = _register_temp_user(client, password=STRONG_PASSWORD)
     try:
         # Login as temp user
         login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
@@ -319,7 +329,7 @@ def test_update_profile(client, record):
 def test_delete_me_ephemeral_user(client, record):
     """Create a temp user, delete via DELETE /auth/me, ensure it's gone."""
     # Register temp user
-    email, password = _register_temp_user(client, password="TempPass123!")
+    email, password = _register_temp_user(client, password=STRONG_PASSWORD)
     # Login as temp user
     login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
     assert login.status_code == 200, f"temp login failed: {login.text}"
@@ -354,7 +364,7 @@ def test_check_email_availability(client, record):
 def test_check_email_availability_with_temp_user(client, record):
     """Test email availability check with temporary user"""
     # Create temp user
-    email, password = _register_temp_user(client, password="TempPass123!")
+    email, password = _register_temp_user(client, password=STRONG_PASSWORD)
     try:
         # Check that email is now unavailable
         r = client.get(f"{AUTH_BASE}/check-email/{email}")

@@ -1,3 +1,1 @@
-"""Elettra application package."""
-
-
+"""Elettra backend package."""

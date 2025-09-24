@@ -49,7 +49,17 @@
     "loggedIn": "Accesso eseguito. Token {{token}}",
     "loginFailed": "Accesso non riuscito: {{error}}",
     "provideCredentials": "Inserisci email e password",
-    "passwordRequirements": "La password deve essere di almeno 8 caratteri con maiuscole, cifre e caratteri speciali",
+    "passwordGuidelines": "Usa almeno 12 caratteri con lettere maiuscole e minuscole, numeri e simboli, evitando sequenze o caratteri ripetuti",
+    "passwordRequirements": {
+      "length": "La password deve avere almeno 12 caratteri",
+      "lowercase": "La password deve contenere almeno 1 lettera minuscola",
+      "uppercase": "La password deve contenere almeno 1 lettera maiuscola",
+      "digits": "La password deve contenere almeno 1 cifra",
+      "special": "La password deve contenere almeno 1 carattere speciale",
+      "repeated": "La password non può contenere tre o più caratteri uguali consecutivi",
+      "sequential": "La password non può contenere sequenze come 'abc' o '123'",
+      "common": "La password è troppo comune"
+    },
     "passwordConfirmPlaceholder": "Conferma password",
     "passwordsDoNotMatch": "Le password non corrispondono",
     "emailAlreadyExists": "Questa email è già registrata",

@@ -4,19 +4,42 @@ import { useAuth } from '../auth/AuthContext';
 import { useTranslation } from 'react-i18next';
 import Panel from '../components/ui/Panel.tsx';
 
+const COMMON_PASSWORDS = new Set([
+  'password',
+  'password1',
+  'password123',
+  '123456',
+  '123456789',
+  '12345678',
+  'qwerty',
+  'abc123',
+  'letmein',
+  '111111',
+  '123123',
+  '000000',
+  'iloveyou',
+  'admin',
+  'welcome',
+  'dragon',
+]);
+
 export default function LoginPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { setToken } = useAuth();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [showRegister, setShowRegister] = useState(false);
+
   const [regFullName, setRegFullName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regPasswordConfirm, setRegPasswordConfirm] = useState('');
+  const [regPasswordError, setRegPasswordError] = useState('');
   const [regAgencyId, setRegAgencyId] = useState('');
   const [regRole, setRegRole] = useState<'viewer' | 'analyst' | 'admin'>('viewer');
   const [regLoading, setRegLoading] = useState(false);
@@ -27,7 +50,6 @@ export default function LoginPage() {
   const [agencies, setAgencies] = useState<any[]>([]);
   const [agenciesLoading, setAgenciesLoading] = useState(false);
   const [agenciesError, setAgenciesError] = useState('');
-  const navigate = useNavigate();
 
   function joinUrl(base: string, path: string): string {
     const cleanBase = (base || '').replace(/\/+$/, '');
@@ -35,7 +57,48 @@ export default function LoginPage() {
     return cleanBase ? `${cleanBase}${cleanPath}` : cleanPath;
   }
 
-  // Load agencies when the register modal is opened
+  function getEffectiveBaseUrl(): string {
+    const VITE = (typeof import.meta !== 'undefined' ? (import.meta as any).env : {}) || {};
+    const envBase = VITE.VITE_API_BASE_URL || '';
+    if (envBase) return envBase as string;
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:8002';
+      if (/^10\./.test(host)) return `http://${host}:8002`;
+      if (host === 'isaac-elettra.dacd.supsi.ch') return 'http://isaac-elettra.dacd.supsi.ch:8002';
+    }
+    return 'http://localhost:8002';
+  }
+
+  async function loginWithCredentials() {
+    setError('');
+    setNotice('');
+    if (!email || !password) {
+      setError(t('auth.provideCredentials') as string);
+      return;
+    }
+    try {
+      setLoading(true);
+      const base = getEffectiveBaseUrl();
+      const url = joinUrl(base, '/auth/login');
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = await res.json();
+      const tok = data?.access_token;
+      if (!tok) throw new Error(t('auth.errors.noToken') as string);
+      setToken(tok);
+      navigate('/planner', { replace: true });
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function loadAgencies() {
@@ -62,39 +125,44 @@ export default function LoginPage() {
     return () => { cancelled = true; };
   }, [showRegister]);
 
-  function getEffectiveBaseUrl(): string {
-    const VITE = (typeof import.meta !== 'undefined' ? (import.meta as any).env : {}) || {};
-    const envBase = VITE.VITE_API_BASE_URL || '';
-    if (envBase) return envBase as string;
-    if (typeof window !== 'undefined') {
-      const host = window.location.hostname;
-      if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:8002';
-      if (/^10\./.test(host)) return `http://${host}:8002`;
-      if (host === 'isaac-elettra.dacd.supsi.ch') return 'http://isaac-elettra.dacd.supsi.ch:8002';
+  useEffect(() => {
+    if (!regPassword) {
+      setRegPasswordError('');
+      return;
     }
-    return 'http://localhost:8002';
+    const validationError = validatePasswordStrength(regPassword);
+    setRegPasswordError(validationError ?? '');
+  }, [regPassword]);
+
+  function hasSequentialCharacters(password: string, length: number = 3): boolean {
+    const lowered = password.toLowerCase();
+    const sequences = ['abcdefghijklmnopqrstuvwxyz', 'zyxwvutsrqponmlkjihgfedcba', '0123456789', '9876543210'];
+    for (const sequence of sequences) {
+      for (let i = 0; i <= sequence.length - length; i += 1) {
+        const fragment = sequence.slice(i, i + length);
+        if (lowered.includes(fragment)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
-  async function loginWithCredentials() {
-    setError('');
-    setNotice('');
-    if (!email || !password) { setError(t('auth.provideCredentials') as string); return; }
-    try {
-      setLoading(true);
-      const base = getEffectiveBaseUrl();
-      const url = joinUrl(base, '/auth/login');
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const data = await res.json();
-      const tok = data?.access_token;
-      if (!tok) throw new Error(t('auth.errors.noToken') as string);
-      setToken(tok);
-      navigate('/planner', { replace: true });
-    } catch (e: any) {
-      setError(e?.message || String(e));
-    } finally {
-      setLoading(false);
+  function validatePasswordStrength(password: string): string | null {
+    const errors: string[] = [];
+    if (password.length < 12) errors.push(t('auth.passwordRequirements.length', 'Password must be at least 12 characters long') as string);
+    if (!/[a-z]/.test(password)) errors.push(t('auth.passwordRequirements.lowercase', 'Password must contain at least 1 lowercase letter') as string);
+    if (!/[A-Z]/.test(password)) errors.push(t('auth.passwordRequirements.uppercase', 'Password must contain at least 1 uppercase letter') as string);
+    if (!/[0-9]/.test(password)) errors.push(t('auth.passwordRequirements.digits', 'Password must contain at least 1 digit') as string);
+    if (!/[^A-Za-z0-9]/.test(password)) errors.push(t('auth.passwordRequirements.special', 'Password must contain at least 1 special character') as string);
+    if (/(.)\1\1/.test(password)) errors.push(t('auth.passwordRequirements.repeated', 'Password cannot contain the same character three or more times in a row') as string);
+    if (hasSequentialCharacters(password)) errors.push(t('auth.passwordRequirements.sequential', "Password cannot contain sequential characters like 'abc' or '123'") as string);
+    if (COMMON_PASSWORDS.has(password.toLowerCase())) errors.push(t('auth.passwordRequirements.common', 'Password is too common') as string);
+
+    if (errors.length > 0) {
+      return errors.join(' ');
     }
+    return null;
   }
 
   async function checkEmailAvailability(email: string) {
@@ -102,7 +170,7 @@ export default function LoginPage() {
       setRegEmailError('');
       return;
     }
-    
+
     try {
       setEmailChecking(true);
       setRegEmailError('');
@@ -111,7 +179,7 @@ export default function LoginPage() {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data = await res.json();
-      
+
       if (!data.available) {
         setRegEmailError(t('auth.emailAlreadyExists') as string);
       } else {
@@ -119,7 +187,6 @@ export default function LoginPage() {
       }
     } catch (e: any) {
       console.error('Email check failed:', e);
-      // Don't show error for network issues, just clear any existing error
       setRegEmailError('');
     } finally {
       setEmailChecking(false);
@@ -129,19 +196,22 @@ export default function LoginPage() {
   async function handleRegister() {
     setRegError('');
     setNotice('');
-    // Basic validation
     if (!regFullName || !regEmail || !regPassword || !regPasswordConfirm || !regAgencyId) {
       setRegError(t('auth.provideCredentials') as string);
       return;
     }
-    
-    // Password confirmation validation
+
     if (regPassword !== regPasswordConfirm) {
       setRegError(t('auth.passwordsDoNotMatch') as string);
       return;
     }
-    
-    // Email validation
+
+    const strengthError = validatePasswordStrength(regPassword);
+    if (strengthError) {
+      setRegError(strengthError);
+      return;
+    }
+
     if (regEmailError) {
       setRegError(t('auth.emailAlreadyExists') as string);
       return;
@@ -156,18 +226,16 @@ export default function LoginPage() {
         full_name: regFullName,
         password: regPassword,
         role: regRole,
-      } as any;
+      };
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      // Success
       setShowRegister(false);
       setEmail(regEmail);
       setNotice(t('auth.registrationSuccess') as string);
-      // reset register form state
       setRegFullName('');
       setRegEmail('');
       setRegPassword('');
@@ -185,23 +253,24 @@ export default function LoginPage() {
   return (
     <div className="max-w-md mx-auto">
       <Panel>
-      <h2 className="text-lg font-medium mb-3">{t('auth.title')}</h2>
-      {notice && <div className="mb-2 text-sm text-green-700">{notice}</div>}
-      {error && <div className="mb-2 text-sm text-red-600">{error}</div>}
-      <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-2">
-          <input className="px-3 py-2 border rounded-lg" placeholder={t('auth.emailPlaceholder') as string} value={email} onChange={(e) => setEmail(e.target.value)} />
-          <input className="px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordPlaceholder') as string} value={password} onChange={(e) => setPassword(e.target.value)} />
+        <h2 className="text-lg font-medium mb-3">{t('auth.title')}</h2>
+        {notice && <div className="mb-2 text-sm text-green-700">{notice}</div>}
+        {error && <div className="mb-2 text-sm text-red-600">{error}</div>}
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <input className="px-3 py-2 border rounded-lg" placeholder={t('auth.emailPlaceholder') as string} value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input className="px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordPlaceholder') as string} value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <p className="text-xs text-neutral-600">{t('auth.passwordGuidelines')}</p>
+          <div className="flex items-center gap-2">
+            <button onClick={loginWithCredentials} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{ backgroundColor: '#002AA7' }} disabled={loading}>
+              {t(loading ? 'auth.loggingIn' : 'auth.login')}
+            </button>
+            <button onClick={() => { setShowRegister(true); setRegError(''); }} className="px-3 py-2 rounded-lg border text-sm hover:bg-neutral-50" disabled={loading}>
+              {t('auth.register')}
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={loginWithCredentials} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} disabled={loading}>
-            {t(loading ? 'auth.loggingIn' : 'auth.login')}
-          </button>
-          <button onClick={() => { setShowRegister(true); setRegError(''); }} className="px-3 py-2 rounded-lg border text-sm hover:bg-neutral-50" disabled={loading}>
-            {t('auth.register')}
-          </button>
-        </div>
-      </div>
       </Panel>
 
       {showRegister && (
@@ -215,32 +284,48 @@ export default function LoginPage() {
             <div className="space-y-2">
               <input className="w-full px-3 py-2 border rounded-lg" placeholder={t('auth.fullNamePlaceholder') as string} value={regFullName} onChange={(e) => setRegFullName(e.target.value)} />
               <div>
-                <input 
-                  className={`w-full px-3 py-2 border rounded-lg ${regEmailError ? 'border-red-500' : ''}`} 
-                  placeholder={t('auth.emailPlaceholder') as string} 
-                  value={regEmail} 
+                <input
+                  className={`w-full px-3 py-2 border rounded-lg ${regEmailError ? 'border-red-500' : ''}`}
+                  placeholder={t('auth.emailPlaceholder') as string}
+                  value={regEmail}
                   onChange={(e) => {
                     setRegEmail(e.target.value);
-                    // Clear previous timeout
                     if (emailTimeoutRef.current) {
                       clearTimeout(emailTimeoutRef.current);
                     }
-                    // Set new timeout for debounced validation
-                    emailTimeoutRef.current = setTimeout(() => {
+                    emailTimeoutRef.current = window.setTimeout(() => {
                       checkEmailAvailability(e.target.value);
                     }, 500);
                   }}
+                  disabled={regLoading}
                 />
                 {regEmailError && <div className="mt-1 text-xs text-red-600">{regEmailError}</div>}
                 {emailChecking && <div className="mt-1 text-xs text-gray-500">{t('common.loading')}</div>}
               </div>
               <div>
-                <input className="w-full px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordPlaceholder') as string} value={regPassword} onChange={(e) => setRegPassword(e.target.value)} />
-                <div className="mt-1 text-xs text-gray-600">
-                  {t('auth.passwordRequirements') as string}
+                <input
+                  className={`w-full px-3 py-2 border rounded-lg ${regPasswordError ? 'border-red-500' : ''}`}
+                  type="password"
+                  placeholder={t('auth.passwordPlaceholder') as string}
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  disabled={regLoading}
+                />
+                <div className="mt-1 text-xs text-neutral-600">
+                  {t('auth.passwordGuidelines')}
                 </div>
+                {regPasswordError && <div className="mt-1 text-xs text-red-600">{regPasswordError}</div>}
               </div>
-              <input className="w-full px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordConfirmPlaceholder') as string} value={regPasswordConfirm} onChange={(e) => setRegPasswordConfirm(e.target.value)} />
+              <div>
+                <input
+                  className={`w-full px-3 py-2 border rounded-lg ${regPassword && regPassword !== regPasswordConfirm ? 'border-red-500' : ''}`}
+                  type="password"
+                  placeholder={t('auth.passwordConfirmPlaceholder') as string}
+                  value={regPasswordConfirm}
+                  onChange={(e) => setRegPasswordConfirm(e.target.value)}
+                  disabled={regLoading}
+                />
+              </div>
               <div>
                 <label className="block text-sm mb-1">{t('auth.selectAgencyLabel')}</label>
                 <select className="w-full px-3 py-2 border rounded-lg" value={regAgencyId} onChange={(e) => setRegAgencyId(e.target.value)} disabled={agenciesLoading || agencies.length === 0}>
@@ -260,7 +345,7 @@ export default function LoginPage() {
                 </select>
               </div>
               <div className="flex items-center gap-2 pt-1">
-                <button onClick={handleRegister} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{backgroundColor: '#002AA7'}} disabled={regLoading || !regAgencyId}>
+                <button onClick={handleRegister} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{ backgroundColor: '#002AA7' }} disabled={regLoading || !regAgencyId}>
                   {t(regLoading ? 'auth.registering' : 'auth.register')}
                 </button>
                 <button onClick={() => setShowRegister(false)} className="px-3 py-2 rounded-lg border text-sm" disabled={regLoading}>{t('common.cancel')}</button>

@@ -6,7 +6,15 @@ from sqlalchemy.exc import IntegrityError
 from datetime import timedelta
 
 from app.database import get_async_session
-from app.schemas.auth import UserLogin, Token, UserRegister, LogoutResponse, UserUpdate, UserPasswordUpdate, UserProfileRead
+from app.schemas.auth import (
+    UserLogin,
+    Token,
+    UserRegister,
+    LogoutResponse,
+    UserUpdate,
+    UserPasswordUpdate,
+    UserProfileRead,
+)
 from app.schemas.database import UsersRead
 from app.models import Users
 from app.core.auth import (
