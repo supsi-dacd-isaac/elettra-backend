@@ -178,6 +178,20 @@ services:
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK}
     command: ["falco", "-c", "/etc/falco/falco.yaml"]
 
+  # Diun - Docker Image Update Notifier
+  diun:
+    image: crazymax/diun:latest
+    container_name: elettra-diun
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./diun/diun.yml:/etc/diun/diun.yml:ro
+      - diun-data:/data
+    environment:
+      - DIUN_NOTIF_SLACK_WEBHOOKURL=${SLACK_WEBHOOK_URL}
+      - TZ=Europe/Zurich
+    command: ["serve", "--config", "/etc/diun/diun.yml"]
+
   # Falco Exporter for Prometheus metrics
   falco-exporter:
     image: falcosecurity/falco-exporter:latest
@@ -196,3 +210,4 @@ volumes:
   minio-data:
   osrm-data:
   falco-logs:
+  diun-data:
