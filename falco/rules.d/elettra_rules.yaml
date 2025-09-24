@@ -1,0 +1,180 @@
+# Custom Falco Rules for Elettra Backend Security Monitoring
+# These rules are specifically tailored for the Elettra application stack
+
+# Database Security Rules
+- rule: Database Connection from Non-Database Container
+  desc: Detect database connections from containers that shouldn't access the database
+  condition: >
+    spawned_process and
+    container.name != "elettra-db" and
+    (proc.name in (postgres, psql, mysql, mongodb)) and
+    not user_expected_database_access
+  output: >
+    Database connection detected from non-database container
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     proc=%proc.name cmdline=%proc.cmdline)
+  priority: WARNING
+  tags: [database, container, elettra]
+
+- rule: Unauthorized Database Access Attempt
+  desc: Detect unauthorized access attempts to database files or configuration
+  condition: >
+    open_read and
+    (fd.name contains "/var/lib/postgresql" or
+     fd.name contains "/etc/postgresql" or
+     fd.name contains "postgresql.conf") and
+    container.name != "elettra-db"
+  output: >
+    Unauthorized database file access attempt
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     file=%fd.name)
+  priority: CRITICAL
+  tags: [database, security, elettra]
+
+# API Security Rules
+- rule: Suspicious API Container Activity
+  desc: Detect suspicious activity in the API container
+  condition: >
+    container.name = "elettra-api" and
+    (proc.name in (nc, netcat, wget, curl) and
+     (fd.name contains "/etc/passwd" or
+      fd.name contains "/etc/shadow" or
+      fd.name contains "/proc/self/environ"))
+  output: >
+    Suspicious activity detected in API container
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     proc=%proc.name cmdline=%proc.cmdline file=%fd.name)
+  priority: WARNING
+  tags: [api, security, elettra]
+
+- rule: Unauthorized File Access in API Container
+  desc: Detect unauthorized file access in the API container
+  condition: >
+    container.name = "elettra-api" and
+    open_read and
+    (fd.name contains "/etc/" or
+     fd.name contains "/root/" or
+     fd.name contains "/home/")
+  output: >
+    Unauthorized file access in API container
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     file=%fd.name)
+  priority: WARNING
+  tags: [api, filesystem, elettra]
+
+# MinIO Security Rules
+- rule: MinIO Unauthorized Access
+  desc: Detect unauthorized access to MinIO data
+  condition: >
+    container.name = "elettra-minio" and
+    open_read and
+    fd.name contains "/data/" and
+    not user_expected_minio_access
+  output: >
+    Unauthorized MinIO data access
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     file=%fd.name)
+  priority: WARNING
+  tags: [minio, storage, elettra]
+
+# Network Security Rules
+- rule: Unexpected Network Connection
+  desc: Detect unexpected network connections from containers
+  condition: >
+    inbound_outbound and
+    container.name in (elettra-api, elettra-db, elettra-osrm) and
+    (fd.net != "127.0.0.1" and
+     fd.net != "172.16.0.0/12" and
+     fd.net != "192.168.0.0/16" and
+     fd.net != "10.0.0.0/8")
+  output: >
+    Unexpected network connection from container
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     connection=%fd.name direction=%evt.type)
+  priority: WARNING
+  tags: [network, security, elettra]
+
+# Container Escape Detection
+- rule: Container Escape Attempt
+  desc: Detect potential container escape attempts
+  condition: >
+    (proc.name in (chroot, nsenter, unshare) or
+     (proc.name = "mount" and proc.cmdline contains "proc")) and
+    container.name != "elettra-falco"
+  output: >
+    Potential container escape attempt detected
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     proc=%proc.name cmdline=%proc.cmdline)
+  priority: CRITICAL
+  tags: [container_escape, security, elettra]
+
+# Privilege Escalation Detection
+- rule: Privilege Escalation in Container
+  desc: Detect privilege escalation attempts in containers
+  condition: >
+    spawned_process and
+    proc.name in (su, sudo, gosu) and
+    container.name != "elettra-falco"
+  output: >
+    Privilege escalation attempt in container
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     proc=%proc.name cmdline=%proc.cmdline)
+  priority: CRITICAL
+  tags: [privilege_escalation, security, elettra]
+
+# File System Monitoring
+- rule: Sensitive File Access
+  desc: Detect access to sensitive files
+  condition: >
+    open_read and
+    (fd.name contains "/etc/passwd" or
+     fd.name contains "/etc/shadow" or
+     fd.name contains "/etc/sudoers" or
+     fd.name contains "/root/.ssh/" or
+     fd.name contains "/home/") and
+    container.name != "elettra-falco"
+  output: >
+    Sensitive file access detected
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     file=%fd.name)
+  priority: WARNING
+  tags: [filesystem, security, elettra]
+
+# Application-Specific Rules
+- rule: Elettra Configuration Access
+  desc: Detect unauthorized access to Elettra configuration files
+  condition: >
+    open_read and
+    fd.name contains "elettra-config" and
+    container.name != "elettra-api"
+  output: >
+    Unauthorized Elettra configuration access
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     file=%fd.name)
+  priority: WARNING
+  tags: [configuration, security, elettra]
+
+# OSRM Service Monitoring
+- rule: OSRM Service Tampering
+  desc: Detect unauthorized modifications to OSRM service
+  condition: >
+    container.name = "elettra-osrm" and
+    (proc.name in (rm, mv, cp, chmod, chown) and
+     fd.name contains "/data/")
+  output: >
+    OSRM service tampering detected
+    (user=%user.name user_loginuid=%user.loginuid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     proc=%proc.name cmdline=%proc.cmdline file=%fd.name)
+  priority: WARNING
+  tags: [osrm, service, elettra]

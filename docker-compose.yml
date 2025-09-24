@@ -152,7 +152,47 @@ services:
       - osrm-data:/data
     command: osrm-routed --algorithm ch /data/switzerland-latest.osrm
 
+  # Falco Security Monitoring
+  falco:
+    image: falcosecurity/falco:latest
+    container_name: elettra-falco
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    network_mode: host
+    volumes:
+      # Mount host filesystem for monitoring
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /dev:/host/dev:ro
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+      - /etc:/host/etc:ro
+      # Falco configuration with native Slack support
+      - ./falco/falco.yaml:/etc/falco/falco.yaml:ro
+      - ./falco/rules.d:/etc/falco/rules.d:ro
+      # Output directory for logs
+      - falco-logs:/var/log/falco
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK}
+    command: ["falco", "-c", "/etc/falco/falco.yaml"]
+
+  # Falco Exporter for Prometheus metrics
+  falco-exporter:
+    image: falcosecurity/falco-exporter:latest
+    container_name: elettra-falco-exporter
+    restart: unless-stopped
+    depends_on:
+      - falco
+    ports:
+      - "9376:9376"
+    environment:
+      - FALCO_GRPC_ENDPOINT=falco:5060
+
+
 volumes:
   db-data:
   minio-data:
   osrm-data:
+  falco-logs:

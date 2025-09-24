@@ -1,0 +1,90 @@
+# Falco Configuration for Elettra Backend Security Monitoring
+# This configuration is optimized for containerized applications
+
+# Rules files to load
+rules_file:
+  - /etc/falco/falco_rules.yaml
+  - /etc/falco/falco_rules.local.yaml
+  - /etc/falco/rules.d/elettra_rules.yaml
+
+# JSON output configuration
+json_output: true
+json_include_output_property: true
+
+# Logging configuration
+log_level: info
+log_stderr: true
+log_syslog: false
+
+# Output configuration
+stdout_output:
+  enabled: true
+
+file_output:
+  enabled: true
+  keep_alive: false
+  filename: /var/log/falco/falco.log
+
+# HTTP output for Slack webhook
+http_output:
+  enabled: true
+  url: "${SLACK_WEBHOOK_URL}"
+  user_agent: "Elettra-Falco-Security"
+  method: "POST"
+  headers:
+    Content-Type: "application/json"
+
+# gRPC configuration (disabled for basic setup)
+grpc:
+  enabled: false
+  bind_address: "0.0.0.0:5060"
+  threadiness: 8
+
+# Metrics configuration
+metrics:
+  enabled: true
+  interval: 10s
+  text_output: true
+  file_output:
+    enabled: true
+    filename: /var/log/falco/metrics.log
+
+# Time format for logs
+time_format_iso_8601: true
+
+# Buffer size for events
+buffering:
+  enabled: false
+
+# Syscall event configuration
+syscall_event_drops:
+  actions:
+    - log
+    - alert
+  rate: 0.1
+  max_burst: 1000
+
+# Container runtime configuration
+containers:
+  disable_containers: false
+  use_containers: ["docker", "cri"]
+  cri_socket_path: /var/run/cri.sock
+  cri_timeout: 10000
+
+# Kubernetes configuration (not used in Docker Compose setup)
+k8s_audit_endpoint: ""
+k8s_audit_config_file: ""
+
+# Application-specific settings
+app_specific:
+  # Enable monitoring of specific ports used by Elettra
+  monitored_ports: [8002, 55557, 5440, 5001, 9002, 9003]
+  
+  # Database monitoring
+  database_monitoring: true
+  
+  # File system monitoring
+  filesystem_monitoring: true
+  
+  # Network monitoring
+  network_monitoring: true
