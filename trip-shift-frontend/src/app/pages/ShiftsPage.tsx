@@ -7,6 +7,8 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext.tsx";
 import Panel from "../components/ui/Panel";
 import SavedShiftsPanel from "../components/shifts/SavedShiftsPanel";
+import StringlineChart from "../components/shifts/StringlineChart";
+import { buildSeriesFromStops, computeDominantStopOrder, sequentialOrderFromSeries, toMinutes, type Series, type StopMeta } from "../components/shifts/stringlineUtils";
 
 /**
  * Trip Shift Planner — single‑file React demo (TypeScript + Tailwind)
@@ -297,6 +299,9 @@ export default function ShiftsPage() {
   const [search, setSearch] = useState<string>('');
   const [filter, setFilter] = useState<'all' | 'mine'>('all');
   const [sort, setSort] = useState<'updatedDesc' | 'nameAsc'>('updatedDesc');
+  const [viewingShift, setViewingShift] = useState<ShiftRead | null>(null);
+  const [viewStopsByTrip, setViewStopsByTrip] = useState<Record<string, TripStop[]>>({});
+  const [viewReverseY, setViewReverseY] = useState<boolean>(false);
   // Depots management
   type Depot = { id: string; user_id: string; name: string; address?: string | null; features?: any; stop_id?: string | null; latitude?: number | null; longitude?: number | null };
   const [depots, setDepots] = useState<Depot[]>([]);
@@ -345,6 +350,188 @@ export default function ShiftsPage() {
   const [elevationLoadingTripId, setElevationLoadingTripId] = useState<string | null>(null);
   const [elevationErrorByTrip, setElevationErrorByTrip] = useState<Record<string, string>>({});
   const hoverTimerRef = useRef<number | null>(null);
+
+  // Stringline state
+  const [reverseY, setReverseY] = useState<boolean>(false);
+  const stopMeta = useMemo(() => {
+    const meta: Record<string, StopMeta> = {};
+    // IMPORTANT: build meta only from trips currently rendered (selectedIds)
+    // to avoid mixing unrelated stops that would distort the Y ordering.
+    for (const selId of selectedIds) {
+      const stops = stopsByTrip[selId];
+      if (!stops) continue;
+      for (const s of stops) {
+        const sid = s.id;
+        if (!sid || meta[sid]) continue;
+        meta[sid] = { id: sid, name: s.stop_name, lat: s.stop_lat ?? undefined, lon: s.stop_lon ?? undefined };
+      }
+    }
+    // Include pseudo-stops for depot legs so their series can render
+    const addDepotPseudo = (info: { depotId: string; timeHHMM: string; label?: string; lat?: number | null; lon?: number | null; area?: string | null } | null) => {
+      if (!info) return;
+      const dep = depots.find((d) => d.id === info.depotId);
+      const sid = `depot:${info.depotId}`;
+      if (!meta[sid]) {
+        meta[sid] = {
+          id: sid,
+          name: info.label || `Depot: ${dep?.name || info.depotId}`,
+          lat: info.lat ?? dep?.latitude ?? undefined,
+          lon: info.lon ?? dep?.longitude ?? undefined,
+        };
+      }
+    };
+    addDepotPseudo(leaveDepotInfo);
+    addDepotPseudo(returnDepotInfo);
+    return meta;
+  }, [selectedIds, stopsByTrip, depots, leaveDepotInfo, returnDepotInfo]);
+  // stopOrder will be computed after stringlineSeries below
+  const stringlineSeries = useMemo<Series[]>(() => {
+    const series: Series[] = [];
+    // Use selected trips for in-progress shift preview
+    for (const selId of selectedIds) {
+      const stops = stopsByTrip[selId];
+      if (!stops) continue;
+      const label = allTripsMap.get(selId)?.trip_short_name || selId;
+      const s = buildSeriesFromStops(selId, label || selId, stops as any);
+      if (s) series.push(s);
+    }
+    // Add depot legs as dashed gray when set
+    if (leaveDepotInfo) {
+      // Try to anchor to first selected trip based on its first stop
+      const firstSel = selectedIds[0];
+      const stops = firstSel ? stopsByTrip[firstSel] : undefined;
+      const arrivalStop = stops && stops[0] ? stops[0] : undefined;
+      const depMin = toMinutes(leaveDepotInfo.timeHHMM);
+      const arrT = arrivalStop ? (arrivalStop.arrival_time || arrivalStop.departure_time || '') : '';
+      const arrMin = toMinutes(arrT.slice(0, 5) || null);
+      const depotStopId = `depot:${leaveDepotInfo.depotId}`;
+      if (depMin != null && arrMin != null && arrivalStop && arrivalStop.id) {
+        series.push({
+          id: `depot-leave-${arrivalStop.id}`,
+          label: 'Depot → first stop',
+          colorKey: 'depot',
+          kind: 'depot',
+          points: [
+            { stopId: depotStopId, minutes: Math.min(depMin, arrMin) },
+            { stopId: arrivalStop.id, minutes: Math.max(depMin, arrMin) },
+          ],
+        });
+      } else if (depMin != null) {
+        const arrId = depotStopId;
+        const arrMinutes = depMin + 5;
+        series.push({
+          id: `depot-leave-pending`,
+          label: 'Depot leg (waiting for stops)',
+          colorKey: 'depot',
+          kind: 'depot',
+          points: [
+            { stopId: depotStopId, minutes: depMin },
+            { stopId: arrId, minutes: arrMinutes },
+          ],
+        });
+      }
+    }
+    if (returnDepotInfo) {
+      const lastSel = selectedIds[selectedIds.length - 1];
+      const stops = lastSel ? stopsByTrip[lastSel] : undefined;
+      const departStop = stops && stops[stops.length - 1] ? stops[stops.length - 1] : undefined;
+      const arrMin = toMinutes(returnDepotInfo.timeHHMM);
+      const depT = departStop ? (departStop.departure_time || departStop.arrival_time || '') : '';
+      const depMin = toMinutes(depT.slice(0, 5) || null);
+      const depotStopId = `depot:${returnDepotInfo.depotId}`;
+      if (depMin != null && arrMin != null && departStop && departStop.id) {
+        series.push({
+          id: `depot-return-${departStop.id}`,
+          label: 'Last stop → depot',
+          colorKey: 'depot',
+          kind: 'depot',
+          points: [
+            { stopId: departStop.id, minutes: Math.min(depMin, arrMin) },
+            { stopId: depotStopId, minutes: Math.max(depMin, arrMin) },
+          ],
+        });
+      } else if (arrMin != null) {
+        const depId = depotStopId;
+        const depMinutes = arrMin - 5;
+        series.push({
+          id: `depot-return-pending`,
+          label: 'Depot leg (waiting for stops)',
+          colorKey: 'depot',
+          kind: 'depot',
+          points: [
+            { stopId: depId, minutes: depMinutes },
+            { stopId: depotStopId, minutes: arrMin },
+          ],
+        });
+      }
+    }
+    return series;
+  }, [selectedIds, stopsByTrip, allTripsMap, leaveDepotInfo, returnDepotInfo]);
+
+  // When leaveDepot is set and first selected trip lacks stops, fetch them immediately
+  useEffect(() => {
+    const firstSel = selectedIds[0];
+    if (leaveDepotInfo && firstSel && !stopsByTrip[firstSel]) {
+      void ensureStopsForTrip(firstSel);
+    }
+    const lastSel = selectedIds[selectedIds.length - 1];
+    if (returnDepotInfo && lastSel && !stopsByTrip[lastSel]) {
+      void ensureStopsForTrip(lastSel);
+    }
+  }, [leaveDepotInfo, returnDepotInfo, selectedIds, stopsByTrip]);
+
+  const stopOrder = useMemo(() => {
+    const firstSel = selectedIds[0];
+    const firstStops = firstSel ? stopsByTrip[firstSel] : undefined;
+    const depotLeaveSid = leaveDepotInfo ? `depot:${leaveDepotInfo.depotId}` : undefined;
+    let order: string[] = [];
+
+    // If we already issued leave depot but stops not loaded yet, show depot on its own
+    if (depotLeaveSid && (!firstStops || firstStops.length === 0)) {
+      order = [depotLeaveSid];
+    }
+
+    if (firstStops && firstStops.length > 0) {
+      if (depotLeaveSid) order = [depotLeaveSid, ...firstStops.map((s) => s.id)];
+      else order = firstStops.map((s) => s.id);
+
+      for (let i = 1; i < selectedIds.length; i++) {
+        const tid = selectedIds[i];
+        const stops = stopsByTrip[tid];
+        if (!stops || stops.length === 0) continue;
+        let anchor = -1;
+        for (const s of stops) {
+          const sid = s.id;
+          if (!sid) continue;
+          const existing = order.indexOf(sid);
+          if (existing >= 0) {
+            anchor = existing;
+          } else {
+            const at = Math.min(Math.max(anchor + 1, 0), order.length);
+            order.splice(at, 0, sid);
+            anchor = at;
+          }
+        }
+      }
+    }
+
+    if (returnDepotInfo) {
+      const retSid = `depot:${returnDepotInfo.depotId}`;
+      if (!order.includes(retSid)) order.push(retSid);
+    }
+
+    if (order.length === 0) {
+      const seq = sequentialOrderFromSeries(stringlineSeries);
+      if (seq && seq.length >= 2) order = reverseY ? [...seq].reverse() : seq;
+      else order = computeDominantStopOrder(stopMeta, reverseY);
+    }
+
+    for (const s of stringlineSeries) {
+      for (const p of s.points) if (!order.includes(p.stopId)) order.push(p.stopId);
+    }
+
+    return order;
+  }, [selectedIds, stopsByTrip, leaveDepotInfo, returnDepotInfo, reverseY, stringlineSeries, stopMeta]);
 
   // HH:MM -> seconds (accept >24h)
   const parseHHMMToSec = useCallback((t: string): number => {
@@ -478,6 +665,8 @@ export default function ShiftsPage() {
         return;
       }
       setSelectedIds((prev) => (prev.includes(trip.id) ? prev : [...prev, trip.id]));
+      // Ensure chart data is available for newly selected trip
+      void ensureStopsForTrip(trip.id);
     };
   }
 
@@ -1064,6 +1253,25 @@ export default function ShiftsPage() {
           sort={sort}
           onSort={setSort}
           onRefresh={() => setRefreshNonce((n) => n + 1)}
+          onView={(s) => {
+            setViewingShift(s);
+            // Warm cache for chart
+            (async () => {
+              try {
+                const ids = (s.structure || []).map((x) => x.trip_id);
+                for (const id of ids) {
+                  if (!viewStopsByTrip[id]) {
+                    const url = joinUrl(effectiveBaseUrl, `/api/v1/gtfs/gtfs-stops/by-trip/${encodeURIComponent(id)}`);
+                    const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined });
+                    if (res.ok) {
+                      const data = (await res.json()) as TripStop[];
+                      setViewStopsByTrip((prev) => ({ ...prev, [id]: data }));
+                    }
+                  }
+                }
+              } catch {}
+            })();
+          }}
           onDelete={async (s) => {
             if (!effectiveBaseUrl || !token) return;
             if (!window.confirm(t('shifts.confirmDelete', { name: s.name }) as any)) return;
@@ -1376,12 +1584,33 @@ export default function ShiftsPage() {
               </Panel>
             </section>
 
-            {/* Right: Selected shift */}
+            {/* Right: Selected shift + Stringline */}
             <section className="lg:col-span-3">
               <Panel>
                 <div className="flex items-baseline justify-between mb-3">
                   <h2 className="text-lg font-medium">{t("selected.title")}</h2>
                 <span className="text-sm text-gray-600">{t("selected.subtitle")}</span>
+              </div>
+              {/* Stringline controls and chart */}
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="text-sm text-gray-700">
+                  {t('selected.stringlineTitle', 'Stringline (time vs stops)')}
+                </div>
+                <label className="text-sm text-gray-700 flex items-center gap-2">
+                  <input type="checkbox" checked={reverseY} onChange={(e) => setReverseY(e.target.checked)} />
+                  {t('selected.reverseY', 'Reverse stops order')}
+                </label>
+              </div>
+              <div className="mb-6">
+                <StringlineChart stopOrder={stopOrder} stopMeta={stopMeta} series={stringlineSeries} height={360} />
+                <div className="mt-1 text-xs text-gray-600">
+                  <span className="inline-block mr-3">
+                    <span className="inline-block w-3 h-0 align-middle border-t-2 border-gray-400 mr-1" /> Depot
+                  </span>
+                  <span className="inline-block">
+                    <span className="inline-block w-3 h-0 align-middle border-t-2 border-dashed border-purple-500 mr-1" /> Transfer
+                  </span>
+                </div>
               </div>
               {/* Sticky Save strip */}
               {(
@@ -1654,6 +1883,50 @@ export default function ShiftsPage() {
                 {t("shifts.startButton", 'Start')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Saved Shift modal with chart */}
+      {viewingShift && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-5xl p-4 border">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-medium">{t('saved.view', 'View')} — {viewingShift.name}</h3>
+              <button className="text-sm px-2 py-1 rounded bg-gray-100 hover:bg-gray-200" onClick={() => setViewingShift(null)}>{t('common.close')}</button>
+            </div>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm text-gray-700">{t('selected.stringlineTitle', 'Stringline (time vs stops)')}</div>
+              <label className="text-sm text-gray-700 flex items-center gap-2">
+                <input type="checkbox" checked={viewReverseY} onChange={(e) => setViewReverseY(e.target.checked)} />
+                {t('selected.reverseY', 'Reverse stops order')}
+              </label>
+            </div>
+            {(() => {
+              const meta: Record<string, StopMeta> = {};
+              const ids = (viewingShift.structure || []).map((x) => x.trip_id);
+              for (const id of ids) {
+                const stops = viewStopsByTrip[id];
+                if (!stops) continue;
+                for (const s of stops) {
+                  const sid = s.id;
+                  if (!sid || meta[sid]) continue;
+                  meta[sid] = { id: sid, name: s.stop_name, lat: s.stop_lat ?? undefined, lon: s.stop_lon ?? undefined };
+                }
+              }
+              const order = computeDominantStopOrder(meta, viewReverseY);
+              const series: Series[] = [];
+              for (const id of ids) {
+                const stops = viewStopsByTrip[id];
+                if (!stops) continue;
+                const label = String(id).slice(0, 8);
+                const s = buildSeriesFromStops(id, label, stops as any);
+                if (s) series.push(s);
+              }
+              return (
+                <StringlineChart stopOrder={order} stopMeta={meta} series={series} width={960} height={480} />
+              );
+            })()}
           </div>
         </div>
       )}
