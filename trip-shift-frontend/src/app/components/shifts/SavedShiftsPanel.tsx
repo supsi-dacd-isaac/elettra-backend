@@ -114,7 +114,8 @@ export default function SavedShiftsPanel(props: SavedShiftsPanelProps) {
                 <div className="flex gap-2">
                   {onView && (
                     <button
-                      className="px-2 py-1 rounded bg-blue-600 text-white text-sm hover:bg-blue-700 relative group"
+                      className="px-2 py-1 rounded text-white text-sm hover:opacity-90 relative group"
+                      style={{backgroundColor: '#002AA7'}}
                       onClick={() => onView(s)}
                       title={t('saved.view', 'View') as string}
                     >
