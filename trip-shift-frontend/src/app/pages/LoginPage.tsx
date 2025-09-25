@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { useTranslation } from 'react-i18next';
 import Panel from '../components/ui/Panel.tsx';
@@ -27,6 +27,7 @@ export default function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { setToken } = useAuth();
+  const [searchParams] = useSearchParams();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -97,6 +98,12 @@ export default function LoginPage() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    // Open register modal if ?register=1
+    const wantRegister = searchParams.get('register') === '1';
+    if (wantRegister) setShowRegister(true);
+  }, [searchParams]);
 
   useEffect(() => {
     let cancelled = false;

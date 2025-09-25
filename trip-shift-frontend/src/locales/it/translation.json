@@ -361,5 +361,42 @@
     "copyright": "© 2025 Elettra Trip Shift Planner",
     "institution": "SUPSI - Scuola universitaria professionale della Svizzera italiana",
     "privacyPolicy": "Informativa sulla privacy"
+  },
+  "home": {
+    "title": "Benvenuto in Trip Shift Planner",
+    "intro": "Pianifica i turni selezionando in sequenza le corse GTFS. Gli orari supportano valori superiori a 24 ore.",
+    "getStartedTitle": "Per iniziare",
+    "steps": {
+      "login": "Accedi dalla",
+      "createShift": "Apri Turni e clicca 'Crea turno'.",
+      "pickDayRoute": "Scegli giorno e linea per caricare le corse.",
+      "leaveDepot": "Imposta 'Partenza dal deposito' e l'orario.",
+      "selectTrips": "Seleziona le corse in ordine; aggiungi tempi di trasferimento se necessario.",
+      "returnDepot": "Imposta 'Rientro in deposito' dopo l'ultima corsa.",
+      "saveShift": "Salva il turno."
+    },
+    "manageDataTitle": "Gestione dati",
+    "manageDataIntro": "Usa queste sezioni per gestire i dati operativi:",
+    "desc": {
+      "depots": "Crea e modifica i depositi.",
+      "busModels": "Gestisci i modelli bus e le specifiche.",
+      "buses": "Crea autobus e assegna i modelli."
+    },
+    "tipsTitle": "Suggerimenti",
+    "tips": {
+      "language": "Cambia lingua dall'intestazione.",
+      "gtfsTime": "Orari GTFS come 25:10 sono mostrati con prefisso D+."
+    },
+    "links": {
+      "login": "pagina di accesso",
+      "user": "pagina Utente",
+      "shifts": "Turni",
+      "depots": "Depositi",
+      "busModels": "Modelli bus",
+      "buses": "Autobus"
+    },
+    "linkAriaLabel": "Vai alla home",
+    "welcomeGuestTitle": "Benvenuto",
+    "welcomeGuestMsg": "Accedi o registrati per iniziare a pianificare i turni."
   }
 }

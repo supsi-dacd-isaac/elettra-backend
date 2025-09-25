@@ -121,12 +121,15 @@ function AuthStatus() {
 
 export default function AppLayout() {
   const { t } = useTranslation();
+  const { token } = useAuth();
   return (
     <div className="min-h-screen w-full bg-gray-50 text-gray-900 flex flex-col">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="mx-auto max-w-7xl px-4 py-3 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div className="flex items-center gap-3">
-            <img src="/elettra_icon.svg" alt="Elettra" className="w-12 h-12" />
+            <NavLink to="/home" aria-label={t('home.linkAriaLabel', 'Go to home')}>
+              <img src="/elettra_icon.svg" alt="Elettra" className="w-12 h-12" />
+            </NavLink>
             <div>
               <h1 className="text-2xl font-semibold">{t('header.title')}</h1>
               <p className="text-sm text-gray-600">{t('header.subtitle')}</p>
@@ -139,11 +142,31 @@ export default function AppLayout() {
         </div>
         <nav className="mx-auto max-w-7xl px-4 pb-2 flex gap-3 text-sm">
           {/* Planner removed */}
-          <NavLink to="/shifts" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.shifts', 'Shifts')}</NavLink>
-          <NavLink to="/depots" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.depots', 'Depots')}</NavLink>
-          <NavLink to="/fleet/models" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.busModels', 'Bus models')}</NavLink>
-          <NavLink to="/fleet/buses" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.buses', 'Buses')}</NavLink>
-          <NavLink to="/user" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.user', 'User')}</NavLink>
+          {token ? (
+            <NavLink to="/shifts" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.shifts', 'Shifts')}</NavLink>
+          ) : (
+            <span aria-disabled="true" className="text-gray-400 cursor-not-allowed">{t('nav.shifts', 'Shifts')}</span>
+          )}
+          {token ? (
+            <NavLink to="/depots" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.depots', 'Depots')}</NavLink>
+          ) : (
+            <span aria-disabled="true" className="text-gray-400 cursor-not-allowed">{t('nav.depots', 'Depots')}</span>
+          )}
+          {token ? (
+            <NavLink to="/fleet/models" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.busModels', 'Bus models')}</NavLink>
+          ) : (
+            <span aria-disabled="true" className="text-gray-400 cursor-not-allowed">{t('nav.busModels', 'Bus models')}</span>
+          )}
+          {token ? (
+            <NavLink to="/fleet/buses" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.buses', 'Buses')}</NavLink>
+          ) : (
+            <span aria-disabled="true" className="text-gray-400 cursor-not-allowed">{t('nav.buses', 'Buses')}</span>
+          )}
+          {token ? (
+            <NavLink to="/user" className={(opts: { isActive: boolean }) => (opts.isActive ? 'font-semibold' : '')}>{t('nav.user', 'User')}</NavLink>
+          ) : (
+            <span aria-disabled="true" className="text-gray-400 cursor-not-allowed">{t('nav.user', 'User')}</span>
+          )}
         </nav>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-4 flex-1">

@@ -361,5 +361,42 @@
     "copyright": "© 2025 Elettra Trip Shift Planner",
     "institution": "SUPSI - Scuola universitaria professionale della Svizzera italiana",
     "privacyPolicy": "Datenschutzerklärung"
+  },
+  "home": {
+    "title": "Willkommen beim Trip Shift Planner",
+    "intro": "Planen Sie Schichten, indem Sie GTFS-Fahrten der Reihe nach auswählen. Zeiten unterstützen Werte über 24 Stunden.",
+    "getStartedTitle": "Erste Schritte",
+    "steps": {
+      "login": "Melden Sie sich an auf der",
+      "createShift": "Öffnen Sie Schichten und klicken Sie auf 'Schicht erstellen'.",
+      "pickDayRoute": "Wählen Sie Tag und Linie, um Fahrten zu laden.",
+      "leaveDepot": "Setzen Sie 'Ausfahrt aus dem Depot' und die Zeit.",
+      "selectTrips": "Wählen Sie Fahrten der Reihe nach; fügen Sie bei Bedarf Transferzeiten hinzu.",
+      "returnDepot": "Setzen Sie 'Rückfahrt zum Depot' nach der letzten Fahrt.",
+      "saveShift": "Speichern Sie die Schicht."
+    },
+    "manageDataTitle": "Daten verwalten",
+    "manageDataIntro": "Nutzen Sie diese Bereiche zur Verwaltung betrieblicher Daten:",
+    "desc": {
+      "depots": "Depots erstellen und bearbeiten.",
+      "busModels": "Busmodelle und Spezifikationen verwalten.",
+      "buses": "Busse erstellen und Modelle zuweisen."
+    },
+    "tipsTitle": "Tipps",
+    "tips": {
+      "language": "Sprache in der Kopfzeile umschalten.",
+      "gtfsTime": "GTFS-Zeiten wie 25:10 werden mit D+-Präfix angezeigt."
+    },
+    "links": {
+      "login": "Anmeldeseite",
+      "user": "Benutzerseite",
+      "shifts": "Schichten",
+      "depots": "Depots",
+      "busModels": "Busmodelle",
+      "buses": "Busse"
+    },
+    "linkAriaLabel": "Zur Startseite",
+    "welcomeGuestTitle": "Willkommen",
+    "welcomeGuestMsg": "Bitte melden Sie sich an oder registrieren Sie sich, um zu starten."
   }
 }

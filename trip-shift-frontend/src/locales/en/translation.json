@@ -361,5 +361,42 @@
     "copyright": "© 2025 Elettra Trip Shift Planner",
     "institution": "SUPSI - Scuola universitaria professionale della Svizzera italiana",
     "privacyPolicy": "Privacy Policy"
+  },
+  "home": {
+    "title": "Welcome to Trip Shift Planner",
+    "intro": "Plan bus shifts by selecting GTFS trips in sequence. Times support GTFS hours beyond 24.",
+    "getStartedTitle": "Get started",
+    "steps": {
+      "login": "Login on the",
+      "createShift": "Open Shifts and click 'Create shift'.",
+      "pickDayRoute": "Choose day and route to load trips.",
+      "leaveDepot": "Set 'Leave depot' and time.",
+      "selectTrips": "Select trips in order; add transfer times if needed.",
+      "returnDepot": "Set 'Return to depot' after the last trip.",
+      "saveShift": "Save your shift."
+    },
+    "manageDataTitle": "Manage data",
+    "manageDataIntro": "Use these sections to manage operational data:",
+    "desc": {
+      "depots": "Create and edit depots.",
+      "busModels": "Manage bus models and specs.",
+      "buses": "Create buses and assign models."
+    },
+    "tipsTitle": "Tips",
+    "tips": {
+      "language": "Switch language from the header.",
+      "gtfsTime": "GTFS times like 25:10 are shown with a D+ prefix."
+    },
+    "links": {
+      "login": "Login page",
+      "user": "User page",
+      "shifts": "Shifts",
+      "depots": "Depots",
+      "busModels": "Bus models",
+      "buses": "Buses"
+    },
+    "linkAriaLabel": "Go to home",
+    "welcomeGuestTitle": "Welcome",
+    "welcomeGuestMsg": "Please login or register to start planning shifts."
   }
 }

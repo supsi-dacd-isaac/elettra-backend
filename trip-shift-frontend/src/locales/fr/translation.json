@@ -361,5 +361,42 @@
     "copyright": "© 2025 Elettra Trip Shift Planner",
     "institution": "SUPSI - Scuola universitaria professionale della Svizzera italiana",
     "privacyPolicy": "Politique de confidentialité"
+  },
+  "home": {
+    "title": "Bienvenue dans Trip Shift Planner",
+    "intro": "Planifiez des services en sélectionnant des courses GTFS à la suite. Les horaires prennent en charge des heures supérieures à 24.",
+    "getStartedTitle": "Commencer",
+    "steps": {
+      "login": "Connectez-vous depuis la",
+      "createShift": "Ouvrez Services et cliquez sur 'Créer un service'.",
+      "pickDayRoute": "Choisissez le jour et la ligne pour charger les courses.",
+      "leaveDepot": "Définissez 'Sortie du dépôt' et l'heure.",
+      "selectTrips": "Sélectionnez les courses dans l'ordre ; ajoutez des temps de transfert si nécessaire.",
+      "returnDepot": "Définissez 'Retour au dépôt' après la dernière course.",
+      "saveShift": "Enregistrez le service."
+    },
+    "manageDataTitle": "Gérer les données",
+    "manageDataIntro": "Utilisez ces sections pour gérer les données opérationnelles :",
+    "desc": {
+      "depots": "Créer et modifier des dépôts.",
+      "busModels": "Gérer les modèles de bus et leurs spécifications.",
+      "buses": "Créer des bus et associer des modèles."
+    },
+    "tipsTitle": "Astuces",
+    "tips": {
+      "language": "Changez de langue depuis l'en-tête.",
+      "gtfsTime": "Les heures GTFS comme 25:10 s'affichent avec un préfixe D+."
+    },
+    "links": {
+      "login": "page de connexion",
+      "user": "page Utilisateur",
+      "shifts": "Services",
+      "depots": "Dépôts",
+      "busModels": "Modèles de bus",
+      "buses": "Bus"
+    },
+    "linkAriaLabel": "Aller à l'accueil",
+    "welcomeGuestTitle": "Bienvenue",
+    "welcomeGuestMsg": "Connectez-vous ou inscrivez-vous pour commencer à planifier."
   }
 }
