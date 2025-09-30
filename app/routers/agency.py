@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from typing import List
 from uuid import UUID
 
@@ -59,9 +59,22 @@ async def update_user(user_id: UUID, user_update: UsersUpdate, db: AsyncSession 
 
 # GTFS Agencies endpoints (authenticated users only)
 @router.get("/agencies/", response_model=List[GtfsAgenciesRead])
-async def read_agencies(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session)):
+async def read_agencies(skip: int = 0, limit: int = 100, search: str = "", db: AsyncSession = Depends(get_async_session)):
     """List all agencies - public endpoint for registration"""
-    result = await db.execute(select(GtfsAgencies).offset(skip).limit(limit))
+    query = select(GtfsAgencies).order_by(GtfsAgencies.agency_name)
+    
+    # Add search filter if provided
+    if search:
+        search_term = f"%{search.lower()}%"
+        query = query.where(
+            or_(
+                GtfsAgencies.agency_name.ilike(search_term),
+                GtfsAgencies.gtfs_agency_id.ilike(search_term)
+            )
+        )
+    
+    query = query.offset(skip).limit(limit)
+    result = await db.execute(query)
     agencies = result.scalars().all()
     return agencies
 

@@ -50,6 +50,8 @@ export default function LoginPage() {
   const [agencies, setAgencies] = useState<any[]>([]);
   const [agenciesLoading, setAgenciesLoading] = useState(false);
   const [agenciesError, setAgenciesError] = useState('');
+  const [agencySearchTerm, setAgencySearchTerm] = useState('');
+  const [showAgencyDropdown, setShowAgencyDropdown] = useState(false);
 
   function joinUrl(base: string, path: string): string {
     const cleanBase = (base || '').replace(/\/+$/, '');
@@ -131,6 +133,45 @@ export default function LoginPage() {
     return () => { cancelled = true; };
   }, [showRegister]);
 
+  // Load agencies with search term
+  useEffect(() => {
+    let cancelled = false;
+    let timeoutId: number;
+    
+    async function searchAgencies() {
+      if (!showRegister) return;
+      
+      try {
+        setAgenciesLoading(true);
+        setAgenciesError('');
+        const base = getEffectiveBaseUrl();
+        const searchParam = agencySearchTerm ? `&search=${encodeURIComponent(agencySearchTerm)}` : '';
+        const url = joinUrl(base, `/api/v1/agency/agencies/?limit=1000${searchParam}`);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`${res.status}`);
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data)) setAgencies(data);
+      } catch (e) {
+        if (!cancelled) {
+          setAgencies([]);
+          setAgenciesError('load');
+        }
+      } finally {
+        if (!cancelled) setAgenciesLoading(false);
+      }
+    }
+
+    // Debounce search requests
+    timeoutId = window.setTimeout(() => {
+      void searchAgencies();
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [agencySearchTerm, showRegister]);
+
   useEffect(() => {
     if (!regPassword) {
       setRegPasswordError('');
@@ -139,6 +180,7 @@ export default function LoginPage() {
     const validationError = validatePasswordStrength(regPassword);
     setRegPasswordError(validationError ?? '');
   }, [regPassword]);
+
 
   function hasSequentialCharacters(password: string, length: number = 3): boolean {
     const lowered = password.toLowerCase();
@@ -197,6 +239,12 @@ export default function LoginPage() {
     } finally {
       setEmailChecking(false);
     }
+  }
+
+  function selectAgency(agency: any) {
+    setRegAgencyId(agency.id);
+    setAgencySearchTerm(agency.agency_name || agency.gtfs_agency_id || agency.id);
+    setShowAgencyDropdown(false);
   }
 
   async function handleRegister() {
@@ -329,14 +377,56 @@ export default function LoginPage() {
                   disabled={regLoading}
                 />
               </div>
-              <div>
+              <div className="relative">
                 <label className="block text-sm mb-1">{t('auth.selectAgencyLabel')}</label>
-                <select className="w-full px-3 py-2 border rounded-lg" value={regAgencyId} onChange={(e) => setRegAgencyId(e.target.value)} disabled={agenciesLoading || agencies.length === 0}>
-                  <option value="">{agenciesLoading ? (t('common.loading') as string) : (t('auth.selectAgencyPlaceholder') as string)}</option>
-                  {agencies.map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.agency_name || a.gtfs_agency_id || a.id}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border rounded-lg pr-8"
+                    placeholder={agenciesLoading ? (t('common.loading') as string) : (t('auth.selectAgencyPlaceholder') as string)}
+                    value={agencySearchTerm}
+                    onChange={(e) => {
+                      setAgencySearchTerm(e.target.value);
+                      setShowAgencyDropdown(true);
+                    }}
+                    onFocus={() => setShowAgencyDropdown(true)}
+                    disabled={agenciesLoading || agencies.length === 0}
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    onClick={() => setShowAgencyDropdown(!showAgencyDropdown)}
+                    disabled={agenciesLoading || agencies.length === 0}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </div>
+                
+                {showAgencyDropdown && agencies.length > 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    {agencies.map((agency) => (
+                      <button
+                        key={agency.id}
+                        type="button"
+                        className="w-full px-3 py-2 text-left hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
+                        onClick={() => selectAgency(agency)}
+                      >
+                        {agency.agency_name || agency.gtfs_agency_id || agency.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                {showAgencyDropdown && agencies.length === 0 && agencySearchTerm && !agenciesLoading && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
+                    <div className="px-3 py-2 text-gray-500 text-sm">
+                      No agencies found matching "{agencySearchTerm}"
+                    </div>
+                  </div>
+                )}
+                
                 {agenciesError && <div className="mt-1 text-xs text-neutral-500">{t('auth.couldNotLoadAgencies')}</div>}
               </div>
               <div className="flex items-center gap-2 pt-1">
