@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Kxz9lPbW9grmO7MaVusV0UxFiLqidxVrulAwkpOe7E43FXyh1uyXuXCAvdKepPs
+\restrict bSUlLl6GHjK5gJeZ0c9qtfbC1IIhmMf26YTxN0VOt1wbVzVyJgGPF5fYGWbPrxx
 
 -- Dumped from database version 16.10
 -- Dumped by pg_dump version 16.10 (Ubuntu 16.10-0ubuntu0.24.04.1)
@@ -184,7 +184,9 @@ CREATE TABLE public.gtfs_routes (
     route_text_color text,
     route_sort_order integer,
     continuous_pickup integer,
-    continuous_drop_off integer
+    continuous_drop_off integer,
+    gtfs_file_date date DEFAULT '2025-04-14'::date NOT NULL,
+    gtfs_year integer DEFAULT 2025 NOT NULL
 );
 
 
@@ -377,19 +379,11 @@ CREATE TABLE public.weather_measurements (
 ALTER TABLE public.weather_measurements OWNER TO admin;
 
 --
--- Name: buses buses_company_id_name_key; Type: CONSTRAINT; Schema: public; Owner: admin
+-- Name: buses bus_name_user_id_unique; Type: CONSTRAINT; Schema: public; Owner: admin
 --
 
 ALTER TABLE ONLY public.buses
-    ADD CONSTRAINT buses_company_id_name_key UNIQUE (user_id, name);
-
-
---
--- Name: buses_models buses_models_company_id_name_key; Type: CONSTRAINT; Schema: public; Owner: admin
---
-
-ALTER TABLE ONLY public.buses_models
-    ADD CONSTRAINT buses_models_company_id_name_key UNIQUE (name);
+    ADD CONSTRAINT bus_name_user_id_unique UNIQUE (user_id, name);
 
 
 --
@@ -510,6 +504,14 @@ ALTER TABLE ONLY public.simulation_runs
 
 ALTER TABLE ONLY public.weather_measurements
     ADD CONSTRAINT uq_weather_time_lat_lon UNIQUE (time_utc, latitude, longitude);
+
+
+--
+-- Name: buses_models user_buses_models_name_unique; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.buses_models
+    ADD CONSTRAINT user_buses_models_name_unique UNIQUE (name, user_id);
 
 
 --
@@ -783,5 +785,5 @@ ALTER TABLE ONLY public.variants
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Kxz9lPbW9grmO7MaVusV0UxFiLqidxVrulAwkpOe7E43FXyh1uyXuXCAvdKepPs
+\unrestrict bSUlLl6GHjK5gJeZ0c9qtfbC1IIhmMf26YTxN0VOt1wbVzVyJgGPF5fYGWbPrxx
 
