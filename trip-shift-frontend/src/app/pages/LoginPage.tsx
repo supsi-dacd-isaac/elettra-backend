@@ -52,6 +52,8 @@ export default function LoginPage() {
   const [agenciesError, setAgenciesError] = useState('');
   const [agencySearchTerm, setAgencySearchTerm] = useState('');
   const [showAgencyDropdown, setShowAgencyDropdown] = useState(false);
+  const [agencyHighlightIndex, setAgencyHighlightIndex] = useState<number>(-1);
+  const agencyContainerRef = useRef<HTMLDivElement | null>(null);
 
   function joinUrl(base: string, path: string): string {
     const cleanBase = (base || '').replace(/\/+$/, '');
@@ -172,6 +174,31 @@ export default function LoginPage() {
     };
   }, [agencySearchTerm, showRegister]);
 
+  // Reset agency highlight when list changes or opens
+  useEffect(() => {
+    setAgencyHighlightIndex(agencies.length > 0 && showAgencyDropdown ? 0 : -1);
+  }, [agencies, showAgencyDropdown]);
+
+  // Close agency dropdown on outside click or Escape
+  useEffect(() => {
+    function handleDocMouseDown(e: MouseEvent) {
+      if (agencyContainerRef.current && !agencyContainerRef.current.contains(e.target as Node)) {
+        setShowAgencyDropdown(false);
+      }
+    }
+    function handleDocKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setShowAgencyDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleDocMouseDown);
+    document.addEventListener('keydown', handleDocKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleDocMouseDown);
+      document.removeEventListener('keydown', handleDocKeyDown);
+    };
+  }, []);
+
   useEffect(() => {
     if (!regPassword) {
       setRegPasswordError('');
@@ -202,7 +229,6 @@ export default function LoginPage() {
     if (!/[a-z]/.test(password)) errors.push(t('auth.passwordRequirements.lowercase', 'Password must contain at least 1 lowercase letter') as string);
     if (!/[A-Z]/.test(password)) errors.push(t('auth.passwordRequirements.uppercase', 'Password must contain at least 1 uppercase letter') as string);
     if (!/[0-9]/.test(password)) errors.push(t('auth.passwordRequirements.digits', 'Password must contain at least 1 digit') as string);
-    if (!/[^A-Za-z0-9]/.test(password)) errors.push(t('auth.passwordRequirements.special', 'Password must contain at least 1 special character') as string);
     if (/(.)\1\1/.test(password)) errors.push(t('auth.passwordRequirements.repeated', 'Password cannot contain the same character three or more times in a row') as string);
     if (hasSequentialCharacters(password)) errors.push(t('auth.passwordRequirements.sequential', "Password cannot contain sequential characters like 'abc' or '123'") as string);
     if (COMMON_PASSWORDS.has(password.toLowerCase())) errors.push(t('auth.passwordRequirements.common', 'Password is too common') as string);
@@ -308,20 +334,38 @@ export default function LoginPage() {
         <h2 className="text-lg font-medium mb-3">{t('auth.title')}</h2>
         {notice && <div className="mb-2 text-sm text-green-700">{notice}</div>}
         {error && <div className="mb-2 text-sm text-red-600">{error}</div>}
-        <div className="space-y-3">
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); loginWithCredentials(); }}>
           <div className="grid grid-cols-2 gap-2">
-            <input className="px-3 py-2 border rounded-lg" placeholder={t('auth.emailPlaceholder') as string} value={email} onChange={(e) => setEmail(e.target.value)} />
-            <input className="px-3 py-2 border rounded-lg" type="password" placeholder={t('auth.passwordPlaceholder') as string} value={password} onChange={(e) => setPassword(e.target.value)} />
+            <input 
+              className="px-3 py-2 border rounded-lg" 
+              type="email"
+              name="email"
+              id="login-email"
+              autoComplete="email"
+              placeholder={t('auth.emailPlaceholder') as string} 
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
+            />
+            <input 
+              className="px-3 py-2 border rounded-lg" 
+              type="password" 
+              name="password"
+              id="login-password"
+              autoComplete="current-password"
+              placeholder={t('auth.passwordPlaceholder') as string} 
+              value={password} 
+              onChange={(e) => setPassword(e.target.value)} 
+            />
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={loginWithCredentials} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{ backgroundColor: '#002AA7' }} disabled={loading}>
+            <button type="submit" className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{ backgroundColor: '#002AA7' }} disabled={loading}>
               {t(loading ? 'auth.loggingIn' : 'auth.login')}
             </button>
-            <button onClick={() => { setShowRegister(true); setRegError(''); }} className="px-3 py-2 rounded-lg border text-sm hover:bg-neutral-50" disabled={loading}>
+            <button type="button" onClick={() => { setShowRegister(true); setRegError(''); }} className="px-3 py-2 rounded-lg border text-sm hover:bg-neutral-50" disabled={loading}>
               {t('auth.register')}
             </button>
           </div>
-        </div>
+        </form>
       </Panel>
 
       {showRegister && (
@@ -332,11 +376,28 @@ export default function LoginPage() {
               <button onClick={() => setShowRegister(false)} className="text-sm text-neutral-600 hover:text-neutral-800">{t('common.close')}</button>
             </div>
             {regError && <div className="mb-2 text-sm text-red-600">{regError}</div>}
-            <div className="space-y-2">
-              <input className="w-full px-3 py-2 border rounded-lg" placeholder={t('auth.fullNamePlaceholder') as string} value={regFullName} onChange={(e) => setRegFullName(e.target.value)} />
+            <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); handleRegister(); }} data-form-type="registration">
+              <label htmlFor="reg-full-name" className="sr-only">{t('auth.fullNamePlaceholder')}</label>
+              <input 
+                className="w-full px-3 py-2 border rounded-lg" 
+                type="text"
+                name="fullName"
+                id="reg-full-name"
+                autoComplete="name"
+                required
+                placeholder={t('auth.fullNamePlaceholder') as string} 
+                value={regFullName} 
+                onChange={(e) => setRegFullName(e.target.value)} 
+              />
               <div>
+                <label htmlFor="reg-email" className="sr-only">{t('auth.emailPlaceholder')}</label>
                 <input
                   className={`w-full px-3 py-2 border rounded-lg ${regEmailError ? 'border-red-500' : ''}`}
+                  type="email"
+                  name="email"
+                  id="reg-email"
+                  autoComplete="username"
+                  required
                   placeholder={t('auth.emailPlaceholder') as string}
                   value={regEmail}
                   onChange={(e) => {
@@ -353,31 +414,7 @@ export default function LoginPage() {
                 {regEmailError && <div className="mt-1 text-xs text-red-600">{regEmailError}</div>}
                 {emailChecking && <div className="mt-1 text-xs text-gray-500">{t('common.loading')}</div>}
               </div>
-              <div>
-                <input
-                  className={`w-full px-3 py-2 border rounded-lg ${regPasswordError ? 'border-red-500' : ''}`}
-                  type="password"
-                  placeholder={t('auth.passwordPlaceholder') as string}
-                  value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  disabled={regLoading}
-                />
-                <div className="mt-1 text-xs text-neutral-600">
-                  {t('auth.passwordGuidelines')}
-                </div>
-                {regPasswordError && <div className="mt-1 text-xs text-red-600">{regPasswordError}</div>}
-              </div>
-              <div>
-                <input
-                  className={`w-full px-3 py-2 border rounded-lg ${regPassword && regPassword !== regPasswordConfirm ? 'border-red-500' : ''}`}
-                  type="password"
-                  placeholder={t('auth.passwordConfirmPlaceholder') as string}
-                  value={regPasswordConfirm}
-                  onChange={(e) => setRegPasswordConfirm(e.target.value)}
-                  disabled={regLoading}
-                />
-              </div>
-              <div className="relative">
+              <div className="relative" role="combobox" aria-haspopup="listbox" aria-expanded={showAgencyDropdown} aria-owns="agency-listbox" aria-controls="agency-listbox" ref={agencyContainerRef as any}>
                 <label className="block text-sm mb-1">{t('auth.selectAgencyLabel')}</label>
                 <div className="relative">
                   <input
@@ -385,12 +422,38 @@ export default function LoginPage() {
                     className="w-full px-3 py-2 border rounded-lg pr-8"
                     placeholder={agenciesLoading ? (t('common.loading') as string) : (t('auth.selectAgencyPlaceholder') as string)}
                     value={agencySearchTerm}
-                    onChange={(e) => {
+                  onChange={(e) => {
                       setAgencySearchTerm(e.target.value);
-                      setShowAgencyDropdown(true);
+                      setShowAgencyDropdown(true); // open when typing for live filtering
                     }}
+                    onClick={() => setShowAgencyDropdown(true)}
                     onFocus={() => setShowAgencyDropdown(true)}
-                    disabled={agenciesLoading || agencies.length === 0}
+                    onKeyDown={(e) => {
+                      if (!showAgencyDropdown && (e.key.length === 1 || e.key === 'ArrowDown')) {
+                        setShowAgencyDropdown(true);
+                      }
+                      if (!showAgencyDropdown) return;
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setAgencyHighlightIndex((prev) => Math.min((prev < 0 ? 0 : prev) + 1, agencies.length - 1));
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setAgencyHighlightIndex((prev) => Math.max((prev < 0 ? 0 : prev) - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const idx = agencyHighlightIndex < 0 ? 0 : agencyHighlightIndex;
+                        const ag = agencies[idx];
+                        if (ag) selectAgency(ag);
+                      } else if (e.key === 'Escape') {
+                        setShowAgencyDropdown(false);
+                      }
+                    }}
+                    aria-autocomplete="list"
+                    aria-controls="agency-listbox"
+                    aria-expanded={showAgencyDropdown}
+                    role="textbox"
+                    data-lpignore="true"
+                    autoComplete="off"
                   />
                   <button
                     type="button"
@@ -405,18 +468,21 @@ export default function LoginPage() {
                 </div>
                 
                 {showAgencyDropdown && agencies.length > 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                    {agencies.map((agency) => (
-                      <button
+                  <ul id="agency-listbox" role="listbox" className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    {agencies.map((agency, idx) => (
+                      <li
+                        id={`agency-option-${agency.id}`}
+                        role="option"
+                        aria-selected={agencyHighlightIndex === idx}
                         key={agency.id}
-                        type="button"
-                        className="w-full px-3 py-2 text-left hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
-                        onClick={() => selectAgency(agency)}
+                        className={`px-3 py-2 cursor-pointer ${agencyHighlightIndex === idx ? 'bg-gray-100' : 'hover:bg-gray-100'}`}
+                        onMouseEnter={() => setAgencyHighlightIndex(idx)}
+                        onMouseDown={(e) => { e.preventDefault(); selectAgency(agency); }}
                       >
                         {agency.agency_name || agency.gtfs_agency_id || agency.id}
-                      </button>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 )}
                 
                 {showAgencyDropdown && agencies.length === 0 && agencySearchTerm && !agenciesLoading && (
@@ -429,13 +495,45 @@ export default function LoginPage() {
                 
                 {agenciesError && <div className="mt-1 text-xs text-neutral-500">{t('auth.couldNotLoadAgencies')}</div>}
               </div>
+              <div>
+                <input
+                  className={`w-full px-3 py-2 border rounded-lg ${regPasswordError ? 'border-red-500' : ''}`}
+                  type="password"
+                  name="new-password"
+                  id="reg-password"
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  placeholder={t('auth.passwordPlaceholder') as string}
+                  value={regPassword}
+                  onChange={(e) => setRegPassword(e.target.value)}
+                  disabled={regLoading}
+                />
+                <div className="mt-1 text-xs text-neutral-600">
+                  {t('auth.passwordGuidelines')}
+                </div>
+                {regPasswordError && <div className="mt-1 text-xs text-red-600">{regPasswordError}</div>}
+              </div>
+              <div>
+                <input
+                  className={`w-full px-3 py-2 border rounded-lg ${regPassword && regPassword !== regPasswordConfirm ? 'border-red-500' : ''}`}
+                  type="password"
+                  name="password-confirm"
+                  id="reg-confirm-password"
+                  autoComplete="new-password"
+                  data-lpignore="true"
+                  placeholder={t('auth.passwordConfirmPlaceholder') as string}
+                  value={regPasswordConfirm}
+                  onChange={(e) => setRegPasswordConfirm(e.target.value)}
+                  disabled={regLoading}
+                />
+              </div>
               <div className="flex items-center gap-2 pt-1">
-                <button onClick={handleRegister} className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{ backgroundColor: '#002AA7' }} disabled={regLoading || !regAgencyId}>
+                <button type="submit" className="px-3 py-2 rounded-lg text-white text-sm hover:opacity-90" style={{ backgroundColor: '#002AA7' }} disabled={regLoading || !regAgencyId}>
                   {t(regLoading ? 'auth.registering' : 'auth.register')}
                 </button>
-                <button onClick={() => setShowRegister(false)} className="px-3 py-2 rounded-lg border text-sm" disabled={regLoading}>{t('common.cancel')}</button>
+                <button type="button" onClick={() => setShowRegister(false)} className="px-3 py-2 rounded-lg border text-sm" disabled={regLoading}>{t('common.cancel')}</button>
               </div>
-            </div>
+            </form>
           </Panel>
         </div>
       )}

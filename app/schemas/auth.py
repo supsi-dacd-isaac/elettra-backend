@@ -43,7 +43,6 @@ password_policy = PasswordPolicy.from_names(
     length=12,
     uppercase=1,
     numbers=1,
-    special=1,
 )
 
 COMMON_PASSWORDS = {
