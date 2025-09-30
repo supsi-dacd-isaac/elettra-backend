@@ -1022,7 +1022,7 @@ export default function ShiftsPage() {
     }
   }
 
-  const loadDepotsForAgency = useCallback(async () => {
+  const loadDepotsForUser = useCallback(async () => {
     if (!effectiveBaseUrl || !token || !actualUserId) return;
     try {
       _setDepotsError("");
@@ -1044,7 +1044,7 @@ export default function ShiftsPage() {
   
 
   // Load buses for selected agency
-  const loadBusesForAgency = useCallback(async () => {
+  const loadBusesForUser = useCallback(async () => {
     if (!effectiveBaseUrl || !token || !actualUserId) return;
     try {
       _setBusesError("");
@@ -1075,10 +1075,7 @@ export default function ShiftsPage() {
         const meRes = await fetch(joinUrl(effectiveBaseUrl, "/auth/me"), { headers: { Authorization: `Bearer ${token}` } });
         if (meRes.ok) {
           const me = await meRes.json();
-          if (me?.company_id && !userId) {
-            setUserId(me.company_id);
-          }
-          // Set the actual user ID for shifts loading
+          // Set the actual user ID for shifts loading (AuthContext handles userId/company_id)
           if (me?.id && !actualUserId) {
             setActualUserId(me.id);
           }
@@ -1101,9 +1098,9 @@ export default function ShiftsPage() {
       setRouteDbId("");
       fetchRoutesByAgency(userId);
       // Load depots for selected user
-      void loadDepotsForAgency();
+      void loadDepotsForUser();
       // Load buses for selected user
-      void loadBusesForAgency();
+      void loadBusesForUser();
     } else {
       setRoutes([]);
       setDepots([]);
@@ -1116,14 +1113,14 @@ export default function ShiftsPage() {
     setSelectedIds([]);
     setStopsByTrip({});
     setElevationByTrip({});
-  }, [userId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
+  }, [userId, token, effectiveBaseUrl, loadDepotsForUser, loadBusesForUser]);
 
   // When the actual logged-in user id is known/changes, (re)load user-scoped resources
   useEffect(() => {
     if (!actualUserId || !token || !effectiveBaseUrl) return;
-    void loadDepotsForAgency();
-    void loadBusesForAgency();
-  }, [actualUserId, token, effectiveBaseUrl, loadDepotsForAgency, loadBusesForAgency]);
+    void loadDepotsForUser();
+    void loadBusesForUser();
+  }, [actualUserId, token, effectiveBaseUrl, loadDepotsForUser, loadBusesForUser]);
 
   
 

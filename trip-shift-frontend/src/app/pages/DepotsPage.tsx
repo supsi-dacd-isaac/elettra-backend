@@ -54,7 +54,7 @@ export default function DepotsPage() {
     return () => { cancelled = true; };
   }, [token, baseUrl]);
 
-  const loadDepotsForAgency = async () => {
+  const loadDepotsForUser = async () => {
     if (!baseUrl || !token || !userId) return;
     try {
       setDepotsError('');
@@ -72,7 +72,7 @@ export default function DepotsPage() {
     }
   };
 
-  useEffect(() => { void loadDepotsForAgency(); }, [token, baseUrl, userId]);
+  useEffect(() => { void loadDepotsForUser(); }, [token, baseUrl, userId]);
 
   return (
     <Panel>
@@ -89,7 +89,7 @@ export default function DepotsPage() {
         <CreateDepotView token={token} userId={userId} baseUrl={baseUrl} onCancel={() => setMode('list')} onCreated={(dep?: any) => {
           setNotice(dep?.name ? t('depots.createdWithName', { name: dep.name }) as string : (t('depots.created') as string));
           setTimeout(() => setNotice(''), 3000);
-          void loadDepotsForAgency();
+          void loadDepotsForUser();
           setMode('list');
         }} />
       ) : mode === 'edit' && editingDepot ? (
@@ -99,7 +99,7 @@ export default function DepotsPage() {
         }} onUpdated={(dep?: any) => {
           setNotice(dep?.name ? t('depots.updatedWithName', { name: dep.name }) as string : (t('depots.updated') as string));
           setTimeout(() => setNotice(''), 3000);
-          void loadDepotsForAgency();
+          void loadDepotsForUser();
           setMode('list');
           setEditingDepot(null);
         }} />

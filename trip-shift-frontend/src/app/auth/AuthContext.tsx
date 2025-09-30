@@ -63,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const res = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) return;
         const me = await res.json();
-        if (!cancelled && me?.id && !userId) setUserIdState(me.id);
+        if (!cancelled && me?.company_id && !userId) setUserIdState(me.company_id);
       } catch {}
     }
     void syncAgencyFromMe();
