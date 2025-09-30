@@ -166,7 +166,7 @@ class BusesModels(Base):
     __table_args__ = (
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE', name='buses_models_users_fk'),
         PrimaryKeyConstraint('id', name='buses_models_pkey'),
-        UniqueConstraint('name', name='buses_models_company_id_name_key')
+        UniqueConstraint('name', 'user_id', name='user_buses_models_name_unique')
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
@@ -259,7 +259,7 @@ class Buses(Base):
         ForeignKeyConstraint(['bus_model_id'], ['buses_models.id'], ondelete='RESTRICT', onupdate='CASCADE', name='buses_bus_model_id_fkey'),
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE', name='buses_users_fk'),
         PrimaryKeyConstraint('id', name='buses_pkey'),
-        UniqueConstraint('user_id', 'name', name='buses_company_id_name_key'),
+        UniqueConstraint('user_id', 'name', name='bus_name_user_id_unique'),
         Index('idx_buses_bus_model_id', 'bus_model_id')
     )
 

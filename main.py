@@ -6,8 +6,9 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, UTC
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import uvicorn
 import textwrap
 from app.routers import agency, auth, gtfs, simulation, user as user_router
@@ -15,6 +16,8 @@ from app.core.config import get_cached_settings
 from app.schemas.health import HealthCheckResponse, ServiceStatus
 from app.database import get_async_session
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+import re
 
 # Configure logging early
 logging.basicConfig(level=logging.INFO)
@@ -117,6 +120,83 @@ app.include_router(agency.router, prefix="/api/v1/agency", tags=["Agency"])
 app.include_router(user_router.router, prefix="/api/v1/user", tags=["User"])
 app.include_router(gtfs.router, prefix="/api/v1/gtfs", tags=["GTFS"])
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])
+
+# ----------------------------------------------------------------------------
+# Global error handlers
+# ----------------------------------------------------------------------------
+
+_SQLSTATE_MAP = {
+    # Constraint violations
+    "23505": ("unique_violation", 409, "Unique constraint violated"),
+    "23503": ("foreign_key_violation", 409, "Foreign key constraint violated"),
+    "23502": ("not_null_violation", 400, "Required column is null"),
+    "23514": ("check_violation", 400, "Check constraint violated"),
+    # Data issues
+    "22001": ("string_data_right_truncation", 400, "Value too long for column"),
+}
+
+
+def _extract_sqlstate(exc: IntegrityError) -> str | None:
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return None
+    # asyncpg exposes sqlstate; psycopg exposes pgcode
+    return getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+
+
+def _extract_constraint(exc: IntegrityError) -> str | None:
+    orig = getattr(exc, "orig", None)
+    return getattr(orig, "constraint_name", None) or None
+
+
+def _extract_detail_and_fields(exc: IntegrityError) -> tuple[str | None, list[str] | None]:
+    orig = getattr(exc, "orig", None)
+    detail = None
+    fields: list[str] | None = None
+    if orig is not None:
+        # asyncpg/psycopg typically provide a detail attribute with
+        # messages like: "Key (name)=(AA_NF) already exists."
+        detail = getattr(orig, "detail", None)
+    if not detail:
+        # Fallback to stringified original exception
+        detail = str(orig or exc)
+
+    # Try to parse affected columns from the detail
+    # Pattern: Key (col1, col2)=(..., ...) already exists
+    try:
+        m = re.search(r"Key \((?P<cols>[^\)]+)\)=\(", detail or "")
+        if m:
+            cols = [c.strip() for c in m.group("cols").split(",")]
+            fields = cols if cols else None
+    except Exception:
+        fields = None
+    return detail, fields
+
+
+@app.exception_handler(IntegrityError)
+async def handle_integrity_error(request: Request, exc: IntegrityError):
+    sqlstate = _extract_sqlstate(exc)
+    code, status_code, message = _SQLSTATE_MAP.get(sqlstate, ("integrity_error", 400, "Database integrity error"))
+
+    constraint = _extract_constraint(exc)
+    detail, fields = _extract_detail_and_fields(exc)
+
+    logger.warning(
+        "IntegrityError: path=%s sqlstate=%s constraint=%s detail=%s",
+        request.url.path,
+        sqlstate,
+        constraint,
+        detail,
+    )
+
+    payload = {
+        "code": code,
+        "message": message,
+        "constraint": constraint,
+        "fields": fields,
+        "detail": detail,
+    }
+    return JSONResponse(status_code=status_code, content=payload)
 
 # Fallback CORS headers for tools/tests that don't send Origin (debug only)
 if settings.debug:
