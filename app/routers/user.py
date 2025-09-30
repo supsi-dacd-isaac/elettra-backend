@@ -172,6 +172,8 @@ async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get
         stop_lon=float(depot.longitude) if depot.longitude is not None else None,
     )
     db.add(stop)
+    # Ensure stop gets a database-generated primary key before referencing it
+    await db.flush()
 
     # 2) Create depot referencing the stop
     db_depot = Depots(
@@ -273,6 +275,8 @@ async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: Asy
                 stop_id=f"depot_{uuid4()}",
             )
             db.add(stop)
+            # Flush to get the generated stop.id before assigning FK
+            await db.flush()
             db_depot.stop_id = stop.id
 
         if "name" in update_data:
