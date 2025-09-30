@@ -121,6 +121,8 @@ class GtfsRoutes(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     route_id: Mapped[str] = mapped_column(Text, nullable=False)
     agency_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    gtfs_file_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, server_default=text("'2025-04-14'::date"))
+    gtfs_year: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('2025'))
     route_short_name: Mapped[Optional[str]] = mapped_column(Text)
     route_long_name: Mapped[Optional[str]] = mapped_column(Text)
     route_desc: Mapped[Optional[str]] = mapped_column(Text)
