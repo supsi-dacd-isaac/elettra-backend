@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: elettra-db
     restart: unless-stopped
     environment:
@@ -16,6 +16,8 @@ services:
       retries: 5
     volumes:
       - db-data:/var/lib/postgresql/data
+      # Auto-initialize schema on first startup (only runs if db is empty)
+      - ./db/elettra_schema_init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
 
   app:
     build: .

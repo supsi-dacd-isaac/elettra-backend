@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import List, Optional
+from datetime import date
 from uuid import UUID, uuid4
 
 from app.database import get_async_session
@@ -47,8 +48,44 @@ router = APIRouter()
 
 # GTFS Routes endpoints (authenticated users only)
 @router.get("/gtfs-routes/", response_model=List[GtfsRoutesRead])
-async def read_routes(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    result = await db.execute(select(GtfsRoutes).offset(skip).limit(limit))
+async def read_routes(
+    skip: int = 0,
+    limit: int = 100,
+    gtfs_year: Optional[int] = None,
+    gtfs_file_date: Optional[date] = None,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    # Resolve defaults: latest year, and within year latest file date
+    resolved_year = gtfs_year
+    if resolved_year is None:
+        res = await db.execute(select(func.max(GtfsRoutes.gtfs_year)))
+        resolved_year = res.scalar()
+
+    if resolved_year is None:
+        return []
+
+    resolved_file_date = gtfs_file_date
+    if resolved_file_date is None:
+        res = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_file_date)).filter(GtfsRoutes.gtfs_year == resolved_year)
+        )
+        resolved_file_date = res.scalar()
+
+    if resolved_file_date is None:
+        return []
+
+    query = (
+        select(GtfsRoutes)
+        .filter(
+            GtfsRoutes.gtfs_year == resolved_year,
+            GtfsRoutes.gtfs_file_date == resolved_file_date,
+        )
+        .order_by(GtfsRoutes.route_short_name)
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await db.execute(query)
     routes = result.scalars().all()
     return routes
 
@@ -68,15 +105,57 @@ async def create_route(route: GtfsRoutesCreate, db: AsyncSession = Depends(get_a
     return db_route
 
 @router.get("/gtfs-routes/by-agency/{agency_id}", response_model=List[GtfsRoutesRead])
-async def read_routes_by_agency(agency_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def read_routes_by_agency(
+    agency_id: UUID,
+    gtfs_year: Optional[int] = None,
+    gtfs_file_date: Optional[date] = None,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    # Resolve defaults constrained to agency scope
+    resolved_year = gtfs_year
+    if resolved_year is None:
+        res = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_year)).filter(GtfsRoutes.agency_id == agency_id)
+        )
+        resolved_year = res.scalar()
+
+    if resolved_year is None:
+        return []
+
+    resolved_file_date = gtfs_file_date
+    if resolved_file_date is None:
+        res = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_file_date)).filter(
+                GtfsRoutes.agency_id == agency_id,
+                GtfsRoutes.gtfs_year == resolved_year,
+            )
+        )
+        resolved_file_date = res.scalar()
+
+    if resolved_file_date is None:
+        return []
+
     result = await db.execute(
-        select(GtfsRoutes).filter(GtfsRoutes.agency_id == agency_id)
+        select(GtfsRoutes)
+        .filter(
+            GtfsRoutes.agency_id == agency_id,
+            GtfsRoutes.gtfs_year == resolved_year,
+            GtfsRoutes.gtfs_file_date == resolved_file_date,
+        )
+        .order_by(GtfsRoutes.route_short_name)
     )
     routes = result.scalars().all()
     return routes
 
 @router.get("/gtfs-routes/by-agency/{agency_id}/with-variant-1", response_model=List[GtfsRoutesReadWithVariant])
-async def read_routes_by_agency_with_variant_1(agency_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def read_routes_by_agency_with_variant_1(
+    agency_id: UUID,
+    gtfs_year: Optional[int] = None,
+    gtfs_file_date: Optional[date] = None,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
     """Get all routes for an agency with variant number 1 data included"""
     # Import settings here to avoid circular imports
     from app.core.config import get_cached_settings
@@ -85,6 +164,30 @@ async def read_routes_by_agency_with_variant_1(agency_id: UUID, db: AsyncSession
 
     # Get settings for elevation profiles path
     settings = get_cached_settings()
+
+    # Resolve defaults constrained to agency scope
+    resolved_year = gtfs_year
+    if resolved_year is None:
+        tmp = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_year)).filter(GtfsRoutes.agency_id == agency_id)
+        )
+        resolved_year = tmp.scalar()
+
+    if resolved_year is None:
+        return []
+
+    resolved_file_date = gtfs_file_date
+    if resolved_file_date is None:
+        tmp = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_file_date)).filter(
+                GtfsRoutes.agency_id == agency_id,
+                GtfsRoutes.gtfs_year == resolved_year,
+            )
+        )
+        resolved_file_date = tmp.scalar()
+
+    if resolved_file_date is None:
+        return []
 
     # Query to get all routes for the agency with their variant 1 data
     result = await db.execute(
@@ -97,6 +200,8 @@ async def read_routes_by_agency_with_variant_1(agency_id: UUID, db: AsyncSession
         .join(GtfsAgencies, GtfsRoutes.agency_id == GtfsAgencies.id)
         .filter(
             GtfsRoutes.agency_id == agency_id,
+            GtfsRoutes.gtfs_year == resolved_year,
+            GtfsRoutes.gtfs_file_date == resolved_file_date,
             Variants.variant_num == 1
         )
         .order_by(GtfsRoutes.route_short_name)
@@ -167,7 +272,13 @@ async def read_routes_by_agency_with_variant_1(agency_id: UUID, db: AsyncSession
     return routes_with_variant
 
 @router.get("/gtfs-routes/by-agency/{agency_id}/with-largest-variant", response_model=List[GtfsRoutesReadWithVariant])
-async def read_routes_by_agency_with_largest_variant(agency_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def read_routes_by_agency_with_largest_variant(
+    agency_id: UUID,
+    gtfs_year: Optional[int] = None,
+    gtfs_file_date: Optional[date] = None,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
     """Get all routes for an agency with the largest variant data included (based on elevation_data.csv file size)"""
     # Import settings here to avoid circular imports
     from app.core.config import get_cached_settings
@@ -178,6 +289,30 @@ async def read_routes_by_agency_with_largest_variant(agency_id: UUID, db: AsyncS
     # Get settings for elevation profiles path
     settings = get_cached_settings()
 
+    # Resolve defaults constrained to agency scope
+    resolved_year = gtfs_year
+    if resolved_year is None:
+        tmp = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_year)).filter(GtfsRoutes.agency_id == agency_id)
+        )
+        resolved_year = tmp.scalar()
+
+    if resolved_year is None:
+        return []
+
+    resolved_file_date = gtfs_file_date
+    if resolved_file_date is None:
+        tmp = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_file_date)).filter(
+                GtfsRoutes.agency_id == agency_id,
+                GtfsRoutes.gtfs_year == resolved_year,
+            )
+        )
+        resolved_file_date = tmp.scalar()
+
+    if resolved_file_date is None:
+        return []
+
     # First, get all routes for the agency and their variants
     result = await db.execute(
         select(
@@ -187,7 +322,11 @@ async def read_routes_by_agency_with_largest_variant(agency_id: UUID, db: AsyncS
         )
         .join(Variants, GtfsRoutes.id == Variants.route_id)
         .join(GtfsAgencies, GtfsRoutes.agency_id == GtfsAgencies.id)
-        .filter(GtfsRoutes.agency_id == agency_id)
+        .filter(
+            GtfsRoutes.agency_id == agency_id,
+            GtfsRoutes.gtfs_year == resolved_year,
+            GtfsRoutes.gtfs_file_date == resolved_file_date,
+        )
         .order_by(GtfsRoutes.route_short_name, Variants.variant_num)
     )
     all_rows = result.all()
@@ -314,23 +453,60 @@ async def read_routes_by_agency_with_largest_variant(agency_id: UUID, db: AsyncS
 
 @router.get("/gtfs-routes/by-stop/{stop_id}", response_model=List[GtfsRoutesRead])
 async def read_routes_by_stop(
-    stop_id: UUID, 
+    stop_id: UUID,
     agency_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_async_session), 
+    gtfs_year: Optional[int] = None,
+    gtfs_file_date: Optional[date] = None,
+    db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user)
 ):
     """Get all unique GTFS routes for a given stop ID, optionally filtered by agency"""
+    base_filters = [GtfsStopsTimes.stop_id == stop_id]
+    if agency_id is not None:
+        base_filters.append(GtfsRoutes.agency_id == agency_id)
+
+    # Resolve defaults constrained to the stop (and optional agency) scope
+    resolved_year = gtfs_year
+    if resolved_year is None:
+        res_year = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_year))
+            .select_from(GtfsRoutes)
+            .join(GtfsTrips, GtfsRoutes.id == GtfsTrips.route_id)
+            .join(GtfsStopsTimes, GtfsTrips.id == GtfsStopsTimes.trip_id)
+            .filter(*base_filters)
+        )
+        resolved_year = res_year.scalar()
+
+    if resolved_year is None:
+        return []
+
+    resolved_file_date = gtfs_file_date
+    if resolved_file_date is None:
+        res_fd = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_file_date))
+            .select_from(GtfsRoutes)
+            .join(GtfsTrips, GtfsRoutes.id == GtfsTrips.route_id)
+            .join(GtfsStopsTimes, GtfsTrips.id == GtfsStopsTimes.trip_id)
+            .filter(*base_filters, GtfsRoutes.gtfs_year == resolved_year)
+        )
+        resolved_file_date = res_fd.scalar()
+
+    if resolved_file_date is None:
+        return []
+
     query = (
         select(GtfsRoutes)
         .join(GtfsTrips, GtfsRoutes.id == GtfsTrips.route_id)
         .join(GtfsStopsTimes, GtfsTrips.id == GtfsStopsTimes.trip_id)
-        .filter(GtfsStopsTimes.stop_id == stop_id)
+        .filter(
+            *base_filters,
+            GtfsRoutes.gtfs_year == resolved_year,
+            GtfsRoutes.gtfs_file_date == resolved_file_date,
+        )
         .distinct()
+        .order_by(GtfsRoutes.route_short_name)
     )
-    
-    if agency_id is not None:
-        query = query.filter(GtfsRoutes.agency_id == agency_id)
-    
+
     result = await db.execute(query)
     routes = result.scalars().all()
     return routes

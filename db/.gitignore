@@ -1,0 +1,4 @@
+# Ignore the generated init schema file
+# This is auto-generated from elettra_schema.sql
+elettra_schema_init.sql
+

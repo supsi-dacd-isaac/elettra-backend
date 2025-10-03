@@ -46,7 +46,7 @@ This command:
 
 ### Step 3: Update SQL Schema File
 
-Finally, export the current database schema to the SQL file:
+Export the current database schema to the SQL file:
 
 ```bash
 export PGPASSWORD='[PASSWORD]' && pg_dump --schema-only -U [USER] -h localhost -p 5440 -d elettra -f db/elettra_schema.sql
@@ -59,6 +59,21 @@ This command:
 - Exports the `elettra` database schema
 - Saves it to `db/elettra_schema.sql`
 
+### Step 4: Prepare Initialization Schema
+
+Finally, convert the pg_dump output to a Docker-compatible init script:
+
+```bash
+./scripts/prepare_init_schema.sh
+```
+
+This command:
+- Reads `db/elettra_schema.sql` (the pg_dump output)
+- Removes pg_dump-specific metadata (`\restrict`, `\unrestrict`)
+- Removes explicit ownership statements (will inherit from connection user)
+- Outputs to `db/elettra_schema_init.sql`
+- This file is used by docker-compose for automatic database initialization
+
 ## Important Notes
 
 ### Security Considerations
@@ -69,33 +84,35 @@ This command:
 ### File Locations
 - **Models**: `app/models.py` - SQLAlchemy model definitions
 - **Schemas**: `app/schemas/database.py` - Pydantic schema definitions
-- **SQL Schema**: `db/elettra_schema.sql` - PostgreSQL schema dump
+- **SQL Schema**: `db/elettra_schema.sql` - PostgreSQL schema dump (source)
+- **Init Schema**: `db/elettra_schema_init.sql` - Docker-compatible init script (generated, not committed)
 
 ### Verification
 After running these commands, verify that:
 1. The models reflect your database changes
 2. The schemas are properly generated
 3. The SQL schema file is up to date
-4. All foreign key relationships and constraints are preserved
+4. The initialization schema is generated
+5. All foreign key relationships and constraints are preserved
 
 ## Common Use Cases
 
 ### Adding New Tables
 1. Create the table in the database
-2. Run all three steps above
-3. Commit the updated files
+2. Run all four steps above
+3. Commit the updated files (except `elettra_schema_init.sql` which is auto-generated)
 
 ### Modifying Existing Tables
 1. Alter the table structure in the database
-2. Run all three steps above
+2. Run all four steps above
 3. Update any related application code
-4. Commit the changes
+4. Commit the changes (except `elettra_schema_init.sql`)
 
 ### Adding Foreign Key Constraints
 1. Add the foreign key constraint to the database
-2. Run all three steps above
+2. Run all four steps above
 3. Verify cascade behaviors are correctly reflected
-4. Commit the changes
+4. Commit the changes (except `elettra_schema_init.sql`)
 
 ## Troubleshooting
 
@@ -127,6 +144,23 @@ After running these commands, verify that:
 
 - `app/models.py` - SQLAlchemy models
 - `app/schemas/database.py` - Pydantic schemas
-- `db/elettra_schema.sql` - Database schema dump
+- `db/elettra_schema.sql` - Database schema dump (committed)
+- `db/elettra_schema_init.sql` - Docker init schema (generated, not committed)
+- `scripts/prepare_init_schema.sh` - Script to prepare init schema
 - `generate_schemas.py` - Schema generation script
 - `requirements.txt` - Python dependencies
+
+## How Auto-Initialization Works
+
+When you start the PostgreSQL container for the first time (with an empty volume):
+
+1. PostgreSQL checks `/docker-entrypoint-initdb.d/` for `.sql` files
+2. It finds `01-schema.sql` (mounted from `db/elettra_schema_init.sql`)
+3. It executes the schema creation automatically
+4. This only happens once - subsequent starts skip initialization
+
+To force re-initialization:
+```bash
+docker-compose down -v  # Remove volumes
+docker-compose up       # Will re-initialize from scratch
+```
