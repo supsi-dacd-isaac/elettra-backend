@@ -1,6 +1,7 @@
 #!/bin/bash
 # Script to convert pg_dump output to PostgreSQL init script
 # This removes pg_dump metadata and makes ownership statements dynamic
+# and adds essential seed data for the application
 
 set -e
 
@@ -20,9 +21,27 @@ cat "$SOURCE_SCHEMA" | \
   sed 's/ALTER TABLE public\.\([^ ]*\) OWNER TO CURRENT_USER;/-- Owner will be set automatically for table \1/g' \
   > "$OUTPUT_SCHEMA"
 
+# Add seed data for essential application functionality
+cat >> "$OUTPUT_SCHEMA" << 'EOF'
+
+--
+-- Essential seed data for Elettra Backend
+--
+
+-- Insert 'auxiliary' service into gtfs_calendar
+-- This service is used for depot trips, transfer trips, and other non-GTFS trips
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary', 1, 1, 1, 1, 1, 1, 1, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (
+    SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary'
+);
+
+EOF
+
 echo "✓ Created $OUTPUT_SCHEMA"
 echo "  - Removed pg_dump metadata"
 echo "  - Removed explicit ownership statements (will inherit from connection user)"
+echo "  - Added seed data for 'auxiliary' GTFS calendar service"
 echo ""
 echo "This file can be used for database initialization in docker-compose"
 
