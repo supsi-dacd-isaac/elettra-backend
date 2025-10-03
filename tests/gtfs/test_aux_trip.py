@@ -1,5 +1,6 @@
 import os
 import pytest
+import uuid
 
 API_BASE = "/api/v1/gtfs"
 
@@ -20,6 +21,18 @@ def _get_token(client):
 def _auth_headers(client):
     token = _get_token(client)
     return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _cleanup_trip(client, trip_id, headers):
+    """Clean up a created trip by deleting it"""
+    if trip_id:
+        try:
+            r = client.delete(f"{API_BASE}/gtfs-trips/{trip_id}", headers=headers)
+            # Don't fail the test if cleanup fails, just log it
+            if r.status_code not in [200, 204, 404]:
+                print(f"Warning: Failed to cleanup trip {trip_id}: {r.status_code} {r.text}")
+        except Exception as e:
+            print(f"Warning: Exception during trip cleanup: {e}")
 
 
 @pytest.mark.skipif(
@@ -58,16 +71,21 @@ def test_create_depot_trip(client, record, monkeypatch):
     r = client.post(f"{API_BASE}/aux-trip", json=payload, headers=headers)
     ok = r.status_code == 200
     record("create_depot_trip_status", ok, f"status={r.status_code} body={r.text[:200]}")
+    
+    created_trip_id = None
     if ok:
         data = r.json()
+        created_trip_id = data.get("id")
         record("created_has_shape_id", bool(data.get("shape_id")), "Missing shape_id")
         record("created_status_depot", data.get("status") == "depot", f"status={data.get('status')}")
 
         # Try fetching elevation profile to ensure parquet accessible
-        trip_id = data.get("id")
-        if trip_id:
-            r2 = client.get(f"{API_BASE}/elevation-profile/by-trip/{trip_id}", headers=headers)
+        if created_trip_id:
+            r2 = client.get(f"{API_BASE}/elevation-profile/by-trip/{created_trip_id}", headers=headers)
             record("elevation_profile_fetch", r2.status_code == 200, f"status={r2.status_code}")
+    
+    # Clean up the created trip
+    _cleanup_trip(client, created_trip_id, headers)
 
 
 @pytest.mark.skipif(
@@ -104,9 +122,15 @@ def test_create_transfer_trip(client, record, monkeypatch):
     r = client.post(f"{API_BASE}/aux-trip", json=payload, headers=headers)
     ok = r.status_code == 200
     record("create_transfer_trip_status", ok, f"status={r.status_code} body={r.text[:200]}")
+    
+    created_trip_id = None
     if ok:
         data = r.json()
+        created_trip_id = data.get("id")
         record("created_status_transfer", data.get("status") == "transfer", f"status={data.get('status')}")
         record("gtfs_service_auxiliary", data.get("gtfs_service_id") == "auxiliary", f"gtfs_service_id={data.get('gtfs_service_id')}")
+    
+    # Clean up the created trip
+    _cleanup_trip(client, created_trip_id, headers)
 
 

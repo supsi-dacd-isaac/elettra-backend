@@ -57,7 +57,9 @@ STRONG_PASSWORD = "Tmp!Passw0rdXy"
 def _register_temp_user(client: TestClient, *, password: str = "Tmp!Passw0rdXy") -> tuple[str, str]:
     """Create a temporary user for mutation tests and return (email, password)."""
     email = f"tmp_{uuid.uuid4().hex[:10]}@example.com"
-    valid_company_id = "0be70f7c-5bed-41ba-9ef8-8ddcafb807b9"
+    valid_company_id = os.getenv("TEST_AGENCY_ID")
+    if not valid_company_id:
+        raise ValueError("TEST_AGENCY_ID environment variable is required")
     r = client.post(f"{AUTH_BASE}/register", json={
         "company_id": valid_company_id,
         "email": email,
@@ -182,9 +184,14 @@ def test_logout_with_invalid_token(client, record):
 
 def test_logout_with_valid_token(client, record):
     # First login to get a valid token
+    email = os.getenv("TEST_LOGIN_EMAIL")
+    password = os.getenv("TEST_LOGIN_PASSWORD")
+    if not email or not password:
+        pytest.skip("TEST_LOGIN_EMAIL and TEST_LOGIN_PASSWORD environment variables are required")
+    
     login_data = {
-        "email": "test01.elettra@fart.ch",
-        "password": "elettra"
+        "email": email,
+        "password": password
     }
     login_r = client.post(f"{AUTH_BASE}/login", json=login_data)
     if login_r.status_code != 200:
@@ -220,7 +227,9 @@ def test_sql_injection_attempts(client, record, injection):
 def test_register_weak_password(client, record):
     """Test registration with weak password"""
     # Use a valid company_id from the database
-    valid_company_id = "0be70f7c-5bed-41ba-9ef8-8ddcafb807b9"  # Basler Verkehrsbetriebe
+    valid_company_id = os.getenv("TEST_AGENCY_ID")
+    if not valid_company_id:
+        pytest.skip("TEST_AGENCY_ID environment variable is required")
     
     weak_passwords = [
         "Short1!a",  # Too short
@@ -246,7 +255,9 @@ def test_register_weak_password(client, record):
 def test_register_strong_password(client, record):
     """Test registration with strong password"""
     # Use a valid company_id from the database
-    valid_company_id = "0be70f7c-5bed-41ba-9ef8-8ddcafb807b9"  # Basler Verkehrsbetriebe
+    valid_company_id = os.getenv("TEST_AGENCY_ID")
+    if not valid_company_id:
+        pytest.skip("TEST_AGENCY_ID environment variable is required")
     temp_email = f"strong_{uuid.uuid4().hex[:10]}@example.com"
     try:
         r = client.post(f"{AUTH_BASE}/register", json={
