@@ -117,29 +117,42 @@ def test_routes_by_stop_with_agency_filter(client, record):
     reason="Provide TEST_STOP_ID and either TEST_API_TOKEN or TEST_LOGIN_EMAIL/TEST_LOGIN_PASSWORD",
 )
 def test_routes_by_stop_with_gtfs_params(client, record):
-    """Test routes by stop endpoint with explicit gtfs_year and gtfs_file_date"""
+    """Test routes by stop endpoint with explicit gtfs_year and gtfs_file_date
+    
+    Tests that:
+    - Requesting non-existent GTFS data (2025) returns empty list
+    - Requesting existing GTFS data (2026) returns results
+    """
     stop_id = _stop_id_env()
     year, file_date, year_alt, file_date_alt = _gtfs_params()
 
     if not (year and file_date):
         pytest.skip("TEST_GTFS_YEAR and TEST_GTFS_FILE_DATE not set")
 
+    # Test with primary year (should be empty if data doesn't exist)
     url = f"{API_BASE}/gtfs-routes/by-stop/{stop_id}?gtfs_year={year}&gtfs_file_date={file_date}"
     r = client.get(url, headers=_auth_headers(client))
     record("routes_by_stop_with_params_status", r.status_code == 200, f"status={r.status_code} body={r.text}")
     if r.status_code == 200:
         data = r.json()
         assert isinstance(data, list), "Response should be a list"
-        record("routes_by_stop_with_params_format", True, f"Got {len(data)} routes for year={year} date={file_date}")
+        # For year 2025, we expect empty list since no data exists
+        is_empty = len(data) == 0
+        record("routes_by_stop_nonexistent_data_returns_empty", is_empty, 
+               f"Expected empty list for non-existent year={year}, got {len(data)} routes")
 
     if year_alt and file_date_alt:
+        # Test with alternate year (should have data)
         url_alt = f"{API_BASE}/gtfs-routes/by-stop/{stop_id}?gtfs_year={year_alt}&gtfs_file_date={file_date_alt}"
         r_alt = client.get(url_alt, headers=_auth_headers(client))
         record("routes_by_stop_with_params_alt_status", r_alt.status_code == 200, f"status={r_alt.status_code} body={r_alt.text}")
         if r_alt.status_code == 200:
             data_alt = r_alt.json()
             assert isinstance(data_alt, list), "Response should be a list"
-            record("routes_by_stop_with_params_alt_format", True, f"Got {len(data_alt)} routes for year={year_alt} date={file_date_alt}")
+            # For year 2026, we expect results since data exists
+            has_data = len(data_alt) > 0
+            record("routes_by_stop_existing_data_returns_results", has_data,
+                   f"Expected results for existing year={year_alt}, got {len(data_alt)} routes")
 
 
 @pytest.mark.skipif(
