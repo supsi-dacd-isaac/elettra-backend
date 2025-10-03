@@ -466,8 +466,9 @@ async def read_routes_by_stop(
         base_filters.append(GtfsRoutes.agency_id == agency_id)
 
     # Resolve defaults constrained to the stop (and optional agency) scope
-    resolved_year = gtfs_year
-    if resolved_year is None:
+    # Only use fallback logic when parameters are not explicitly provided
+    if gtfs_year is None:
+        # No explicit year provided, find the latest available year
         res_year = await db.execute(
             select(func.max(GtfsRoutes.gtfs_year))
             .select_from(GtfsRoutes)
@@ -476,12 +477,14 @@ async def read_routes_by_stop(
             .filter(*base_filters)
         )
         resolved_year = res_year.scalar()
+        if resolved_year is None:
+            return []
+    else:
+        # Explicit year provided, use it directly
+        resolved_year = gtfs_year
 
-    if resolved_year is None:
-        return []
-
-    resolved_file_date = gtfs_file_date
-    if resolved_file_date is None:
+    if gtfs_file_date is None:
+        # No explicit file date provided, find the latest available file date for the year
         res_fd = await db.execute(
             select(func.max(GtfsRoutes.gtfs_file_date))
             .select_from(GtfsRoutes)
@@ -490,9 +493,11 @@ async def read_routes_by_stop(
             .filter(*base_filters, GtfsRoutes.gtfs_year == resolved_year)
         )
         resolved_file_date = res_fd.scalar()
-
-    if resolved_file_date is None:
-        return []
+        if resolved_file_date is None:
+            return []
+    else:
+        # Explicit file date provided, use it directly
+        resolved_file_date = gtfs_file_date
 
     query = (
         select(GtfsRoutes)
