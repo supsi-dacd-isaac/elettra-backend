@@ -596,6 +596,13 @@ async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_sessio
     if db_trip is None:
         raise HTTPException(status_code=404, detail="Trip not found")
 
+    # Delete associated stop_times first to avoid foreign key constraint violation
+    result = await db.execute(select(GtfsStopsTimes).filter(GtfsStopsTimes.trip_id == trip_pk))
+    stop_times = result.scalars().all()
+    for st in stop_times:
+        await db.delete(st)
+
+    # Delete the trip
     await db.delete(db_trip)
     await db.commit()
     return {"message": "Trip deleted successfully"}

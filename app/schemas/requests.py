@@ -28,3 +28,7 @@ class ShiftUpdateRequest(BaseModel):
     bus_id: Optional[UUID] = None
     trip_ids: Optional[list[UUID]] = None
 
+
+class TripStatisticsRequest(BaseModel):
+    trip_ids: list[UUID]
+
