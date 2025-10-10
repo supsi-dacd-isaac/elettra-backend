@@ -112,3 +112,19 @@ class ShiftReadWithStructure(BaseModel):
     bus_id: Optional[UUID]
     structure: list[ShiftStructureItem]
     model_config = ConfigDict(from_attributes=True)
+
+
+class TripStatisticsResponse(BaseModel):
+    """Response schema for trip statistics computation"""
+    trip_id: UUID
+    statistics: dict
+    error: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CombinedTripStatisticsResponse(BaseModel):
+    """Single combined statistics for one or multiple trips"""
+    trip_ids: list[UUID]
+    statistics: dict
+    error: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
