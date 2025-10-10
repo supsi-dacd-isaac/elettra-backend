@@ -82,7 +82,20 @@ def test_create_depot_trip(client, record, monkeypatch):
         # Try fetching elevation profile to ensure parquet accessible
         if created_trip_id:
             r2 = client.get(f"{API_BASE}/elevation-profile/by-trip/{created_trip_id}", headers=headers)
-            record("elevation_profile_fetch", r2.status_code == 200, f"status={r2.status_code}")
+            elevation_fetch_ok = r2.status_code == 200
+            record("elevation_profile_fetch", elevation_fetch_ok, f"status={r2.status_code}")
+            
+            # Check that elevation profile has non-null altitude values
+            if elevation_fetch_ok:
+                elevation_data = r2.json()
+                records = elevation_data.get("records", [])
+                non_null_altitudes = [r for r in records if r.get("altitude_m") is not None]
+                has_valid_altitudes = len(non_null_altitudes) > 0
+                record(
+                    "elevation_has_valid_altitudes",
+                    has_valid_altitudes,
+                    f"Found {len(non_null_altitudes)}/{len(records)} non-null altitude values"
+                )
     
     # Clean up the created trip
     _cleanup_trip(client, created_trip_id, headers)
@@ -129,6 +142,24 @@ def test_create_transfer_trip(client, record, monkeypatch):
         created_trip_id = data.get("id")
         record("created_status_transfer", data.get("status") == "transfer", f"status={data.get('status')}")
         record("gtfs_service_auxiliary", data.get("gtfs_service_id") == "auxiliary", f"gtfs_service_id={data.get('gtfs_service_id')}")
+        
+        # Try fetching elevation profile and check for valid altitudes
+        if created_trip_id:
+            r2 = client.get(f"{API_BASE}/elevation-profile/by-trip/{created_trip_id}", headers=headers)
+            elevation_fetch_ok = r2.status_code == 200
+            record("elevation_profile_fetch", elevation_fetch_ok, f"status={r2.status_code}")
+            
+            # Check that elevation profile has non-null altitude values
+            if elevation_fetch_ok:
+                elevation_data = r2.json()
+                records = elevation_data.get("records", [])
+                non_null_altitudes = [r for r in records if r.get("altitude_m") is not None]
+                has_valid_altitudes = len(non_null_altitudes) > 0
+                record(
+                    "elevation_has_valid_altitudes",
+                    has_valid_altitudes,
+                    f"Found {len(non_null_altitudes)}/{len(records)} non-null altitude values"
+                )
     
     # Clean up the created trip
     _cleanup_trip(client, created_trip_id, headers)

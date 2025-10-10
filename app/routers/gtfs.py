@@ -28,6 +28,7 @@ import pandas as pd
 import io
 import os
 import httpx
+import requests
 from map_services import SwissTopoElevationClient
 
 try:
@@ -1086,9 +1087,48 @@ async def create_aux_trip(
     coords_lon_lat = [(lon, lat) for (lat, lon) in decoded]
 
     # 3) Elevation profile using SwissTopoElevationClient
-    elev_client = SwissTopoElevationClient()
+    # Swiss Topo API requires LV95 coordinates (EPSG:2056), not WGS84 (EPSG:4326)
+    # Convert WGS84 coordinates to LV95 before calling the elevation service
+    if Transformer is None:
+        raise HTTPException(status_code=500, detail="pyproj not available for coordinate transformation")
+    
     try:
-        elevations = elev_client.get_elevation_batch(coords_lon_lat)
+        # Create transformer from WGS84 (EPSG:4326) to LV95 (EPSG:2056)
+        transformer = Transformer.from_crs('EPSG:4326', 'EPSG:2056', always_xy=True)
+        
+        # Convert all WGS84 coordinates to LV95
+        coords_lv95 = []
+        for lon, lat in coords_lon_lat:
+            easting, northing = transformer.transform(lon, lat)
+            coords_lv95.append((easting, northing))
+        
+        # Monkey-patch the SwissTopoElevationClient to use sr=2056 instead of sr=4326
+        elev_client = SwissTopoElevationClient()
+        original_get_elevation = elev_client.get_elevation
+        
+        def get_elevation_lv95(longitude: float, latitude: float):
+            """Override to use LV95 coordinate system (sr=2056)"""
+            try:
+                params = {
+                    'easting': longitude,  # Actually easting in LV95
+                    'northing': latitude,  # Actually northing in LV95
+                    'sr': 2056  # LV95 instead of 4326
+                }
+                response = elev_client.session.get(elev_client.base_url, params=params)
+                response.raise_for_status()
+                data = response.json()
+                height = data.get('height')
+                return float(height) if height is not None else None
+            except Exception as e:
+                print(f"Error getting elevation: {e}")
+                return None
+        
+        # Monkey-patch the method
+        elev_client.get_elevation = get_elevation_lv95
+        
+        # Call elevation service with LV95 coordinates
+        elevations = elev_client.get_elevation_batch(coords_lv95)
+        
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Elevation service failed: {str(e)}")
 
