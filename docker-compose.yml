@@ -90,11 +90,9 @@ services:
     entrypoint: >
       bash -c "
       mc alias set minio http://minio:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} &&
-      if ! mc ls minio | grep --quiet bucket; then
-        mc mb minio/elevation-profiles
-      else
-        echo 'bucket elevation-profiles already exists'
-      fi
+      mc mb minio/elevation-profiles --ignore-existing &&
+      mc mb minio/consumption-models --ignore-existing &&
+      echo 'Buckets created successfully'
       "
 
   osrm-download:
