@@ -1,0 +1,86 @@
+{
+  "global": {
+    "external_temp_celsius": -5.0
+  },
+  "default": {
+    "bus_length_m": 18,
+    "battery_capacity_kwh": 514
+  },
+  "shifts": {
+    "401": {
+      "bus_length_m": 18,
+      "battery_capacity_kwh": 514,
+      "bus_model": "AA_NF"
+    },
+    "402": {
+      "bus_length_m": 12,
+      "battery_capacity_kwh": 350,
+      "bus_model": "AU_NF"
+    },
+    "403": {
+      "bus_length_m": 18,
+      "battery_capacity_kwh": 514,
+      "bus_model": "AA_NF"
+    },
+    "404": {
+      "bus_length_m": 18,
+      "battery_capacity_kwh": 514,
+      "bus_model": "AA_NF"
+    },
+    "405": {
+      "bus_length_m": 18,
+      "battery_capacity_kwh": 514,
+      "bus_model": "AA_NF"
+    },
+    "406": {
+      "bus_length_m": 18,
+      "battery_capacity_kwh": 514,
+      "bus_model": "AA_NF"
+    },
+    "407": {
+      "bus_length_m": 18,
+      "battery_capacity_kwh": 514,
+      "bus_model": "AA_NF"
+    },
+    "408": {
+      "bus_length_m": 12,
+      "battery_capacity_kwh": 350,
+      "bus_model": "AU_NF"
+    },
+    "409": {
+      "bus_length_m": 6,
+      "battery_capacity_kwh": 250,
+      "bus_model": "MB_NF"
+    },
+    "410": {
+      "bus_length_m": 6,
+      "battery_capacity_kwh": 250,
+      "bus_model": "MB_NF"
+    },
+    "412": {
+      "bus_length_m": 10,
+      "battery_capacity_kwh": 300,
+      "bus_model": "AL_NF"
+    },
+    "415": {
+      "bus_length_m": 10,
+      "battery_capacity_kwh": 300,
+      "bus_model": "AL_NF"
+    },
+    "416": {
+      "bus_length_m": 10,
+      "battery_capacity_kwh": 300,
+      "bus_model": "AL_NF"
+    },
+    "417": {
+      "bus_length_m": 6,
+      "battery_capacity_kwh": 250,
+      "bus_model": "MB_NF"
+    },
+    "418": {
+      "bus_length_m": 6,
+      "battery_capacity_kwh": 250,
+      "bus_model": "MB_NF"
+    }
+  }
+}

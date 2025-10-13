@@ -1,0 +1,42 @@
+{
+  "bus_models": {
+    "AA_NF": {
+      "bus_length_m": 18,
+      "battery_capacity_kwh": 514,
+      "description": "18m articulated bus"
+    },
+    "AU_NF": {
+      "bus_length_m": 12,
+      "battery_capacity_kwh": 350,
+      "description": "12m standard bus"
+    },
+    "AL_NF": {
+      "bus_length_m": 10,
+      "battery_capacity_kwh": 300,
+      "description": "10m midi bus"
+    },
+    "MB_NF": {
+      "bus_length_m": 6,
+      "battery_capacity_kwh": 250,
+      "description": "6m mini bus"
+    }
+  },
+  "bus_assignments": {
+    "401": "AA_NF",
+    "402": "AU_NF",
+    "403": "AA_NF",
+    "404": "AA_NF",
+    "405": "AA_NF",
+    "406": "AA_NF",
+    "407": "AA_NF",
+    "408": "AU_NF",
+    "409": "MB_NF",
+    "410": "MB_NF",
+    "412": "AL_NF",
+    "415": "AL_NF",
+    "416": "AL_NF",
+    "417": "MB_NF",
+    "418": "MB_NF"
+  }
+}
+
