@@ -154,11 +154,25 @@ POST /api/v1/simulation/trip-statistics/
 ```
 
 ## Files Modified
-- `/app/routers/simulation.py` - Main implementation
-  - Added `_calculate_segment_elevation_stats()` function for elevation matching
-  - Enhanced `extract_stop_to_stop_statistics_for_schedule()` with elevation metrics
-  - Updated `compute_global_trip_statistics_combined()` with time features
-  - Enhanced `extract_route_difficulty_metrics_from_elevation()` for all difficulty metrics
+
+### Core Implementation
+- **`app/utils/trip_statistics.py`** (NEW) - Trip statistics computation utilities (598 lines)
+  - All trip statistics computation logic extracted into reusable utility module
+  - `parse_gtfs_hms_to_seconds()` - GTFS time parsing
+  - `dur_sec()` - Duration calculation with midnight handling
+  - `haversine_distance()` - Geographic distance calculation
+  - `compute_global_trip_statistics_combined()` - Global trip metrics
+  - `extract_stop_to_stop_statistics_for_schedule()` - Segment analysis
+  - `extract_route_difficulty_metrics_from_elevation()` - Route difficulty
+  - `_calculate_segment_elevation_stats()` - Elevation matching for segments
+  - All functions raise `ValueError` when elevation data is missing (no fallbacks)
+
+- **`app/utils/__init__.py`** (NEW) - Utils package initialization
+
+- **`app/routers/simulation.py`** - API endpoints (reduced from 910 to 406 lines)
+  - Now focused purely on API request/response handling
+  - Imports trip statistics functions from `app.utils.trip_statistics`
+  - Orchestrates data fetching and delegates computation to utils
 
 ## Testing Scripts
 - `verify_trip_statistics_features.py` - Feature presence verification
@@ -167,7 +181,35 @@ POST /api/v1/simulation/trip-statistics/
 
 ## Notes
 - All 58 features are always computed when elevation data is available
-- Missing elevation data results in zero values for elevation-related features
+- **Missing elevation data now raises ValueError** - no silent fallbacks to haversine distance
 - Combined trip analysis treats the sequence as a single continuous journey
 - Times follow GTFS convention where values can exceed 24:00:00 (1440 minutes)
+- Utility functions separated into `app/utils/trip_statistics.py` for reusability
+- Router code reduced by ~55% (910 → 406 lines) for better maintainability
+
+## Refactoring Summary (Latest Changes)
+
+### Code Organization
+- **Created `app/utils/` package** for reusable utility functions
+- **Moved all trip statistics computation logic** from router to utilities
+- **Router now focuses on**:
+  - Request/response handling
+  - Database queries
+  - MinIO data fetching
+  - Orchestration of utility functions
+
+### Behavior Changes
+- **Removed haversine fallbacks** - elevation data is now strictly required
+- Functions raise `ValueError` if:
+  - Elevation data is missing
+  - Required columns (`cumulative_distance_m`, `altitude_m`) are not present
+  - Segment elevation data cannot be matched
+- This ensures data quality and catches missing elevation profiles early
+
+### Benefits
+- ✅ Better separation of concerns
+- ✅ Reusable utilities for other modules
+- ✅ Easier to test individual functions
+- ✅ Cleaner, more focused router code
+- ✅ Explicit error handling (no silent fallbacks)
 
