@@ -436,6 +436,18 @@ def compute_global_trip_statistics_combined(trip_schedule: pd.DataFrame, elevati
     try:
         if trip_schedule is None or len(trip_schedule) == 0:
             return stats
+        
+        # Extract start and end times (minutes from midnight)
+        first_stop_overall = trip_schedule.iloc[0]
+        last_stop_overall = trip_schedule.iloc[-1]
+        
+        # Start time: arrival at first stop
+        start_seconds = parse_gtfs_hms_to_seconds(first_stop_overall['arrival_time'])
+        stats['start_time_minutes'] = start_seconds / 60
+        
+        # End time: departure from last stop
+        end_seconds = parse_gtfs_hms_to_seconds(last_stop_overall['departure_time'])
+        stats['end_time_minutes'] = end_seconds / 60
             
         # Combined duration = sum(per-trip durations) + sum(inter-trip gaps)
         if 'trip_index' in trip_schedule.columns:
@@ -454,8 +466,6 @@ def compute_global_trip_statistics_combined(trip_schedule: pd.DataFrame, elevati
                 inter_trip_gap_seconds_for_duration += dur_sec(last_arrival, next_departure)
             total_seconds = total_trip_seconds + inter_trip_gap_seconds_for_duration
         else:
-            first_stop_overall = trip_schedule.iloc[0]
-            last_stop_overall = trip_schedule.iloc[-1]
             total_seconds = dur_sec(first_stop_overall['departure_time'], last_stop_overall['arrival_time'])
         stats['total_duration_minutes'] = total_seconds / 60
         stats['total_number_of_stops'] = len(trip_schedule)
@@ -578,6 +588,133 @@ def _calculate_dwell_time(stop):
     return dwell_seconds / 60  # Convert to minutes
 
 
+def _calculate_segment_elevation_stats(stop1, stop2, elevation_df):
+    """Calculate elevation statistics for a segment between two stops using actual elevation data."""
+    if elevation_df is None or len(elevation_df) == 0:
+        return {}
+    
+    # Get stop IDs and coordinates from GTFS data
+    stop1_id = stop1.get('stop_id', '')
+    stop2_id = stop2.get('stop_id', '')
+
+    # Skip identical stops
+    if stop1_id == stop2_id:
+        return {}
+
+    # Check if elevation data has pre-segmented data with start_stop_id and end_stop_id
+    if 'start_stop_id' in elevation_df.columns and 'end_stop_id' in elevation_df.columns:
+        segment_mask = (
+            (elevation_df['start_stop_id'] == stop1_id) &
+            (elevation_df['end_stop_id'] == stop2_id)
+        )
+        
+        if segment_mask.any():
+            segment_elevation = elevation_df[segment_mask]
+        else:
+            return {}
+    else:
+        # Work with raw elevation profile - find closest points to stops
+        # Need latitude, longitude, and altitude_m columns
+        if 'latitude' not in elevation_df.columns or 'longitude' not in elevation_df.columns or 'altitude_m' not in elevation_df.columns:
+            return {}
+        
+        # Get stop coordinates
+        stop1_lat = stop1.get('stop_lat')
+        stop1_lon = stop1.get('stop_lon')
+        stop2_lat = stop2.get('stop_lat')
+        stop2_lon = stop2.get('stop_lon')
+        
+        if stop1_lat is None or stop1_lon is None or stop2_lat is None or stop2_lon is None:
+            return {}
+        
+        # Find closest elevation points to each stop
+        def find_closest_index(df, target_lat, target_lon):
+            """Find index of closest point in elevation profile to target coordinates."""
+            distances = np.sqrt(
+                (df['latitude'] - target_lat)**2 + 
+                (df['longitude'] - target_lon)**2
+            )
+            return distances.argmin()
+        
+        idx1 = find_closest_index(elevation_df, stop1_lat, stop1_lon)
+        idx2 = find_closest_index(elevation_df, stop2_lat, stop2_lon)
+        
+        # Ensure idx1 < idx2 (forward direction)
+        if idx1 >= idx2:
+            return {}
+        
+        # Extract segment from elevation profile
+        segment_elevation = elevation_df.iloc[idx1:idx2+1].copy()
+    
+    if len(segment_elevation) == 0:
+        return {}
+    
+    # Calculate actual route distance from cumulative distance
+    if 'cumulative_distance_m' in segment_elevation.columns:
+        start_distance = segment_elevation['cumulative_distance_m'].iloc[0]
+        end_distance = segment_elevation['cumulative_distance_m'].iloc[-1]
+        segment_distance = end_distance - start_distance
+    else:
+        # Calculate distance from coordinates if cumulative_distance not available
+        segment_distance = 0
+        if 'latitude' in segment_elevation.columns and 'longitude' in segment_elevation.columns:
+            for i in range(len(segment_elevation) - 1):
+                lat1 = segment_elevation.iloc[i]['latitude']
+                lon1 = segment_elevation.iloc[i]['longitude']
+                lat2 = segment_elevation.iloc[i+1]['latitude']
+                lon2 = segment_elevation.iloc[i+1]['longitude']
+                segment_distance += haversine_distance(lat1, lon1, lat2, lon2)
+    
+    # Calculate elevation statistics
+    start_elevation = segment_elevation['altitude_m'].iloc[0]
+    end_elevation = segment_elevation['altitude_m'].iloc[-1]
+    elevation_diff = end_elevation - start_elevation
+    
+    # Calculate cumulative ascent/descent
+    if len(segment_elevation) > 1:
+        diffs = segment_elevation['altitude_m'].diff().dropna()
+        ascent = float(diffs.clip(lower=0).sum())
+        descent = float((-diffs).clip(lower=0).sum())
+    else:
+        ascent = max(elevation_diff, 0)
+        descent = max(-elevation_diff, 0)
+    
+    # Calculate gradients
+    mean_gradient = elevation_diff / segment_distance if segment_distance > 0 else 0
+    
+    # Calculate max gradient
+    if len(segment_elevation) > 1:
+        elevation_diffs = segment_elevation['altitude_m'].diff().dropna()
+        if 'cumulative_distance_m' in segment_elevation.columns:
+            distance_diffs = segment_elevation['cumulative_distance_m'].diff().dropna()
+        else:
+            # Calculate point-to-point distances
+            distance_diffs = []
+            for i in range(len(segment_elevation) - 1):
+                lat1 = segment_elevation.iloc[i]['latitude']
+                lon1 = segment_elevation.iloc[i]['longitude']
+                lat2 = segment_elevation.iloc[i+1]['latitude']
+                lon2 = segment_elevation.iloc[i+1]['longitude']
+                distance_diffs.append(haversine_distance(lat1, lon1, lat2, lon2))
+            distance_diffs = pd.Series(distance_diffs)
+        
+        with np.errstate(divide='ignore', invalid='ignore'):
+            gradients = np.where(distance_diffs != 0, elevation_diffs / distance_diffs, 0)
+        max_gradient = np.abs(gradients).max() if len(gradients) > 0 else 0
+    else:
+        max_gradient = abs(mean_gradient)
+    
+    return {
+        'start_elevation_m': float(start_elevation),
+        'end_elevation_m': float(end_elevation),
+        'segment_distance_m': float(segment_distance),
+        'ascent_m': float(ascent),
+        'descent_m': float(descent),
+        'mean_gradient': float(mean_gradient),
+        'max_gradient': float(max_gradient)
+    }
+
+
 def extract_stop_to_stop_statistics_for_schedule(trip_schedule: pd.DataFrame, elevation_df: pd.DataFrame) -> dict:
     """Compute segment statistics across a GTFS schedule, using elevation data when available."""
     stats = {}
@@ -608,21 +745,49 @@ def extract_stop_to_stop_statistics_for_schedule(trip_schedule: pd.DataFrame, el
             except Exception:
                 pass
             segment_duration = _calculate_segment_duration(current_stop, next_stop)
-            segment_distance = _calculate_stop_distance(current_stop, next_stop)
+            
+            # Get elevation data and actual route distance for this segment
+            segment_elevation_stats = _calculate_segment_elevation_stats(
+                current_stop, next_stop, elevation_df
+            )
+            
+            # Use actual route distance from elevation data, fallback to haversine
+            segment_distance = segment_elevation_stats.get('segment_distance_m', 0)
+            if segment_distance == 0:
+                segment_distance = _calculate_stop_distance(current_stop, next_stop)
+            
             km = segment_distance / 1000.0
             h = segment_duration / 3600.0
             segment_speed_kmh = km / h if h > 0 else 0.0
-            segment_stats.append({
+            
+            segment_data = {
                 'segment_distance_m': segment_distance,
                 'segment_duration_minutes': segment_duration / 60,
                 'segment_speed_kmh': segment_speed_kmh,
+                'start_stop_id': current_stop['stop_id'],
+                'end_stop_id': next_stop['stop_id'],
+                'start_elevation_m': segment_elevation_stats.get('start_elevation_m', 0),
+                'end_elevation_m': segment_elevation_stats.get('end_elevation_m', 0),
+                'segment_ascent_m': segment_elevation_stats.get('ascent_m', 0),
+                'segment_descent_m': segment_elevation_stats.get('descent_m', 0),
+                'segment_mean_gradient': segment_elevation_stats.get('mean_gradient', 0),
+                'segment_max_gradient': segment_elevation_stats.get('max_gradient', 0),
                 'dwell_time_at_end_minutes': _calculate_dwell_time(next_stop)
-            })
+            }
+            
+            segment_stats.append(segment_data)
+        
         if segment_stats:
             distances = [s['segment_distance_m'] for s in segment_stats]
             durations = [s['segment_duration_minutes'] for s in segment_stats]
             speeds = [s['segment_speed_kmh'] for s in segment_stats]
+            ascents = [s['segment_ascent_m'] for s in segment_stats]
+            descents = [s['segment_descent_m'] for s in segment_stats]
+            gradients = [s['segment_mean_gradient'] for s in segment_stats]
+            max_gradients = [s['segment_max_gradient'] for s in segment_stats]
             dwell_times = [s['dwell_time_at_end_minutes'] for s in segment_stats]
+            
+            # Statistical aggregations
             stats.update({
                 'num_segments': len(segment_stats),
                 'mean_segment_distance_m': float(np.mean(distances)),
@@ -638,8 +803,21 @@ def extract_stop_to_stop_statistics_for_schedule(trip_schedule: pd.DataFrame, el
                 'median_segment_speed_kmh': float(np.median(speeds)),
                 'min_segment_speed_kmh': float(np.min(speeds)),
                 'max_segment_speed_kmh': float(np.max(speeds)),
+                'mean_segment_ascent_m': float(np.mean(ascents)),
+                'median_segment_ascent_m': float(np.median(ascents)),
+                'max_segment_ascent_m': float(np.max(ascents)),
+                'mean_segment_descent_m': float(np.mean(descents)),
+                'median_segment_descent_m': float(np.median(descents)),
+                'max_segment_descent_m': float(np.max(descents)),
+                'mean_segment_gradient': float(np.mean(gradients)),
+                'median_segment_gradient': float(np.median(gradients)),
+                'std_segment_gradient': float(np.std(gradients)),
+                'max_segment_gradient': float(np.max(max_gradients)),
                 'mean_dwell_time_minutes': float(np.mean(dwell_times)),
                 'median_dwell_time_minutes': float(np.median(dwell_times)),
+                'num_steep_segments_5pct_threshold': len([g for g in max_gradients if abs(g) > 0.05]),
+                'num_steep_segments_10pct_threshold': len([g for g in max_gradients if abs(g) > 0.10]),
+                'variance_segment_gradients': float(np.var(gradients))
             })
         return stats
     except Exception as e:
