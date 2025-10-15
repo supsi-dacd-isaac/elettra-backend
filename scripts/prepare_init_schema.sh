@@ -36,6 +36,35 @@ WHERE NOT EXISTS (
     SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary'
 );
 
+-- Per-day auxiliary services
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_mon', 1, 0, 0, 0, 0, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_mon');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_tue', 0, 1, 0, 0, 0, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_tue');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_wed', 0, 0, 1, 0, 0, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_wed');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_thu', 0, 0, 0, 1, 0, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_thu');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_fri', 0, 0, 0, 0, 1, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_fri');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_sat', 0, 0, 0, 0, 0, 1, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_sat');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_sun', 0, 0, 0, 0, 0, 0, 1, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_sun');
+
 EOF
 
 echo "✓ Created $OUTPUT_SCHEMA"

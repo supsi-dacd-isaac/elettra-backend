@@ -519,11 +519,15 @@ def find_existing_aux_trip(
     arrival_time_hm: str,
     route_id: str,
     status: str = "depot",
+    day_of_week: Optional[str] = None,
+    expected_calendar_key: Optional[str] = None,
 ) -> Optional[str]:
     """Find an existing trip with the same parameters. Returns trip_id if found."""
     # Fetch all trips for this route with the given status
     url = f"{base_url}/api/v1/gtfs/gtfs-trips/by-route/{route_id}"
     params = {"status": status}
+    if day_of_week:
+        params["day_of_week"] = day_of_week
     resp = requests.get(url, headers=headers, params=params)
     resp.raise_for_status()
     trips = resp.json()
@@ -533,6 +537,9 @@ def find_existing_aux_trip(
     arrival_time_full = f"{arrival_time_hm}:00"
     
     for trip in trips:
+        # If expected calendar key is provided, ensure it matches this trip's gtfs_service_id
+        if expected_calendar_key and trip.get("gtfs_service_id") != expected_calendar_key:
+            continue
         # Check if departure and arrival times match
         if trip.get("departure_time") != departure_time_full:
             continue
@@ -572,6 +579,7 @@ def create_aux_trip(
     route_id: str,
     status: str = "depot",
     calendar_service_key: str = "auxiliary",
+    day_of_week: Optional[str] = None,
 ):
     # Always create a new trip (don't check for existing ones)
     url = f"{base_url}/api/v1/gtfs/aux-trip"
@@ -584,6 +592,8 @@ def create_aux_trip(
         "status": status,
         "calendar_service_key": calendar_service_key,
     }
+    if day_of_week:
+        body["day_of_week"] = day_of_week
     resp = requests.post(url, headers=headers, json=body)
     resp.raise_for_status()
     result = resp.json()
@@ -703,6 +713,24 @@ def process_one_csv(
         if not dep_id or not arr_id:
             raise RuntimeError(f"Cannot resolve stop IDs for depot segment: {dep_name} -> {arr_name}")
 
+        # Map day_group to a specific day_of_week for auxiliary trips
+        # mon-fri -> monday; sat -> saturday; sun -> sunday
+        aux_day = None
+        if day_group:
+            g = (day_group or '').lower()
+            if g == 'mon-fri':
+                aux_day = 'monday'
+            elif g == 'sat':
+                aux_day = 'saturday'
+            elif g == 'sun':
+                aux_day = 'sunday'
+
+        # Compute expected calendar key for deletion filtering when a specific day is used
+        expected_calendar_key = None
+        if aux_day:
+            suffix = {'monday':'mon','tuesday':'tue','wednesday':'wed','thursday':'thu','friday':'fri','saturday':'sat','sunday':'sun'}[aux_day]
+            expected_calendar_key = f"auxiliary_{suffix}"
+
         # Find existing trip with same parameters and delete it
         existing_trip_id = find_existing_aux_trip(
             base_url,
@@ -713,14 +741,19 @@ def process_one_csv(
             adjust_midnight_hm(seg["to_time"]),
             route_id,
             status="depot",
+            day_of_week=aux_day,
+            expected_calendar_key=expected_calendar_key,
         )
         if existing_trip_id:
-            print(f"[INFO] Deleting old trip {existing_trip_id}")
-            try:
-                delete_trip(base_url, headers, existing_trip_id)
-                print(f"[INFO] Successfully deleted old trip {existing_trip_id}")
-            except Exception as e:
-                print(f"[WARN] Failed to delete old trip {existing_trip_id}: {e}")
+            if skip_deletion:
+                print(f"[INFO] Skipping deletion of existing trip {existing_trip_id} (--skip-deletion flag set)")
+            else:
+                print(f"[INFO] Deleting old trip {existing_trip_id}")
+                try:
+                    delete_trip(base_url, headers, existing_trip_id)
+                    print(f"[INFO] Successfully deleted old trip {existing_trip_id}")
+                except Exception as e:
+                    print(f"[WARN] Failed to delete old trip {existing_trip_id}: {e}")
 
         # Create new trip
         created = create_aux_trip(
@@ -733,6 +766,7 @@ def process_one_csv(
             route_id,
             status="depot",
             calendar_service_key="auxiliary",
+            day_of_week=aux_day,
         )
         # Update cache with new stops for created trip (fetch once)
         try:
@@ -910,6 +944,7 @@ def process_csv_multi(
     time_tolerance_min: int,
     agency_id: str,
     day_group: str,
+    skip_deletion: bool = False,
 ) -> List[List[dict]]:
     # Parse the CSV into potentially multiple shifts and build outputs for each
     # Reuse the same internal helpers from process_one_csv
@@ -975,6 +1010,24 @@ def process_csv_multi(
         if not dep_id or not arr_id:
             raise RuntimeError(f"Cannot resolve stop IDs for depot segment: {dep_name} -> {arr_name}")
 
+        # Map day_group to a specific day_of_week for auxiliary trips
+        # mon-fri -> monday; sat -> saturday; sun -> sunday
+        aux_day = None
+        if day_group:
+            g = (day_group or '').lower()
+            if g == 'mon-fri':
+                aux_day = 'monday'
+            elif g == 'sat':
+                aux_day = 'saturday'
+            elif g == 'sun':
+                aux_day = 'sunday'
+
+        # Compute expected calendar key for deletion filtering when a specific day is used
+        expected_calendar_key = None
+        if aux_day:
+            suffix = {'monday':'mon','tuesday':'tue','wednesday':'wed','thursday':'thu','friday':'fri','saturday':'sat','sunday':'sun'}[aux_day]
+            expected_calendar_key = f"auxiliary_{suffix}"
+
         # Find existing trip with same parameters and delete it
         existing_trip_id = find_existing_aux_trip(
             base_url,
@@ -985,14 +1038,19 @@ def process_csv_multi(
             adjust_midnight_hm(seg["to_time"]),
             route_id,
             status="depot",
+            day_of_week=aux_day,
+            expected_calendar_key=expected_calendar_key,
         )
         if existing_trip_id:
-            print(f"[INFO] Deleting old trip {existing_trip_id}")
-            try:
-                delete_trip(base_url, headers, existing_trip_id)
-                print(f"[INFO] Successfully deleted old trip {existing_trip_id}")
-            except Exception as e:
-                print(f"[WARN] Failed to delete old trip {existing_trip_id}: {e}")
+            if skip_deletion:
+                print(f"[INFO] Skipping deletion of existing trip {existing_trip_id} (--skip-deletion flag set)")
+            else:
+                print(f"[INFO] Deleting old trip {existing_trip_id}")
+                try:
+                    delete_trip(base_url, headers, existing_trip_id)
+                    print(f"[INFO] Successfully deleted old trip {existing_trip_id}")
+                except Exception as e:
+                    print(f"[WARN] Failed to delete old trip {existing_trip_id}: {e}")
 
         # Create new trip
         created = create_aux_trip(
@@ -1005,6 +1063,7 @@ def process_csv_multi(
             route_id,
             status="depot",
             calendar_service_key="auxiliary",
+            day_of_week=aux_day,
         )
         try:
             _ = get_stops_for_trip_cached(base_url, headers, created["id"], stops_cache)
@@ -1181,6 +1240,7 @@ def main():
     # Matching options
     parser.add_argument("--fuzzy-stops", action="store_true", help="Enable fuzzy stop-name matching with warnings")
     parser.add_argument("--time-tolerance-min", type=int, default=0, help="Allow ±N minutes difference when matching times")
+    parser.add_argument("--skip-deletion", action="store_true", help="Skip deletion of existing trips from database")
     args = parser.parse_args()
 
     # Auth
@@ -1249,6 +1309,7 @@ def main():
             args.time_tolerance_min,
             args.agency_id,
             args.day_of_week,
+            args.skip_deletion,
         )
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         if len(outputs) <= 1:
@@ -1311,6 +1372,7 @@ def main():
                 args.time_tolerance_min,
                 args.agency_id,
                 args.day_of_week,
+                args.skip_deletion,
             )
             if len(outputs) <= 1:
                 data = outputs[0] if outputs else []

@@ -72,6 +72,7 @@ CLI options (key flags):
 - `--day-of-week` one of `mon-fri|sat|sun` (default `mon-fri`)
 - `--fuzzy-stops` enable fuzzy stop-name matching with warnings
 - `--time-tolerance-min` allow ±N minutes when matching times (default `0`)
+- `--skip-deletion` skip deletion of existing trips from database
 
 Authentication:
 - The script logs into the backend using credentials from `--env` or the environment.
@@ -91,6 +92,12 @@ python playground/build_shift_json_from_csv.py \
 python playground/build_shift_json_from_csv.py \
   --input-dir /home/elettra/data/2026-TM_6f_Sa_TM_csv \
   --day-of-week sat
+
+# Skip deletion of existing trips (useful for testing or when you want to keep existing data)
+python playground/build_shift_json_from_csv.py \
+  --csv /home/elettra/data/TM_csv/00_40101.csv \
+  --output /home/elettra/data/TM_json/shift_40101_reconstructed.json \
+  --skip-deletion
 ```
 
 Outputs

@@ -390,18 +390,26 @@ async def compute_trip_statistics(
     else:
         combined_elev = pd.DataFrame()
 
-    # Compute combined stats
-    global_stats = compute_global_trip_statistics_combined(concat_schedule, combined_elev)
-    segment_stats = extract_stop_to_stop_statistics_for_schedule(concat_schedule, combined_elev)
-    difficulty_stats = extract_route_difficulty_metrics_from_elevation(combined_elev)
+    # Compute combined stats with tolerant error handling
+    try:
+        global_stats = compute_global_trip_statistics_combined(concat_schedule, combined_elev)
+        segment_stats = extract_stop_to_stop_statistics_for_schedule(concat_schedule, combined_elev)
+        difficulty_stats = extract_route_difficulty_metrics_from_elevation(combined_elev)
 
-    stats = {}
-    stats.update(global_stats)
-    stats.update(segment_stats)
-    stats.update(difficulty_stats)
+        stats = {}
+        stats.update(global_stats)
+        stats.update(segment_stats)
+        stats.update(difficulty_stats)
 
-    return CombinedTripStatisticsResponse(
-        trip_ids=request.trip_ids,
-        statistics=stats,
-        error=None
-    )
+        return CombinedTripStatisticsResponse(
+            trip_ids=request.trip_ids,
+            statistics=stats,
+            error=None
+        )
+    except Exception as e:
+        # Return 200 with error message and empty statistics as per tests expectations
+        return CombinedTripStatisticsResponse(
+            trip_ids=request.trip_ids,
+            statistics={},
+            error=str(e)
+        )

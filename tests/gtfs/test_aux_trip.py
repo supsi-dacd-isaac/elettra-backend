@@ -165,3 +165,49 @@ def test_create_transfer_trip(client, record, monkeypatch):
     _cleanup_trip(client, created_trip_id, headers)
 
 
+@pytest.mark.skipif(
+    not (
+        os.getenv("OSRM_BASE_URL")
+        and os.getenv("TEST_ROUTE_ID")
+        and os.getenv("TEST_DEPOT_DEPARTURE_STOP_ID")
+        and os.getenv("TEST_DEPOT_ARRIVAL_STOP_ID")
+        and (
+            os.getenv("TEST_API_TOKEN")
+            or (
+                os.getenv("TEST_LOGIN_EMAIL") and os.getenv("TEST_LOGIN_PASSWORD")
+            )
+        )
+    ),
+    reason="Requires OSRM_BASE_URL, auth, TEST_ROUTE_ID and depot stop ids",
+)
+def test_create_depot_trip_with_day_of_week(client, record, monkeypatch):
+    monkeypatch.setenv("MINIO_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9002"))
+
+    dep_stop_id = os.getenv("TEST_DEPOT_DEPARTURE_STOP_ID")
+    arr_stop_id = os.getenv("TEST_DEPOT_ARRIVAL_STOP_ID")
+    route_id = os.getenv("TEST_ROUTE_ID")
+
+    headers = _auth_headers(client)
+
+    payload = {
+        "departure_stop_id": dep_stop_id,
+        "arrival_stop_id": arr_stop_id,
+        "departure_time": "10:00:00",
+        "arrival_time": "10:20:00",
+        "route_id": route_id,
+        "status": "depot",
+        "day_of_week": "monday",
+    }
+    r = client.post(f"{API_BASE}/aux-trip", json=payload, headers=headers)
+    ok = r.status_code == 200
+    record("create_depot_trip_mon_status", ok, f"status={r.status_code} body={r.text[:200]}")
+
+    created_trip_id = None
+    if ok:
+        data = r.json()
+        created_trip_id = data.get("id")
+        record("gtfs_service_auxiliary_mon", data.get("gtfs_service_id") == "auxiliary_mon", f"gtfs_service_id={data.get('gtfs_service_id')}")
+
+    _cleanup_trip(client, created_trip_id, headers)
+
+

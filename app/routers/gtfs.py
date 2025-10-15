@@ -1136,8 +1136,28 @@ async def create_aux_trip(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to upload elevation parquet to MinIO: {str(e)}")
 
-    # 5) Find service row in gtfs_calendar with service_id == 'auxiliary' (or override)
-    calendar_key = (req.calendar_service_key or 'auxiliary')
+    # 5) Resolve calendar service key:
+    # Priority:
+    #   - req.day_of_week => auxiliary_mon..sun
+    #   - req.calendar_service_key (legacy/custom)
+    #   - default 'auxiliary'
+    calendar_key = None
+    if getattr(req, 'day_of_week', None):
+        day = (req.day_of_week or '').strip().lower()
+        day_to_suffix = {
+            'monday': 'mon',
+            'tuesday': 'tue',
+            'wednesday': 'wed',
+            'thursday': 'thu',
+            'friday': 'fri',
+            'saturday': 'sat',
+            'sunday': 'sun',
+        }
+        if day not in day_to_suffix:
+            raise HTTPException(status_code=400, detail="Invalid day_of_week. Use monday..sunday")
+        calendar_key = f"auxiliary_{day_to_suffix[day]}"
+    else:
+        calendar_key = (req.calendar_service_key or 'auxiliary')
     result = await db.execute(select(GtfsCalendar).filter(GtfsCalendar.service_id == calendar_key))
     svc_row = result.scalars().first()
     if svc_row is None:

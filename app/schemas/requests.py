@@ -14,6 +14,7 @@ class AuxTripCreate(BaseModel):
     route_id: UUID
     status: TripStatus = TripStatus.DEPOT
     calendar_service_key: Optional[str] = None
+    day_of_week: Optional[str] = None  # monday..sunday; when set, overrides calendar_service_key
 
 
 # Shift creation/update requests
