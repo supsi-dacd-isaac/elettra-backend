@@ -119,6 +119,34 @@ def get_consumption_from_map(cmap: Dict[str, dict], trip_id: str, quantile: str 
     raise ValueError(f"Invalid quantile: {quantile}")
 
 
+def print_shifts_by_route(shift_files: List[str]):
+    """Print the list of shifts selected, divided by route."""
+    route_shifts = {}
+    
+    for path in shift_files:
+        filename = os.path.basename(path)
+        shift_name = filename.replace('.json', '')
+        
+        # Extract route from shift name (first 3 numbers after the _)
+        parts = shift_name.split('_')
+        if len(parts) >= 2:
+            route = parts[1][:3]  # First 3 characters after the underscore
+        else:
+            route = "unknown"
+        
+        if route not in route_shifts:
+            route_shifts[route] = []
+        route_shifts[route].append(shift_name)
+    
+    print(f"\nSelected shifts by route ({len(shift_files)} total):")
+    for route in sorted(route_shifts.keys()):
+        shifts = sorted(route_shifts[route])
+        print(f"  Route {route}: {len(shifts)} shifts")
+        for shift in shifts:
+            print(f"    - {shift}")
+    print()
+
+
 def optimize_cp_lugano_centro_fast_highs(
     shift_dir: str,
     consumption_dir: str,
@@ -129,10 +157,15 @@ def optimize_cp_lugano_centro_fast_highs(
     session_penalty_weight: float = 0.0,
     early_charging_weight: float = 0.0,
     quantile_consumption: str = "mean",
+    lock_entire_dwell: bool = False,
 ):
     # Inputs and preprocessing
     bus_config = load_bus_config("playground/tpl/batch_config_all_shifts.json")
     shift_files = identify_lugano_centro_files(shift_dir)
+    
+    # Print shifts by route
+    print_shifts_by_route(shift_files)
+    
     stations = identify_stations(shift_files)
     station_to_idx = {s: i for i, s in enumerate(stations)}
     first_t, last_t = compute_time_bounds(shift_files)
@@ -153,6 +186,9 @@ def optimize_cp_lugano_centro_fast_highs(
     max_power = np.zeros(num_buses, dtype=float)
     shift_names = []
     drive_events_by_bus = [[] for _ in range(num_buses)]
+
+    # Track dwell segments per bus for optional CP locking during entire dwell
+    dwell_segments_by_bus: list[list[tuple[int, int]]] = [list() for _ in range(len(shift_files))]
 
     for b_idx, path in enumerate(shift_files):
         filename = os.path.basename(path)
@@ -213,6 +249,7 @@ def optimize_cp_lugano_centro_fast_highs(
                 end = max(0, dep_next - first_t)
                 presence_mask[start:end, b_idx] = 1
                 station_at_minute[start:end, b_idx] = s_idx
+                dwell_segments_by_bus[b_idx].append((start, end))  # [start, end)
 
     # Build Pyomo model
     m = ConcreteModel()
@@ -360,6 +397,23 @@ def optimize_cp_lugano_centro_fast_highs(
             return sum(mdl.connect[tau, b] for tau in range(t, t + min_session_duration)) >= min_session_duration * mdl.start_session[t, b]
 
         m.min_sess = Constraint(m.T, m.B, rule=min_sess_rule)
+
+    # Optional: lock a CP for the full dwell if a bus is connected at any time during that dwell.
+    # Enforce connect to be constant across each dwell segment.
+    if lock_entire_dwell:
+        # Build an index of (b, t) pairs where t is within a dwell and has a predecessor also in the same dwell
+        lock_pairs: list[tuple[int, int]] = []
+        for b in range(num_buses):
+            for (start, end) in dwell_segments_by_bus[b]:
+                for t in range(start + 1, end):
+                    lock_pairs.append((b, t))
+
+        m.LockIndex = Set(dimen=2, initialize=lock_pairs)
+
+        def lock_rule(mdl, b, t):
+            return mdl.connect[t, b] == mdl.connect[t - 1, b]
+
+        m.lock_dwell = Constraint(m.LockIndex, rule=lock_rule)
 
     # Objective
     time_weights = np.arange(num_steps, dtype=float)
@@ -697,10 +751,12 @@ def main():
     }
     min_soc = 0.4
     max_soc = 0.9
-    min_session_duration = 3
+    min_session_duration = 2
     session_penalty_weight = 0.01
     early_charging_weight = 0
     quantile_consumption = "0.95"
+    # Optional feature flag: reserve CP for entire dwell if any charging occurs during that dwell
+    lock_entire_dwell = True
 
     optimize_cp_lugano_centro_fast_highs(
         shift_dir=shift_dir,
@@ -712,10 +768,10 @@ def main():
         session_penalty_weight=session_penalty_weight,
         early_charging_weight=early_charging_weight,
         quantile_consumption=quantile_consumption,
+        lock_entire_dwell=lock_entire_dwell,
     )
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
