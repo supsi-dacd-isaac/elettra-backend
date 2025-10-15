@@ -75,6 +75,14 @@ def get_route_id(base_url: str, headers: Dict[str, str], agency_id: str, route_s
     raise RuntimeError(f"Route with short_name={route_short_name} not found for agency {agency_id}")
 
 
+def fetch_routes_by_agency(base_url: str, headers: Dict[str, str], agency_id: str) -> List[dict]:
+    url = f"{base_url}/api/v1/gtfs/gtfs-routes/by-agency/{agency_id}"
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+    rows = resp.json()
+    return rows or []
+
+
 def fetch_trips_by_route(
     base_url: str,
     headers: Dict[str, str],
@@ -623,6 +631,8 @@ def process_one_csv(
     stops_cache: Dict[str, List[dict]],
     fuzzy_stops: bool,
     time_tolerance_min: int,
+    agency_id: str,
+    day_group: str,
 ) -> List[dict]:
     # Parse CSV into segments, use known GTFS terminal names to avoid over-grouping
     start_depot_seg, service_segments, end_depot_seg = parse_csv_segments(
@@ -795,6 +805,80 @@ def process_one_csv(
         if not item:
             # Fallback: search within trip stop sequences
             item = find_trip_by_internal_stops(seg)
+        # Cross-route fallback within same agency if still not found
+        if not item:
+            # Cache routes and built indices per other route to avoid repeated HTTP calls
+            if '___other_routes_cache' not in locals():
+                ___routes = []
+                try:
+                    ___routes = fetch_routes_by_agency(base_url, headers, agency_id)
+                except Exception as e:
+                    ___routes = []
+                ___other_routes_cache = [r for r in ___routes if r.get('id') and r.get('id') != route_id]
+                ___other_indices_cache: Dict[str, Dict[Tuple[str, str, str, str], dict]] = {}
+            # Attempt match across other routes
+            for ___r in ___other_routes_cache:
+                ___rid = ___r.get('id')
+                if not ___rid:
+                    continue
+                ___idx = ___other_indices_cache.get(___rid)
+                if ___idx is None:
+                    try:
+                        ___trips = fetch_trips_by_route_multi_day(base_url, headers, ___rid, day_group=day_group, status="gtfs")
+                        ___idx, _ = build_trip_index(base_url, headers, ___trips, stops_cache=stops_cache)
+                        ___other_indices_cache[___rid] = ___idx
+                    except Exception:
+                        continue
+                # Exact endpoint match on other route
+                ___entry = ___idx.get(key)
+                if ___entry:
+                    item = ___entry
+                    print(f"[INFO] Fallback matched trip on other route {___rid} for segment {key[0]} -> {key[1]} {key[2]}-{key[3]}")
+                    break
+                # Tolerant endpoint match on other route
+                if time_tolerance_min > 0 and not item:
+                    for (s_name, e_name, dep_hm, arr_hm), ___entry2 in ___idx.items():
+                        if s_name != key[0] or e_name != key[1]:
+                            continue
+                        d1 = minutes_diff(dep_hm, key[2])
+                        d2 = minutes_diff(arr_hm, key[3])
+                        if d1 is not None and d2 is not None and d1 <= time_tolerance_min and d2 <= time_tolerance_min:
+                            item = ___entry2
+                            print(f"[INFO] Fallback tolerant match on other route {___rid} for segment {key[0]} -> {key[1]} {key[2]}-{key[3]}")
+                            break
+                    if item:
+                        break
+                # Internal stops match on other route
+                if not item:
+                    from_name_used = canonicalize_name(seg["from_name"]) if fuzzy_stops else seg["from_name"]
+                    to_name_used = canonicalize_name(seg["to_name"]) if fuzzy_stops else seg["to_name"]
+                    for ___entry3 in ___idx.values():
+                        ___t = ___entry3["trip"]
+                        ___stops = get_stops_for_trip_cached(base_url, headers, ___t["id"], stops_cache) or []
+                        ___from_idx = None
+                        ___to_idx = None
+                        for i, s in enumerate(___stops):
+                            stop_name = s.get("stop_name")
+                            arr_hm = time_hms_to_hm(s.get("arrival_time", "")) if s.get("arrival_time") else None
+                            dep_hm = time_hms_to_hm(s.get("departure_time", "")) if s.get("departure_time") else None
+                            names_match_from = (stop_name == from_name_used) or (fuzzy_stops and _normalize(stop_name) == _normalize(from_name_used))
+                            dep_ok = (dep_hm == key[2]) or (time_tolerance_min > 0 and dep_hm is not None and minutes_diff(dep_hm, key[2]) is not None and minutes_diff(dep_hm, key[2]) <= time_tolerance_min)
+                            arr_ok = (arr_hm == key[2]) or (time_tolerance_min > 0 and arr_hm is not None and minutes_diff(arr_hm, key[2]) is not None and minutes_diff(arr_hm, key[2]) <= time_tolerance_min)
+                            if ___from_idx is None and names_match_from and (dep_ok or arr_ok):
+                                ___from_idx = i
+                                continue
+                            names_match_to = (stop_name == to_name_used) or (fuzzy_stops and _normalize(stop_name) == _normalize(to_name_used))
+                            arr_ok_to = (arr_hm == key[3]) or (time_tolerance_min > 0 and arr_hm is not None and minutes_diff(arr_hm, key[3]) is not None and minutes_diff(arr_hm, key[3]) <= time_tolerance_min)
+                            dep_ok_to = (dep_hm == key[3]) or (time_tolerance_min > 0 and dep_hm is not None and minutes_diff(dep_hm, key[3]) is not None and minutes_diff(dep_hm, key[3]) <= time_tolerance_min)
+                            if ___from_idx is not None and names_match_to and (arr_ok_to or dep_ok_to):
+                                ___to_idx = i
+                                break
+                        if ___from_idx is not None and ___to_idx is not None and ___to_idx > ___from_idx:
+                            item = {"trip": ___t}
+                            print(f"[INFO] Fallback internal-stops match on other route {___rid} for segment {key[0]} -> {key[1]} {key[2]}-{key[3]}")
+                            break
+                    if item:
+                        break
         if not item:
             from_name_used = canonicalize_name(seg["from_name"]) if fuzzy_stops else seg["from_name"]
             to_name_used = canonicalize_name(seg["to_name"]) if fuzzy_stops else seg["to_name"]
@@ -824,6 +908,8 @@ def process_csv_multi(
     stops_cache: Dict[str, List[dict]],
     fuzzy_stops: bool,
     time_tolerance_min: int,
+    agency_id: str,
+    day_group: str,
 ) -> List[List[dict]]:
     # Parse the CSV into potentially multiple shifts and build outputs for each
     # Reuse the same internal helpers from process_one_csv
@@ -980,6 +1066,75 @@ def process_csv_multi(
                         break
             if not item:
                 item = find_trip_by_internal_stops(seg)
+            # Cross-route fallback within same agency if still not found
+            if not item:
+                if '___other_routes_cache' not in locals():
+                    ___routes = []
+                    try:
+                        ___routes = fetch_routes_by_agency(base_url, headers, agency_id)
+                    except Exception:
+                        ___routes = []
+                    ___other_routes_cache = [r for r in ___routes if r.get('id') and r.get('id') != route_id]
+                    ___other_indices_cache: Dict[str, Dict[Tuple[str, str, str, str], dict]] = {}
+                for ___r in ___other_routes_cache:
+                    ___rid = ___r.get('id')
+                    if not ___rid:
+                        continue
+                    ___idx = ___other_indices_cache.get(___rid)
+                    if ___idx is None:
+                        try:
+                            ___trips = fetch_trips_by_route_multi_day(base_url, headers, ___rid, day_group=day_group, status="gtfs")
+                            ___idx, _ = build_trip_index(base_url, headers, ___trips, stops_cache=stops_cache)
+                            ___other_indices_cache[___rid] = ___idx
+                        except Exception:
+                            continue
+                    ___entry = ___idx.get(key)
+                    if ___entry:
+                        item = ___entry
+                        print(f"[INFO] Fallback matched trip on other route {___rid} for segment {key[0]} -> {key[1]} {key[2]}-{key[3]}")
+                        break
+                    if time_tolerance_min > 0 and not item:
+                        for (s_name, e_name, dep_hm, arr_hm), ___entry2 in ___idx.items():
+                            if s_name != key[0] or e_name != key[1]:
+                                continue
+                            d1 = minutes_diff(dep_hm, key[2])
+                            d2 = minutes_diff(arr_hm, key[3])
+                            if d1 is not None and d2 is not None and d1 <= time_tolerance_min and d2 <= time_tolerance_min:
+                                item = ___entry2
+                                print(f"[INFO] Fallback tolerant match on other route {___rid} for segment {key[0]} -> {key[1]} {key[2]}-{key[3]}")
+                                break
+                        if item:
+                            break
+                    if not item:
+                        from_name_used = canonicalize_name(seg["from_name"]) if fuzzy_stops else seg["from_name"]
+                        to_name_used = canonicalize_name(seg["to_name"]) if fuzzy_stops else seg["to_name"]
+                        for ___entry3 in ___idx.values():
+                            ___t = ___entry3["trip"]
+                            ___stops = get_stops_for_trip_cached(base_url, headers, ___t["id"], stops_cache) or []
+                            ___from_idx = None
+                            ___to_idx = None
+                            for i, s in enumerate(___stops):
+                                stop_name = s.get("stop_name")
+                                arr_hm = time_hms_to_hm(s.get("arrival_time", "")) if s.get("arrival_time") else None
+                                dep_hm = time_hms_to_hm(s.get("departure_time", "")) if s.get("departure_time") else None
+                                names_match_from = (stop_name == from_name_used) or (fuzzy_stops and _normalize(stop_name) == _normalize(from_name_used))
+                                dep_ok = (dep_hm == key[2]) or (time_tolerance_min > 0 and dep_hm is not None and minutes_diff(dep_hm, key[2]) is not None and minutes_diff(dep_hm, key[2]) <= time_tolerance_min)
+                                arr_ok = (arr_hm == key[2]) or (time_tolerance_min > 0 and arr_hm is not None and minutes_diff(arr_hm, key[2]) is not None and minutes_diff(arr_hm, key[2]) <= time_tolerance_min)
+                                if ___from_idx is None and names_match_from and (dep_ok or arr_ok):
+                                    ___from_idx = i
+                                    continue
+                                names_match_to = (stop_name == to_name_used) or (fuzzy_stops and _normalize(stop_name) == _normalize(to_name_used))
+                                arr_ok_to = (arr_hm == key[3]) or (time_tolerance_min > 0 and arr_hm is not None and minutes_diff(arr_hm, key[3]) is not None and minutes_diff(arr_hm, key[3]) <= time_tolerance_min)
+                                dep_ok_to = (dep_hm == key[3]) or (time_tolerance_min > 0 and dep_hm is not None and minutes_diff(dep_hm, key[3]) is not None and minutes_diff(dep_hm, key[3]) <= time_tolerance_min)
+                                if ___from_idx is not None and names_match_to and (arr_ok_to or dep_ok_to):
+                                    ___to_idx = i
+                                    break
+                            if ___from_idx is not None and ___to_idx is not None and ___to_idx > ___from_idx:
+                                item = {"trip": ___t}
+                                print(f"[INFO] Fallback internal-stops match on other route {___rid} for segment {key[0]} -> {key[1]} {key[2]}-{key[3]}")
+                                break
+                        if item:
+                            break
             if not item:
                 from_name_used = canonicalize_name(seg["from_name"]) if fuzzy_stops else seg["from_name"]
                 to_name_used = canonicalize_name(seg["to_name"]) if fuzzy_stops else seg["to_name"]
@@ -1092,6 +1247,8 @@ def main():
             stops_cache,
             args.fuzzy_stops,
             args.time_tolerance_min,
+            args.agency_id,
+            args.day_of_week,
         )
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         if len(outputs) <= 1:
@@ -1152,6 +1309,8 @@ def main():
                 stops_cache,
                 args.fuzzy_stops,
                 args.time_tolerance_min,
+                args.agency_id,
+                args.day_of_week,
             )
             if len(outputs) <= 1:
                 data = outputs[0] if outputs else []
