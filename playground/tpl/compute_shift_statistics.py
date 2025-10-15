@@ -1,33 +1,65 @@
 #!/usr/bin/env python3
 """
 Script to compute trip statistics for all shift JSON files using the API endpoint.
-Processes each JSON file in the turni_macchina_2026 folder and saves results to a statistics folder.
+Processes each JSON file in the specified folder and saves results to a statistics folder.
+
+Configuration:
+    The script loads credentials from tests/test.env file using python-dotenv.
+    Required environment variables:
+    - TEST_LOGIN_EMAIL: Email for API authentication
+    - TEST_LOGIN_PASSWORD: Password for API authentication
+    - API_BASE_URL: Base URL for the API (default: http://localhost:8002)
+
+Usage:
+    python compute_shift_statistics.py [--json-folder PATH] [--stats-folder PATH]
+
+Arguments:
+    --json-folder: Path to the folder containing JSON files (default: script_dir/turni_macchina_2026/2026-TM_15f_lu-ve_TM_json)
+    --stats-folder: Path to the folder where statistics will be saved (default: script_dir/statistics/{json_folder_basename})
 """
 
 import os
 import json
 import requests
 import time
+import argparse
 from pathlib import Path
 from typing import List, Dict, Any
 import logging
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configuration
-API_BASE_URL = "http://localhost:8002"
-LOGIN_EMAIL = "test@supsi.ch"
-LOGIN_PASSWORD = ">tha0-!UdLb.hZ@aP)*x"
-STATISTICS_FOLDER = "statistics"
+# Load environment variables from test.env
+def load_config():
+    """Load configuration from environment variables."""
+    # Try to load from test.env file (relative to project root)
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent.parent  # Go up to project root
+    test_env_path = project_root / "tests" / "test.env"
+    
+    if test_env_path.exists():
+        load_dotenv(test_env_path)
+        logger.info(f"Loaded environment variables from {test_env_path}")
+    else:
+        logger.warning(f"test.env file not found at {test_env_path}, using system environment variables")
+    
+    # Configuration with fallbacks
+    API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8002")
+    LOGIN_EMAIL = os.getenv("TEST_LOGIN_EMAIL", "test@supsi.ch")
+    LOGIN_PASSWORD = os.getenv("TEST_LOGIN_PASSWORD", ">tha0-!UdLb.hZ@aP)*x")
+    STATISTICS_FOLDER = "statistics"
+    
+    return API_BASE_URL, LOGIN_EMAIL, LOGIN_PASSWORD, STATISTICS_FOLDER
 
-def get_auth_token() -> str:
+def get_auth_token(api_base_url: str, login_email: str, login_password: str) -> str:
     """Get authentication token from the API."""
-    login_url = f"{API_BASE_URL}/auth/login"
+    login_url = f"{api_base_url}/auth/login"
     login_data = {
-        "email": LOGIN_EMAIL,
-        "password": LOGIN_PASSWORD
+        "email": login_email,
+        "password": login_password
     }
     
     try:
@@ -40,9 +72,9 @@ def get_auth_token() -> str:
         logger.error(f"Failed to authenticate: {e}")
         raise
 
-def compute_trip_statistics(token: str, trip_ids: List[str]) -> Dict[str, Any]:
+def compute_trip_statistics(api_base_url: str, token: str, trip_ids: List[str]) -> Dict[str, Any]:
     """Compute statistics for a list of trip IDs using the API."""
-    url = f"{API_BASE_URL}/api/v1/simulation/trip-statistics/"
+    url = f"{api_base_url}/api/v1/simulation/trip-statistics/"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -58,7 +90,7 @@ def compute_trip_statistics(token: str, trip_ids: List[str]) -> Dict[str, Any]:
         logger.error(f"Failed to compute statistics for trips {trip_ids}: {e}")
         return {"error": str(e), "trip_ids": trip_ids}
 
-def process_shift_file(file_path: Path, token: str) -> Dict[str, Any]:
+def process_shift_file(file_path: Path, api_base_url: str, token: str) -> Dict[str, Any]:
     """Process a single shift JSON file and compute statistics for each trip individually."""
     logger.info(f"Processing file: {file_path.name}")
     
@@ -92,7 +124,7 @@ def process_shift_file(file_path: Path, token: str) -> Dict[str, Any]:
             
             try:
                 # Call API for single trip
-                statistics = compute_trip_statistics(token, [trip_id])
+                statistics = compute_trip_statistics(api_base_url, token, [trip_id])
                 
                 trip_result = {
                     "trip_id": trip_id,
@@ -139,12 +171,46 @@ def process_shift_file(file_path: Path, token: str) -> Dict[str, Any]:
         logger.error(f"Error processing {file_path.name}: {e}")
         return {"error": str(e), "file": file_path.name}
 
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Compute trip statistics for all shift JSON files using the API endpoint"
+    )
+    parser.add_argument(
+        "--json-folder",
+        type=str,
+        help="Path to the folder containing JSON files (default: script_dir/turni_macchina_2026/2026-TM_15f_lu-ve_TM_json)"
+    )
+    parser.add_argument(
+        "--stats-folder",
+        type=str,
+        help="Path to the folder where statistics will be saved (default: script_dir/statistics/{json_folder_basename})"
+    )
+    return parser.parse_args()
+
 def main():
     """Main function to process all shift files."""
+    # Load configuration from environment variables
+    api_base_url, login_email, login_password, statistics_folder = load_config()
+    
+    # Parse command line arguments
+    args = parse_arguments()
+    
     # Get the directory of this script
     script_dir = Path(__file__).parent
-    json_folder = script_dir / "turni_macchina_2026" / "2026-TM_15f_lu-ve_TM_json"
-    stats_folder = script_dir / STATISTICS_FOLDER
+    
+    # Set folder paths based on arguments or defaults
+    if args.json_folder:
+        json_folder = Path(args.json_folder)
+    else:
+        json_folder = script_dir / "turni_macchina_2026" / "2026-TM_15f_lu-ve_TM_json"
+    
+    if args.stats_folder:
+        stats_folder = Path(args.stats_folder)
+    else:
+        # Create stats folder with json folder basename as subdirectory
+        json_folder_basename = json_folder.name
+        stats_folder = script_dir / statistics_folder / json_folder_basename
     
     # Create statistics folder if it doesn't exist
     stats_folder.mkdir(exist_ok=True)
@@ -156,7 +222,7 @@ def main():
     
     # Get authentication token
     try:
-        token = get_auth_token()
+        token = get_auth_token(api_base_url, login_email, login_password)
     except Exception as e:
         logger.error(f"Failed to get authentication token: {e}")
         return
@@ -173,7 +239,7 @@ def main():
     for i, json_file in enumerate(json_files, 1):
         logger.info(f"Processing file {i}/{len(json_files)}: {json_file.name}")
         
-        result = process_shift_file(json_file, token)
+        result = process_shift_file(json_file, api_base_url, token)
         results.append(result)
         
         if "error" in result:
