@@ -1,5 +1,6 @@
 import os
 import json
+import argparse
 from datetime import datetime
 from typing import List, Tuple, Dict
 
@@ -158,6 +159,7 @@ def optimize_cp_lugano_centro_fast_highs(
     early_charging_weight: float = 0.0,
     quantile_consumption: str = "mean",
     lock_entire_dwell: bool = False,
+    day_of_week: str = "mon-fri",
 ):
     # Inputs and preprocessing
     bus_config = load_bus_config("playground/tpl/batch_config_all_shifts.json")
@@ -512,6 +514,28 @@ def optimize_cp_lugano_centro_fast_highs(
     results_dir = os.path.join("playground", "tpl", "results", f"fast_highs_pyomo_optimization_{timestamp}")
     os.makedirs(results_dir, exist_ok=True)
 
+    # Log input parameters for analysis
+    input_parameters = {
+        "day_of_week": day_of_week,
+        "shift_dir": shift_dir,
+        "consumption_dir": consumption_dir,
+        "min_soc": float(min_soc),
+        "max_soc": float(max_soc),
+        "min_session_duration": int(min_session_duration),
+        "session_penalty_weight": float(session_penalty_weight),
+        "early_charging_weight": float(early_charging_weight),
+        "quantile_consumption": quantile_consumption,
+        "lock_entire_dwell": lock_entire_dwell,
+        "cost_cps": cost_cps,
+        "timestamp": timestamp,
+        "num_buses": int(num_buses),
+        "num_stations": int(len(stations)),
+        "time_range_minutes": [int(first_t), int(last_t)],
+        "stations": stations,
+    }
+    with open(os.path.join(results_dir, "input_parameters.json"), "w") as f:
+        json.dump(input_parameters, f, indent=2, ensure_ascii=False)
+
     with open(os.path.join(results_dir, "installed_chargers_by_station.json"), "w") as f:
         json.dump(installed_by_station, f, indent=2, ensure_ascii=False)
 
@@ -736,39 +760,108 @@ def optimize_cp_lugano_centro_fast_highs(
 
 
 def main():
-    shift_dir = "playground/tpl/turni_macchina_2026/2026-TM_15f_lu-ve_TM_json"
-    consumption_dir = "playground/tpl/predctions"
+    parser = argparse.ArgumentParser(description='Optimize charging point placement for Lugano Centro')
+    
+    # Day of week parameter
+    parser.add_argument('--day-of-week', 
+                       choices=['mon-fri', 'sat', 'sun'], 
+                       default='mon-fri',
+                       help='Day of week for simulation (default: mon-fri)')
+    
+    # SOC parameters
+    parser.add_argument('--min-soc', 
+                       type=float, 
+                       default=0.4,
+                       help='Minimum state of charge (default: 0.4)')
+    
+    parser.add_argument('--max-soc', 
+                       type=float, 
+                       default=0.9,
+                       help='Maximum state of charge (default: 0.9)')
+    
+    # Session parameters
+    parser.add_argument('--min-session-duration', 
+                       type=int, 
+                       default=2,
+                       help='Minimum charging session duration in minutes (default: 2)')
+    
+    parser.add_argument('--session-penalty-weight', 
+                       type=float, 
+                       default=0.01,
+                       help='Weight for session penalty in objective (default: 0.01)')
+    
+    parser.add_argument('--early-charging-weight', 
+                       type=float, 
+                       default=0.0,
+                       help='Weight for early charging penalty in objective (default: 0.0)')
+    
+    # Consumption prediction parameters
+    parser.add_argument('--quantile-consumption', 
+                       choices=['mean', 'median', '0.05', '0.25', '0.50', '0.75', '0.95'], 
+                       default='0.95',
+                       help='Quantile for consumption prediction (default: 0.95)')
+    
+    # Feature flags
+    parser.add_argument('--lock-entire-dwell', 
+                       action='store_true', 
+                       default=True,
+                       help='Lock charging point for entire dwell period (default: True)')
+    
+    parser.add_argument('--no-lock-entire-dwell', 
+                       dest='lock_entire_dwell', 
+                       action='store_false',
+                       help='Disable locking charging point for entire dwell period')
+    
+    args = parser.parse_args()
+    
+    # Directory mapping
+    dirs = {
+        'mon-fri': '2026-TM_15f_lu-ve_TM_json', 
+        'sat': '2026-TM_6f_Sa_TM_json', 
+        'sun': '2026-TM_7+_Do_TM_json'
+    }
+    
+    shift_dir = f"playground/tpl/turni_macchina_2026/{dirs[args.day_of_week]}"
+    consumption_dir = f"playground/tpl/predctions/{dirs[args.day_of_week]}"
+    
+    # Cost configuration for charging points
     cost_cps = {
         'Brè, Paese': [10],
         'Canobbio, Ganna': [1],
         'Comano, Studio TV': [1],
-        'Lugano, Centro': [1.5, 0.3, 0.3, 0.3],
+        'Lugano, Centro': [1, 0.3, 0.3, 0.3],
         'Lugano, Cornaredo': [1],
         'Lugano, Pista Ghiaccio': [1],
         'Pazzallo, P+R Fornaci': [1],
         'Piano Stampa, Capolinea': [1],
         'Pregassona, Piazza di Giro': [10],
     }
-    min_soc = 0.4
-    max_soc = 0.9
-    min_session_duration = 2
-    session_penalty_weight = 0.01
-    early_charging_weight = 0
-    quantile_consumption = "0.95"
-    # Optional feature flag: reserve CP for entire dwell if any charging occurs during that dwell
-    lock_entire_dwell = True
+    
+    print(f"Running optimization with parameters:")
+    print(f"  Day of week: {args.day_of_week}")
+    print(f"  Min SOC: {args.min_soc}")
+    print(f"  Max SOC: {args.max_soc}")
+    print(f"  Min session duration: {args.min_session_duration} minutes")
+    print(f"  Session penalty weight: {args.session_penalty_weight}")
+    print(f"  Early charging weight: {args.early_charging_weight}")
+    print(f"  Quantile consumption: {args.quantile_consumption}")
+    print(f"  Lock entire dwell: {args.lock_entire_dwell}")
+    print(f"  Shift directory: {shift_dir}")
+    print(f"  Consumption directory: {consumption_dir}")
+    print()
 
     optimize_cp_lugano_centro_fast_highs(
         shift_dir=shift_dir,
         consumption_dir=consumption_dir,
         cost_cps=cost_cps,
-        min_soc=min_soc,
-        max_soc=max_soc,
-        min_session_duration=min_session_duration,
-        session_penalty_weight=session_penalty_weight,
-        early_charging_weight=early_charging_weight,
-        quantile_consumption=quantile_consumption,
-        lock_entire_dwell=lock_entire_dwell,
+        min_soc=args.min_soc,
+        max_soc=args.max_soc,
+        min_session_duration=args.min_session_duration,
+        session_penalty_weight=args.session_penalty_weight,
+        early_charging_weight=args.early_charging_weight,
+        quantile_consumption=args.quantile_consumption,
+        lock_entire_dwell=args.lock_entire_dwell,
+        day_of_week=args.day_of_week,
     )
     return 0
 
