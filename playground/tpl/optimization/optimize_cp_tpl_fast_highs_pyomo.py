@@ -159,6 +159,7 @@ def optimize_cp_lugano_centro_fast_highs(
     early_charging_weight: float = 0.0,
     quantile_consumption: str = "mean",
     lock_entire_dwell: bool = False,
+    cp_slack_minutes: int = 0,
     day_of_week: str = "mon-fri",
 ):
     # Inputs and preprocessing
@@ -314,6 +315,110 @@ def optimize_cp_lugano_centro_fast_highs(
             return Constraint.Skip
 
     m.station_capacity = Constraint(m.T, m.S, rule=station_capacity_rule)
+
+    # Assignment of buses to concrete CP slots (per-station) to enable CP-level cooldown
+    # Build index of (t, s, k) where slot k exists at station s
+    use_index: list[tuple[int, int, int]] = []
+    slots_per_station: list[int] = []
+    for s_idx, costs in enumerate(station_slot_costs):
+        nslots = len(costs)
+        slots_per_station.append(nslots)
+        for k in range(nslots):
+            for t in range(num_steps):
+                use_index.append((t, s_idx, k))
+    m.UseIndex = Set(dimen=3, initialize=use_index)
+
+    # Build index of (t, b, s, k) where bus b is at station s at minute t and slot k exists
+    assign_index: list[tuple[int, int, int, int]] = []
+    for t in range(num_steps):
+        for s_idx in range(len(stations)):
+            b_list = buses_here.get((t, s_idx), [])
+            nslots = len(station_slot_costs[s_idx])
+            if nslots <= 0 or not b_list:
+                continue
+            for b in b_list:
+                for k in range(nslots):
+                    assign_index.append((t, b, s_idx, k))
+    m.AssignIndex = Set(dimen=4, initialize=assign_index)
+    m.assign = Var(m.AssignIndex, domain=Binary)
+
+    # Per-slot capacity: at most one bus can occupy a slot and only if installed
+    def slot_cap_rule(mdl, t, s, k):
+        b_list = buses_here.get((t, s), [])
+        if not b_list:
+            return Constraint.Skip
+        terms = [mdl.assign[t, b, s, k] for b in b_list if (t, b, s, k) in mdl.AssignIndex]
+        if not terms:
+            return Constraint.Skip
+        return sum(terms) <= mdl.install[s, k]
+
+    m.slot_cap = Constraint(m.UseIndex, rule=slot_cap_rule)
+
+    # Each connected bus must be assigned to exactly one slot at its station
+    def bus_assign_rule(mdl, t, b):
+        s = int(station_at_minute[t, b])
+        if s < 0:
+            return Constraint.Skip
+        nslots = len(station_slot_costs[s])
+        if nslots <= 0:
+            # No slots exist: force connect to 0 implicitly via capacity, but keep here as Skip
+            return Constraint.Skip
+        terms = [mdl.assign[t, b, s, k] for k in range(nslots) if (t, b, s, k) in mdl.AssignIndex]
+        if not terms:
+            # No valid assignment choices at this time-station
+            return mdl.connect[t, b] == 0
+        return sum(terms) == mdl.connect[t, b]
+
+    m.bus_assign = Constraint(m.T, m.B, rule=bus_assign_rule)
+
+    # Prevent slot switching during a continuous charging session
+    def no_switch_rule(mdl, t, b, s, k):
+        if t == 0:
+            return Constraint.Skip
+        # Only enforce if bus is at the same station in consecutive minutes
+        s_prev = int(station_at_minute[t - 1, b])
+        if s_prev != s or s < 0:
+            return Constraint.Skip
+        if (t - 1, b, s, k) not in mdl.AssignIndex:
+            return Constraint.Skip
+        # A bus can only newly occupy a slot at time t if this is a session start
+        return mdl.assign[t, b, s, k] <= mdl.assign[t - 1, b, s, k] + mdl.start_session[t, b]
+
+    m.no_switch = Constraint(m.AssignIndex, rule=no_switch_rule)
+
+    # Cooldown (slack) after a bus leaves a CP slot: forbid reuse for cp_slack_minutes
+    if cp_slack_minutes and cp_slack_minutes > 0:
+        def cooldown_rule(mdl, t, s, k, b, delta):
+            # Enforce only where indices exist: (t,b,s,k) must be valid; future summation uses available indices
+            if (t, b, s, k) not in mdl.AssignIndex:
+                return Constraint.Skip
+            if t + 1 >= num_steps or t + delta >= num_steps:
+                return Constraint.Skip
+            # Sum of future assignments to this slot at time t+delta (by any bus present there)
+            future_buses = buses_here.get((t + delta, s), [])
+            rhs_terms = [mdl.assign[t + delta, bb, s, k] for bb in future_buses if (t + delta, bb, s, k) in mdl.AssignIndex]
+            rhs_sum = 0 if not rhs_terms else sum(rhs_terms)
+            # If bus b was on the slot at t and is disconnected at t+1, then slot must be idle at t+delta
+            return mdl.assign[t, b, s, k] - mdl.connect[t + 1, b] <= 1 - rhs_sum
+
+        # Build a simple Set for deltas 1..cp_slack_minutes
+        m.Delta = Set(initialize=list(range(1, int(cp_slack_minutes) + 1)))
+        # Index tuples for cooldown constraints where (t,b,s,k) exists
+        cooldown_index: list[tuple[int, int, int, int, int]] = []
+        for t in range(num_steps - 1):
+            for s_idx in range(len(stations)):
+                b_list = buses_here.get((t, s_idx), [])
+                nslots = len(station_slot_costs[s_idx])
+                if nslots <= 0 or not b_list:
+                    continue
+                for b in b_list:
+                    for k in range(nslots):
+                        if (t, b, s_idx, k) in assign_index:
+                            for d in range(1, int(cp_slack_minutes) + 1):
+                                if t + d < num_steps:
+                                    cooldown_index.append((t, s_idx, k, b, d))
+        m.CooldownIndex = Set(dimen=5, initialize=cooldown_index)
+        m.cooldown = Constraint(m.CooldownIndex, rule=lambda mdl, t, s, k, b, d: cooldown_rule(mdl, t, s, k, b, d))
 
     # Installation slot ordering: install[s,k] <= install[s,k-1]
     def slot_order_rule(mdl, s, k):
@@ -526,6 +631,7 @@ def optimize_cp_lugano_centro_fast_highs(
         "early_charging_weight": float(early_charging_weight),
         "quantile_consumption": quantile_consumption,
         "lock_entire_dwell": lock_entire_dwell,
+        "cp_slack_minutes": int(cp_slack_minutes),
         "cost_cps": cost_cps,
         "timestamp": timestamp,
         "num_buses": int(num_buses),
@@ -704,11 +810,18 @@ def optimize_cp_lugano_centro_fast_highs(
         if num_cps <= 0:
             continue
         cp_power = np.zeros((num_steps, num_cps), dtype=float)
+        # Fill per-CP series from actual assignment variables
         for t in range(num_steps):
-            active_buses = [b for b in range(num_buses) if station_at_minute[t, b] == s_idx and connect_val[t, b] > 0.5]
-            active_buses.sort()
-            for j, b in enumerate(active_buses[:num_cps]):
-                cp_power[t, j] = power_val[t, b]
+            for k in range(num_cps):
+                # find bus assigned to this slot at (t, s_idx, k)
+                b_list = [b for b in range(num_buses) if station_at_minute[t, b] == s_idx and connect_val[t, b] > 0.5]
+                for b in b_list:
+                    key = (t, b, s_idx, k)
+                    if key in m.AssignIndex:
+                        a_val = float(m.assign[key].value or 0.0)
+                        if a_val > 0.5:
+                            cp_power[t, k] = power_val[t, b]
+                            break
         df_cp = pd.DataFrame(cp_power, index=idx_power, columns=[f"cp_{i+1}_kw" for i in range(num_cps)])
         safe = s_name.replace(",", "").replace(" ", "_").replace("/", "_")
         df_cp.to_csv(os.path.join(results_dir, f"station_{safe}_cp_power.csv"))
@@ -747,6 +860,7 @@ def optimize_cp_lugano_centro_fast_highs(
         "min_session_duration": int(min_session_duration),
         "session_penalty_weight": float(session_penalty_weight),
         "early_charging_weight": float(early_charging_weight),
+        "cp_slack_minutes": int(cp_slack_minutes),
         "installed_sum": int(installed_sum),
         "installation_cost": float(total_installation_cost),
         "sessions_sum": int(round(sessions_sum)),
@@ -811,6 +925,12 @@ def main():
                        dest='lock_entire_dwell', 
                        action='store_false',
                        help='Disable locking charging point for entire dwell period')
+
+    # Charging point slack minutes (cooldown) after a bus disconnects before next can connect
+    parser.add_argument('--cp-slack-minutes',
+                       type=int,
+                       default=0,
+                       help='Cooldown minutes between two consecutive uses of the same CP (default: 0)')
     
     args = parser.parse_args()
     
@@ -846,6 +966,7 @@ def main():
     print(f"  Early charging weight: {args.early_charging_weight}")
     print(f"  Quantile consumption: {args.quantile_consumption}")
     print(f"  Lock entire dwell: {args.lock_entire_dwell}")
+    print(f"  CP slack minutes: {args.cp_slack_minutes}")
     print(f"  Shift directory: {shift_dir}")
     print(f"  Consumption directory: {consumption_dir}")
     print()
@@ -861,6 +982,7 @@ def main():
         early_charging_weight=args.early_charging_weight,
         quantile_consumption=args.quantile_consumption,
         lock_entire_dwell=args.lock_entire_dwell,
+        cp_slack_minutes=args.cp_slack_minutes,
         day_of_week=args.day_of_week,
     )
     return 0
