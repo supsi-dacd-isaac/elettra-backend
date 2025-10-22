@@ -822,7 +822,7 @@ def main():
     }
     
     shift_dir = f"playground/tpl/turni_macchina_2026/{dirs[args.day_of_week]}"
-    consumption_dir = f"playground/tpl/predctions/{dirs[args.day_of_week]}"
+    consumption_dir = f"playground/tpl/predictions/{dirs[args.day_of_week]}"
     
     # Cost configuration for charging points
     cost_cps = {

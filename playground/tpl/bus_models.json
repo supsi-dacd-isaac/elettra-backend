@@ -3,21 +3,25 @@
     "AA_NF": {
       "bus_length_m": 18,
       "battery_capacity_kwh": 514,
+      "max_charging_power_kw": 450,
       "description": "18m articulated bus"
     },
     "AU_NF": {
       "bus_length_m": 12,
       "battery_capacity_kwh": 350,
+      "max_charging_power_kw": 350,
       "description": "12m standard bus"
     },
     "AL_NF": {
       "bus_length_m": 10,
-      "battery_capacity_kwh": 300,
+      "battery_capacity_kwh": 330,
+      "max_charging_power_kw": 330,
       "description": "10m midi bus"
     },
     "MB_NF": {
       "bus_length_m": 6,
       "battery_capacity_kwh": 250,
+      "max_charging_power_kw": 250,
       "description": "6m mini bus"
     }
   },

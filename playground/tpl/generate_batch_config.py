@@ -41,12 +41,14 @@ def generate_config_from_bus_ids(
     default_model_spec = bus_models.get(default_model, list(bus_models.values())[0])
     
     config = {
-        "default": {
-            "bus_length_m": default_model_spec['bus_length_m'],
-            "battery_capacity_kwh": default_model_spec['battery_capacity_kwh'],
+        "global": {
             "external_temp_celsius": external_temp
         },
-        "shifts": {}
+        "default": {
+            "bus_length_m": default_model_spec['bus_length_m'],
+            "battery_capacity_kwh": default_model_spec['battery_capacity_kwh']
+        },
+        "routes": {}
     }
     
     # Determine which bus IDs to include
@@ -69,11 +71,81 @@ def generate_config_from_bus_ids(
         
         # Add shift configuration
         # Support both bus ID format (e.g., "401") and shift ID format (e.g., "01_40401")
-        config["shifts"][bus_id] = {
+        config["routes"][bus_id] = {
             "bus_length_m": model_spec['bus_length_m'],
             "battery_capacity_kwh": model_spec['battery_capacity_kwh'],
-            "external_temp_celsius": external_temp,
+            "max_charging_power_kw": model_spec['max_charging_power_kw'],
             "bus_model": model
+        }
+    
+    return config
+
+
+def generate_config_from_shift_folder(
+    bus_models_data: dict,
+    shift_folder: str,
+    external_temp: float = 20.0
+) -> dict:
+    """Generate config by scanning a folder of shift JSON files
+    
+    The shift files should be named like: XX_YYYYY.json where XX is the shift number
+    and YYYYY is the bus ID (e.g., 01_40102.json for shift 01_40102 on bus 401)
+    """
+    import os
+    import re
+    
+    bus_models = bus_models_data['bus_models']
+    bus_assignments = bus_models_data.get('bus_assignments', {})
+    
+    # Pattern to extract shift_id and bus_id from filename
+    # Matches patterns like: 01_40102.json, 12_40302__part1.json
+    pattern = r'^(\d+)_(\d+)(?:__part\d+)?\.json$'
+    
+    shift_to_bus = {}
+    shift_folder_path = Path(shift_folder)
+    
+    if not shift_folder_path.exists():
+        raise FileNotFoundError(f"Shift folder not found: {shift_folder}")
+    
+    # Scan all JSON files in the folder
+    for json_file in shift_folder_path.glob('*.json'):
+        match = re.match(pattern, json_file.name)
+        if match:
+            shift_id = f"{match.group(1)}_{match.group(2)}"
+            bus_id = match.group(2)
+            shift_to_bus[shift_id] = bus_id
+            print(f"Found shift: {shift_id} -> bus {bus_id}")
+        else:
+            print(f"Skipping file (doesn't match pattern): {json_file.name}")
+    
+    if not shift_to_bus:
+        raise ValueError(f"No valid shift files found in {shift_folder}")
+    
+    # Get default model
+    default_model = list(bus_models.values())[0]
+    
+    config = {
+        "global": {
+            "external_temp_celsius": external_temp
+        },
+        "default": {
+            "bus_length_m": default_model['bus_length_m'],
+            "battery_capacity_kwh": default_model['battery_capacity_kwh']
+        },
+        "routes": {}
+    }
+    
+    # Generate shift entries
+    for shift_id, bus_id in shift_to_bus.items():
+        model_name = bus_assignments.get(bus_id, list(bus_models.keys())[0])
+        model_spec = bus_models[model_name]
+        
+        config["routes"][shift_id] = {
+            "bus_length_m": model_spec['bus_length_m'],
+            "battery_capacity_kwh": model_spec['battery_capacity_kwh'],
+            "max_charging_power_kw": model_spec['max_charging_power_kw'],
+            "bus_model": model_name,
+            "bus_id": bus_id
         }
     
     return config
@@ -108,12 +180,14 @@ def generate_config_from_shift_mapping(
     default_model = list(bus_models.values())[0]
     
     config = {
-        "default": {
-            "bus_length_m": default_model['bus_length_m'],
-            "battery_capacity_kwh": default_model['battery_capacity_kwh'],
+        "global": {
             "external_temp_celsius": external_temp
         },
-        "shifts": {}
+        "default": {
+            "bus_length_m": default_model['bus_length_m'],
+            "battery_capacity_kwh": default_model['battery_capacity_kwh']
+        },
+        "routes": {}
     }
     
     # Generate shift entries
@@ -121,10 +195,10 @@ def generate_config_from_shift_mapping(
         model_name = bus_assignments.get(bus_id, list(bus_models.keys())[0])
         model_spec = bus_models[model_name]
         
-        config["shifts"][shift_id] = {
+        config["routes"][shift_id] = {
             "bus_length_m": model_spec['bus_length_m'],
             "battery_capacity_kwh": model_spec['battery_capacity_kwh'],
-            "external_temp_celsius": external_temp,
+            "max_charging_power_kw": model_spec['max_charging_power_kw'],
             "bus_model": model_name,
             "bus_id": bus_id
         }
@@ -153,6 +227,11 @@ Examples:
   python generate_batch_config.py \\
       --shift-mapping shift_to_bus.csv \\
       --output batch_config.json
+
+  # Generate from shift folder (scans JSON files)
+  python generate_batch_config.py \\
+      --shift-folder turni_macchina_2026/2026-TM_15f_lu-ve_TM_json \\
+      --output batch_config_shifts.json
 
   # Custom temperature
   python generate_batch_config.py \\
@@ -183,6 +262,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--shift-folder',
+        type=str,
+        help='Folder containing shift JSON files (alternative to --bus-ids and --shift-mapping)'
+    )
+    
+    parser.add_argument(
         '--external-temp',
         type=float,
         default=20.0,
@@ -206,11 +291,9 @@ Examples:
     args = parser.parse_args()
     
     # Validate inputs
-    if not args.bus_ids and not args.shift_mapping:
-        parser.error("Must specify either --bus-ids or --shift-mapping")
-    
-    if args.bus_ids and args.shift_mapping:
-        parser.error("Cannot specify both --bus-ids and --shift-mapping")
+    input_methods = [args.bus_ids, args.shift_mapping, args.shift_folder]
+    if sum(1 for method in input_methods if method) != 1:
+        parser.error("Must specify exactly one of: --bus-ids, --shift-mapping, or --shift-folder")
     
     # Load bus models
     print(f"Loading bus models from: {args.bus_models}")
@@ -221,7 +304,14 @@ Examples:
         print(f"  {model}: {spec['bus_length_m']}m, {spec['battery_capacity_kwh']}kWh")
     
     # Generate configuration
-    if args.shift_mapping:
+    if args.shift_folder:
+        print(f"\nGenerating config from shift folder: {args.shift_folder}")
+        config = generate_config_from_shift_folder(
+            bus_models_data,
+            args.shift_folder,
+            args.external_temp
+        )
+    elif args.shift_mapping:
         print(f"\nGenerating config from shift mapping: {args.shift_mapping}")
         config = generate_config_from_shift_mapping(
             bus_models_data,
@@ -243,7 +333,7 @@ Examples:
     
     print(f"\n✓ Configuration saved to: {args.output}")
     print(f"  Default model: {config['default']}")
-    print(f"  Shift-specific configs: {len(config['shifts'])}")
+    print(f"  Route-specific configs: {len(config['routes'])}")
 
 
 if __name__ == "__main__":

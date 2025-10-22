@@ -37,7 +37,7 @@ def load_config(config_file: str) -> dict:
             "battery_capacity_kwh": 450,
             "external_temp_celsius": 20
         },
-        "shifts": {
+        "routes": {
             "01_40102": {
                 "bus_length_m": 18,
                 "battery_capacity_kwh": 450,
@@ -51,7 +51,7 @@ def load_config(config_file: str) -> dict:
         }
     }
     
-    Or use default values for all shifts by omitting the "shifts" section.
+    Or use default values for all shifts by omitting the "routes" section.
     """
     with open(config_file, 'r') as f:
         config = json.load(f)
@@ -147,13 +147,13 @@ def get_shift_params(config: dict, shift_id: str, bus_id: str = None) -> dict:
         default_params['external_temp_celsius'] = config['global']['external_temp_celsius']
 
     # Try to find params by shift_id first
-    if 'shifts' in config and shift_id in config['shifts']:
-        shift_params = {**default_params, **config['shifts'][shift_id]}
+    if 'routes' in config and shift_id in config['routes']:
+        shift_params = {**default_params, **config['routes'][shift_id]}
         return shift_params
 
     # Try to find params by bus_id if available
-    if bus_id and 'shifts' in config and bus_id in config['shifts']:
-        shift_params = {**default_params, **config['shifts'][bus_id]}
+    if bus_id and 'routes' in config and bus_id in config['routes']:
+        shift_params = {**default_params, **config['routes'][bus_id]}
         return shift_params
 
     return default_params
