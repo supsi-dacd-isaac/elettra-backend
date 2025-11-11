@@ -155,6 +155,8 @@ def optimize_cp_lugano_centro_fast_highs(
     min_soc: float,
     max_soc: float,
     min_session_duration: int = 0,
+    session_connection_minutes: int = 0,
+    soc_increase_weight: float = 1e4,
     session_penalty_weight: float = 0.0,
     early_charging_weight: float = 0.0,
     quantile_consumption: str = "mean",
@@ -285,6 +287,7 @@ def optimize_cp_lugano_centro_fast_highs(
     m.connect = Var(m.T, m.B, domain=Binary)
     m.power = Var(m.T, m.B, domain=NonNegativeReals)
     m.soc = Var(m.T1, m.B, domain=Reals)
+    m.extra_soc = Var(m.B, domain=NonNegativeReals)
     m.start_session = Var(m.T, m.B, domain=Binary)
 
     # Presence constraints: connect <= presence_mask
@@ -437,15 +440,18 @@ def optimize_cp_lugano_centro_fast_highs(
     m.p_bound = Constraint(m.T, m.B, rule=p_bound_rule)
 
     def soc_init_rule(mdl, b):
-        return mdl.soc[0, b] == float(battery_capacity[b]) * float(max_soc)
+        base_cap = float(battery_capacity[b])
+        return mdl.soc[0, b] == base_cap * float(max_soc) + float(max_soc) * mdl.extra_soc[b]
 
     m.soc_init = Constraint(m.B, rule=soc_init_rule)
 
     def soc_min_rule(mdl, t, b):
-        return mdl.soc[t, b] >= float(battery_capacity[b]) * float(min_soc)
+        base_cap = float(battery_capacity[b])
+        return mdl.soc[t, b] >= base_cap * float(min_soc) + float(min_soc) * mdl.extra_soc[b]
 
     def soc_max_rule(mdl, t, b):
-        return mdl.soc[t, b] <= float(battery_capacity[b]) * float(max_soc)
+        base_cap = float(battery_capacity[b])
+        return mdl.soc[t, b] <= base_cap * float(max_soc) + float(max_soc) * mdl.extra_soc[b]
 
     m.soc_min = Constraint(m.T1, m.B, rule=soc_min_rule)
     m.soc_max = Constraint(m.T1, m.B, rule=soc_max_rule)
@@ -505,6 +511,24 @@ def optimize_cp_lugano_centro_fast_highs(
 
         m.min_sess = Constraint(m.T, m.B, rule=min_sess_rule)
 
+    connection_buffer = int(session_connection_minutes or 0)
+    if connection_buffer > 0:
+        connection_index: list[tuple[int, int, int]] = []
+        for b in range(num_buses):
+            for start_t in range(num_steps):
+                end_t = min(num_steps, start_t + connection_buffer)
+                for enforce_t in range(start_t, end_t):
+                    if enforce_t < num_steps:
+                        connection_index.append((start_t, enforce_t, b))
+
+        if connection_index:
+            m.ConnectionBufferIndex = Set(dimen=3, initialize=connection_index)
+
+            def connection_buffer_rule(mdl, start_t, enforce_t, b):
+                return mdl.power[enforce_t, b] <= float(max_power[b]) * (1 - mdl.start_session[start_t, b])
+
+            m.connection_buffer = Constraint(m.ConnectionBufferIndex, rule=connection_buffer_rule)
+
     # Optional: lock a CP for the full dwell if a bus is connected at any time during that dwell.
     # Enforce connect to be constant across each dwell segment.
     if lock_entire_dwell:
@@ -534,7 +558,10 @@ def optimize_cp_lugano_centro_fast_highs(
         early_term = 0.0
         if early_charging_weight and early_charging_weight > 0:
             early_term = float(early_charging_weight) * sum(float(time_weights[t]) * sum(mdl.connect[t, b] for b in mdl.B) for t in mdl.T)
-        return install_cost_term + session_term + early_term
+        soc_increase_term = 0.0
+        if soc_increase_weight and soc_increase_weight > 0:
+            soc_increase_term = float(soc_increase_weight) * sum(mdl.extra_soc[b] for b in mdl.B)
+        return install_cost_term + session_term + early_term + soc_increase_term
 
     m.obj = Objective(rule=obj_rule, sense=minimize)
 
@@ -588,6 +615,11 @@ def optimize_cp_lugano_centro_fast_highs(
         for b in range(num_buses):
             soc_val[t, b] = float(m.soc[t, b].value or 0.0)
 
+    extra_soc_val = np.zeros(num_buses)
+    for b in range(num_buses):
+        extra_soc_val[b] = float(m.extra_soc[b].value or 0.0)
+    effective_battery_capacity = battery_capacity + extra_soc_val
+
     # Compute objective component values (print sub-objectives)
     installed_sum = int(sum(installed_by_station.values()))
 
@@ -603,6 +635,8 @@ def optimize_cp_lugano_centro_fast_highs(
         early_unscaled += float(time_weights[t]) * sum(float(m.connect[t, b].value or 0.0) for b in range(num_buses))
     session_term_val = float(session_penalty_weight) * float(sessions_sum) if session_penalty_weight and session_penalty_weight > 0 else 0.0
     early_term_val = float(early_charging_weight) * float(early_unscaled) if early_charging_weight and early_charging_weight > 0 else 0.0
+    soc_increase_total = float(np.sum(extra_soc_val))
+    soc_increase_term_val = float(soc_increase_weight) * soc_increase_total if soc_increase_weight and soc_increase_weight > 0 else 0.0
 
     print("Objective components:")
     print(f"  - Installed chargers (sum): {installed_sum}")
@@ -613,6 +647,27 @@ def optimize_cp_lugano_centro_fast_highs(
     if early_charging_weight and early_charging_weight > 0:
         print(f"  - Early charging term (unscaled): {early_unscaled:.6f}")
         print(f"  - Early charging term (weighted): {early_term_val:.6f}")
+    if soc_increase_total > 1e-6:
+        print(f"  - Added battery capacity (kWh): {soc_increase_total:.6f}")
+        if soc_increase_weight and soc_increase_weight > 0:
+            print(f"  - SOC increase term (weighted): {soc_increase_term_val:.6f}")
+
+    battery_upgrades: list[dict[str, float | str]] = []
+    if np.any(extra_soc_val > 1e-6):
+        print("Battery capacity increases applied:")
+        for b, extra in enumerate(extra_soc_val):
+            if extra <= 1e-6:
+                continue
+            base = float(battery_capacity[b])
+            new_cap = float(effective_battery_capacity[b])
+            shift_name = shift_names[b] if b < len(shift_names) else f"bus_{b}"
+            print(f"  - {shift_name}: {base:.2f} kWh -> {new_cap:.2f} kWh (+{extra:.2f})")
+            battery_upgrades.append({
+                "shift": shift_name,
+                "base_capacity_kwh": base,
+                "added_capacity_kwh": float(extra),
+                "new_capacity_kwh": new_cap,
+            })
 
     # Persist results (use a different prefix to avoid confusion)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -627,6 +682,8 @@ def optimize_cp_lugano_centro_fast_highs(
         "min_soc": float(min_soc),
         "max_soc": float(max_soc),
         "min_session_duration": int(min_session_duration),
+        "session_connection_minutes": int(session_connection_minutes),
+        "soc_increase_weight": float(soc_increase_weight),
         "session_penalty_weight": float(session_penalty_weight),
         "early_charging_weight": float(early_charging_weight),
         "quantile_consumption": quantile_consumption,
@@ -724,8 +781,8 @@ def optimize_cp_lugano_centro_fast_highs(
         ax_s.plot(idx_soc, sm_soc, color="tab:orange", label="SOC [kWh]")
         ax_s.set_ylabel("SOC [kWh]")
         ax_s2 = ax_s.twinx()
-        if battery_capacity[b] > 0:
-            soc_percent = (np.array(sm_soc) / battery_capacity[b]) * 100.0
+        if effective_battery_capacity[b] > 0:
+            soc_percent = (np.array(sm_soc) / effective_battery_capacity[b]) * 100.0
             ax_s2.plot(idx_soc, soc_percent, color="tab:purple", linestyle="--", label="SOC [%]")
             ax_s2.set_ylabel("SOC [%]")
         lines1, labels1 = ax_s.get_legend_handles_labels()
@@ -787,8 +844,8 @@ def optimize_cp_lugano_centro_fast_highs(
         ax.set_title(shift_names[b])
         ax.grid(True, linestyle=":", alpha=0.35)
         ax2 = ax.twinx()
-        if battery_capacity[b] > 0:
-            soc_percent = (soc_series.values / battery_capacity[b]) * 100.0
+        if effective_battery_capacity[b] > 0:
+            soc_percent = (soc_series.values / effective_battery_capacity[b]) * 100.0
             ax2.plot(soc_series.index, soc_percent, color="tab:orange", label="SOC [%]")
             ax2.set_ylabel("SOC [%]")
         lines, labels = ax.get_legend_handles_labels()
@@ -853,11 +910,17 @@ def optimize_cp_lugano_centro_fast_highs(
             .sort_values(by=["sessions", "total_duration_min"], ascending=[False, False]) \
             .to_csv(os.path.join(results_dir, "sessions_by_station.csv"), index=False)
 
+    if battery_upgrades:
+        with open(os.path.join(results_dir, "battery_upgrades.json"), "w") as f:
+            json.dump(battery_upgrades, f, indent=2, ensure_ascii=False)
+
     # Run parameters
     run_params = {
         "min_soc": float(min_soc),
         "max_soc": float(max_soc),
         "min_session_duration": int(min_session_duration),
+        "session_connection_minutes": int(session_connection_minutes),
+        "soc_increase_weight": float(soc_increase_weight),
         "session_penalty_weight": float(session_penalty_weight),
         "early_charging_weight": float(early_charging_weight),
         "cp_slack_minutes": int(cp_slack_minutes),
@@ -865,6 +928,9 @@ def optimize_cp_lugano_centro_fast_highs(
         "installation_cost": float(total_installation_cost),
         "sessions_sum": int(round(sessions_sum)),
         "early_penalty_unscaled": float(early_unscaled),
+        "added_battery_capacity_kwh": soc_increase_total,
+        "battery_capacity_kwh_original": battery_capacity.tolist(),
+        "battery_capacity_kwh_effective": effective_battery_capacity.tolist(),
     }
     with open(os.path.join(results_dir, "run_parameters.json"), "w") as f:
         json.dump(run_params, f, indent=2)
@@ -899,10 +965,20 @@ def main():
                        default=2,
                        help='Minimum charging session duration in minutes (default: 2)')
     
+    parser.add_argument('--session-connection-minutes',
+                       type=int,
+                       default=0,
+                       help='Connection/disconnection buffer minutes at the start of each session (default: 0)')
+    
     parser.add_argument('--session-penalty-weight', 
                        type=float, 
                        default=0.01,
                        help='Weight for session penalty in objective (default: 0.01)')
+    
+    parser.add_argument('--soc-increase-weight',
+                       type=float,
+                       default=1e4,
+                       help='Penalty weight per kWh of additional battery capacity (default: 1e4)')
     
     parser.add_argument('--early-charging-weight', 
                        type=float, 
@@ -912,8 +988,8 @@ def main():
     # Consumption prediction parameters
     parser.add_argument('--quantile-consumption', 
                        choices=['mean', 'median', '0.05', '0.25', '0.50', '0.75', '0.95'], 
-                       default='0.95',
-                       help='Quantile for consumption prediction (default: 0.95)')
+                       default='0.25',
+                       help='Quantile for consumption prediction (default: 0.25)')
     
     # Feature flags
     parser.add_argument('--lock-entire-dwell', 
@@ -946,15 +1022,15 @@ def main():
     
     # Cost configuration for charging points
     cost_cps = {
-        'Brè, Paese': [10],
+        'Brè, Paese': [1],
         'Canobbio, Ganna': [1],
         'Comano, Studio TV': [1],
-        'Lugano, Centro': [1, 0.3, 0.3, 0.3],
+        'Lugano, Centro': [20, 0.3, 0.3, 0.3],
         'Lugano, Cornaredo': [1],
         'Lugano, Pista Ghiaccio': [1],
         'Pazzallo, P+R Fornaci': [1],
         'Piano Stampa, Capolinea': [1],
-        'Pregassona, Piazza di Giro': [10],
+        'Pregassona, Piazza di Giro': [1],
     }
     
     print(f"Running optimization with parameters:")
@@ -962,6 +1038,8 @@ def main():
     print(f"  Min SOC: {args.min_soc}")
     print(f"  Max SOC: {args.max_soc}")
     print(f"  Min session duration: {args.min_session_duration} minutes")
+    print(f"  Session connection minutes: {args.session_connection_minutes} minutes")
+    print(f"  SOC increase weight: {args.soc_increase_weight}")
     print(f"  Session penalty weight: {args.session_penalty_weight}")
     print(f"  Early charging weight: {args.early_charging_weight}")
     print(f"  Quantile consumption: {args.quantile_consumption}")
@@ -978,6 +1056,8 @@ def main():
         min_soc=args.min_soc,
         max_soc=args.max_soc,
         min_session_duration=args.min_session_duration,
+        session_connection_minutes=args.session_connection_minutes,
+        soc_increase_weight=args.soc_increase_weight,
         session_penalty_weight=args.session_penalty_weight,
         early_charging_weight=args.early_charging_weight,
         quantile_consumption=args.quantile_consumption,
