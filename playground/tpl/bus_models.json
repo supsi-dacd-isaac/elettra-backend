@@ -4,25 +4,41 @@
       "bus_length_m": 18,
       "battery_capacity_kwh": 514,
       "max_charging_power_kw": 450,
-      "description": "18m articulated bus"
+      "description": "18m articulated bus",
+      "auxiliary_consumption_kw": {
+        "temperature_celsius": [-5, 0, 5, 10, 15, 20, 25],
+        "consumption_kw": [24, 16, 12, 8, 9, 10, 16]
+      }
     },
     "AU_NF": {
       "bus_length_m": 12,
       "battery_capacity_kwh": 350,
       "max_charging_power_kw": 350,
-      "description": "12m standard bus"
+      "description": "12m standard bus",
+      "auxiliary_consumption_kw": {
+        "temperature_celsius": [-5, 0, 5, 10, 15, 20, 25],
+        "consumption_kw": [17, 12, 9, 6, 7, 8, 12]
+      }
     },
     "AL_NF": {
       "bus_length_m": 10,
       "battery_capacity_kwh": 330,
       "max_charging_power_kw": 330,
-      "description": "10m midi bus"
+      "description": "10m midi bus",
+      "auxiliary_consumption_kw": {
+        "temperature_celsius": [-5, 0, 5, 10, 15, 20, 25],
+        "consumption_kw": [15, 10, 8, 6, 6, 7, 10]
+      }
     },
     "MB_NF": {
       "bus_length_m": 6,
       "battery_capacity_kwh": 250,
       "max_charging_power_kw": 250,
-      "description": "6m mini bus"
+      "description": "6m mini bus",
+      "auxiliary_consumption_kw": {
+        "temperature_celsius": [-5, 0, 5, 10, 15, 20, 25],
+        "consumption_kw": [8, 6, 5, 4, 4, 4, 6]
+      }
     }
   },
   "bus_assignments": {

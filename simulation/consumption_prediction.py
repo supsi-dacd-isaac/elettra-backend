@@ -6,15 +6,17 @@ Main prediction engine for estimating bus energy consumption.
 
 import io
 import json
+import sys
 import joblib
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 import logging
 
 from .minio_utils import download_model_from_minio, build_model_path
 from .feature_preparation import prepare_features_from_trip_stats, validate_features
+from .greybox_models import CombinedGreyboxQRF, MechanicalGreyBox, GreyBoxParams, compute_aux_energy
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,7 @@ class ConsumptionPredictor:
         self.bucket_name = bucket_name
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.required_features = None
+        self.is_greybox = False
         
         if model_name:
             self.load_model(model_name)
@@ -66,8 +69,22 @@ class ConsumptionPredictor:
         )
         
         # Load model from bytes
+        # Register custom classes/functions under __main__ to support models pickled from training script
+        try:
+            sys.modules['__main__'].CombinedGreyboxQRF = CombinedGreyboxQRF
+            sys.modules['__main__'].MechanicalGreyBox = MechanicalGreyBox
+            sys.modules['__main__'].GreyBoxParams = GreyBoxParams
+            sys.modules['__main__'].compute_aux_energy = compute_aux_energy
+        except Exception:
+            # Non-fatal; proceed to load (will fail if required)
+            pass
         self.model = joblib.load(io.BytesIO(model_bytes))
         self.metadata = metadata
+        # Determine model type
+        try:
+            self.is_greybox = bool(metadata and metadata.get('model_type') == 'CombinedGreyboxQRF')
+        except Exception:
+            self.is_greybox = False
         
         # Extract required features from metadata - MANDATORY
         if not metadata:
@@ -138,18 +155,41 @@ class ConsumptionPredictor:
             additional_params=additional_params
         )
         
-        # Validate and align features - MANDATORY
-        if not self.required_features:
-            raise ValueError("Required features not set. Model must be loaded with metadata first.")
-        
-        df = validate_features(df, self.required_features)
-        
-        return df
+        # Greybox models require additional columns and a superset of features
+        if self.is_greybox:
+            # Provide alias expected by greybox from battery capacity parameter
+            if 'bus_battery_kwh' not in df.columns:
+                df['bus_battery_kwh'] = float(battery_capacity_kwh)
+            
+            # Ensure required features list is known
+            if not self.required_features:
+                raise ValueError("Required features not set. Model must be loaded with metadata first.")
+            
+            # Validate presence of QRF selected features (do not drop extras)
+            missing_features = set(self.required_features) - set(df.columns)
+            if missing_features:
+                raise ValueError(f"Missing required features for model: {missing_features}")
+            
+            # Validate presence of greybox required columns
+            gb_required = {'bus_length_m', 'bus_battery_kwh', 'total_distance_m', 'driving_average_speed_kmh', 'total_ascent_m', 'total_descent_m'}
+            missing_gb = gb_required - set(df.columns)
+            if missing_gb:
+                raise ValueError(f"Missing required greybox features: {missing_gb}")
+            
+            return df
+        else:
+            # Validate and align features - MANDATORY (QRF-only models expect exact columns)
+            if not self.required_features:
+                raise ValueError("Required features not set. Model must be loaded with metadata first.")
+            
+            df = validate_features(df, self.required_features)
+            return df
     
     def predict(
         self,
         features: pd.DataFrame,
-        quantiles: Optional[List[float]] = None
+        quantiles: Optional[List[float]] = None,
+        aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None
     ) -> pd.DataFrame:
         """
         Make consumption predictions with uncertainty quantification.
@@ -157,6 +197,7 @@ class ConsumptionPredictor:
         Args:
             features: DataFrame with features (including trip_id if available)
             quantiles: List of quantiles to predict (default: [0.05, 0.25, 0.5, 0.75, 0.95])
+            aux_energy_fn: Optional function(X_df) -> np.ndarray|pd.Series of aux energy per row (kWh)
             
         Returns:
             DataFrame with predictions and prediction intervals
@@ -179,15 +220,24 @@ class ConsumptionPredictor:
         
         # Point prediction (median from QRF)
         logger.info(f"Predicting with features shape: {X.shape}")
-        y_pred_median = self.model.predict(X)
+        if self.is_greybox:
+            y_pred_median = self.model.predict(X, aux_energy_fn=aux_energy_fn)
+        else:
+            y_pred_median = self.model.predict(X)
         
         # Mean prediction from QRF
         logger.info("Computing mean prediction")
-        y_pred_mean = self.model.predict(X, quantiles="mean")
+        if self.is_greybox:
+            y_pred_mean = self.model.predict(X, quantiles="mean", aux_energy_fn=aux_energy_fn)
+        else:
+            y_pred_mean = self.model.predict(X, quantiles="mean")
         
         # Quantile predictions
         logger.info(f"Computing quantiles: {quantiles}")
-        y_pred_quantiles = self.model.predict(X, quantiles=quantiles)
+        if self.is_greybox:
+            y_pred_quantiles = self.model.predict(X, quantiles=quantiles, aux_energy_fn=aux_energy_fn)
+        else:
+            y_pred_quantiles = self.model.predict(X, quantiles=quantiles)
         
         # Create results DataFrame
         results = pd.DataFrame({
@@ -213,7 +263,8 @@ class ConsumptionPredictor:
         bus_length_m: float,
         battery_capacity_kwh: float,
         external_temp_celsius: float,
-        quantiles: Optional[List[float]] = None
+        quantiles: Optional[List[float]] = None,
+        aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None
     ) -> Dict[str, Any]:
         """
         End-to-end prediction from trip statistics JSON.
@@ -224,6 +275,7 @@ class ConsumptionPredictor:
             battery_capacity_kwh: Battery capacity in kWh
             external_temp_celsius: External temperature in Celsius
             quantiles: Optional list of quantiles to predict
+            aux_energy_fn: Optional function(X_df) -> np.ndarray|pd.Series of aux energy per row (kWh)
             
         Returns:
             Dictionary with predictions and metadata
@@ -245,7 +297,7 @@ class ConsumptionPredictor:
         )
         
         # Make predictions
-        predictions = self.predict(features, quantiles=quantiles)
+        predictions = self.predict(features, quantiles=quantiles, aux_energy_fn=aux_energy_fn)
         
         # Compile results
         results = {
@@ -269,10 +321,19 @@ class ConsumptionPredictor:
         # Add quantile summary
         if quantiles:
             results['summary']['quantiles'] = {}
+            # If distance is available, also compute per-km consumption for each quantile
+            total_km = results['summary'].get('total_distance_km', None)
+            has_distance = isinstance(total_km, (int, float)) and total_km and total_km > 0
+            if has_distance:
+                results['summary']['consumption_per_km_kwh_quantiles'] = {}
             for q in quantiles:
                 q_key = f'quantile_{q:.2f}'
                 if q_key in predictions.columns:
-                    results['summary']['quantiles'][f'q{int(q*100):02d}'] = float(predictions[q_key].sum())
+                    total_q_kwh = float(predictions[q_key].sum())
+                    q_label = f'q{int(q*100):02d}'
+                    results['summary']['quantiles'][q_label] = total_q_kwh
+                    if has_distance:
+                        results['summary']['consumption_per_km_kwh_quantiles'][q_label] = float(total_q_kwh / total_km)
         
         logger.info(f"✓ Total predicted consumption: {results['summary']['total_consumption_kwh']:.2f} kWh")
         

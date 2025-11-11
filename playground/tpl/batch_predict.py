@@ -12,6 +12,7 @@ import argparse
 import pandas as pd
 from pathlib import Path
 import logging
+import numpy as np
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -165,7 +166,8 @@ def batch_predict(
     output_dir: str,
     model_name: str,
     quantiles: list = None,
-    pattern: str = "*_statistics.json"
+    pattern: str = "*_statistics.json",
+    aux_bus_models: str = None
 ):
     """Process multiple shift files in batch
     
@@ -176,6 +178,7 @@ def batch_predict(
         model_name: Name/path of the model in MinIO
         quantiles: List of quantiles to predict (optional)
         pattern: Glob pattern to match statistics files
+        aux_bus_models: Optional path to bus_models.json to build custom aux_energy_fn
     """
     stats_dir = Path(statistics_dir)
     out_dir = Path(output_dir)
@@ -203,6 +206,54 @@ def batch_predict(
     # Load model
     logger.info(f"Loading model: {model_name}")
     predictor.load_model(model_name)
+    
+    # Optional: build custom aux_energy_fn from bus_models.json
+    aux_fn = None
+    bus_models_data = None
+    if aux_bus_models:
+        try:
+            with open(aux_bus_models, 'r') as f:
+                bus_models_data = json.load(f)
+            logger.info(f"Loaded bus models from: {aux_bus_models}")
+        except Exception as e:
+            logger.error(f"Failed to load bus models from {aux_bus_models}: {e}")
+            bus_models_data = None
+        if bus_models_data:
+            # Pre-extract list of models
+            models = bus_models_data.get('bus_models', {})
+            model_entries = list(models.values())
+            model_entries = {me['bus_length_m']: me['auxiliary_consumption_kw'] for me in model_entries}
+            def get_consumption_for_length_and_duration(length_m, ext_temp, duration):
+                entry = model_entries.get(length_m)
+                if not entry:
+                    return 0.0
+                temps = entry.get('temperature_celsius', [])
+                powers = entry.get('consumption_kw', [])
+                if not temps or not powers or len(temps) != len(powers):
+                    return 0.0
+                # Interpolate at average temp (assumed to be 20C for this example)
+                power_interp = np.interp(ext_temp, np.asarray(temps, dtype=float), np.asarray(powers, dtype=float))
+                energy_kwh = power_interp * (duration / 60.0)
+                return energy_kwh
+
+            def aux_energy_fn(X_df: pd.DataFrame):
+                """
+                Interpolate auxiliary consumption based on bus_models.json.
+                - Select first bus model whose bus_length_m matches X['bus_length_m'] (first row)
+                - Interpolate consumption_kw over avg_temp_outside_celsius
+                - Energy (kWh) = power (kW) * total_duration_minutes / 60
+                """
+
+                aux_energy = pd.Series(0.0, index=X_df.index)
+                for k, row in X_df.iterrows():
+                    aux_energy[k] = get_consumption_for_length_and_duration(
+                        length_m=float(row.get('bus_length_m', 0)),
+                        ext_temp=float(row.get('avg_temp_outside_celsius', 20)),
+                        duration=float(row.get('total_duration_minutes', 0))
+                    )
+                return aux_energy
+            
+            aux_fn = aux_energy_fn
     
     # Process each file
     results_summary = []
@@ -243,7 +294,8 @@ def batch_predict(
                 bus_length_m=params['bus_length_m'],
                 battery_capacity_kwh=params['battery_capacity_kwh'],
                 external_temp_celsius=params['external_temp_celsius'],
-                quantiles=quantiles
+                quantiles=quantiles,
+                aux_energy_fn=aux_fn
             )
             
             # Save results
@@ -408,6 +460,12 @@ Example usage:
         default='*_statistics.json',
         help='Glob pattern to match statistics files (default: *_statistics.json)'
     )
+    parser.add_argument(
+        '--aux-bus-models',
+        type=str,
+        default=None,
+        help='Path to bus_models.json to enable custom auxiliary energy interpolation'
+    )
     
     args = parser.parse_args()
     
@@ -418,7 +476,8 @@ Example usage:
         output_dir=args.output_dir,
         model_name=args.model_name,
         quantiles=args.quantiles,
-        pattern=args.pattern
+        pattern=args.pattern,
+        aux_bus_models=args.aux_bus_models
     )
 
 
