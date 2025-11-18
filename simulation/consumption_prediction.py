@@ -16,7 +16,14 @@ import logging
 
 from .minio_utils import download_model_from_minio, build_model_path
 from .feature_preparation import prepare_features_from_trip_stats, validate_features
-from .greybox_models import CombinedGreyboxQRF, MechanicalGreyBox, GreyBoxParams, compute_aux_energy
+from .greybox_models import (
+    CombinedGreyboxQRF,
+    MechanicalGreyBox,
+    GreyBoxParams,
+    compute_aux_energy,
+    GREYBOX_PRED_FEATURE,
+)
+from .greybox_sensitivity import compute_battery_sensitivity_from_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -165,10 +172,13 @@ class ConsumptionPredictor:
             if not self.required_features:
                 raise ValueError("Required features not set. Model must be loaded with metadata first.")
             
-            # Validate presence of QRF selected features (do not drop extras)
+            # Validate presence of QRF selected features (do not drop extras).
+            # Greybox-specific helper features are generated internally and can be skipped here.
             missing_features = set(self.required_features) - set(df.columns)
-            if missing_features:
-                raise ValueError(f"Missing required features for model: {missing_features}")
+            auto_generated = {GREYBOX_PRED_FEATURE}
+            missing_non_auto = missing_features - auto_generated
+            if missing_non_auto:
+                raise ValueError(f"Missing required features for model: {missing_non_auto}")
             
             # Validate presence of greybox required columns
             gb_required = {'bus_length_m', 'bus_battery_kwh', 'total_distance_m', 'driving_average_speed_kmh', 'total_ascent_m', 'total_descent_m'}
@@ -298,6 +308,20 @@ class ConsumptionPredictor:
         
         # Make predictions
         predictions = self.predict(features, quantiles=quantiles, aux_energy_fn=aux_energy_fn)
+
+        # If this is a greybox model and we have parameters, compute and attach
+        # battery-size sensitivities per trip. The sensitivity expresses how
+        # much the mechanical energy changes (kWh) per 1 kWh change in
+        # battery capacity, under the greybox model.
+        greybox_params = None
+        if self.is_greybox and isinstance(self.metadata, dict):
+            greybox_params = self.metadata.get("greybox_params")
+        if self.is_greybox and greybox_params:
+            try:
+                sens = compute_battery_sensitivity_from_metadata(features, greybox_params)
+                predictions["mass_sensitivity_kwh_per_kwh_batt"] = sens
+            except Exception as exc:
+                logger.warning(f"Failed to compute greybox battery sensitivity: {exc}")
         
         # Compile results
         results = {
@@ -309,6 +333,9 @@ class ConsumptionPredictor:
                 'battery_capacity_kwh': battery_capacity_kwh,
                 'external_temp_celsius': external_temp_celsius
             },
+            # Expose a small, focused subset of model metadata that is
+            # relevant for downstream optimization.
+            'greybox_params': greybox_params if greybox_params else None,
             'predictions': predictions.to_dict(orient='records'),
             'summary': {
                 'total_consumption_kwh': float(predictions['prediction_kwh'].sum()),

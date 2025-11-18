@@ -16,6 +16,8 @@ REQUIRED_COLS = [
     "total_descent_m",
 ]
 
+GREYBOX_PRED_FEATURE = "greybox_pred_kwh"
+
 
 @dataclass
 class GreyBoxParams:
@@ -186,7 +188,15 @@ class CombinedGreyboxQRF:
             X_qrf = X_qrf.drop(columns=["bus_number"])
         if "bus_battery_kwh" in X_qrf.columns:
             X_qrf = X_qrf.drop(columns=["bus_battery_kwh"])
-        X_qrf = X_qrf[self.selected_features] if self.selected_features else X_qrf
+        selected_features = self.selected_features or []
+        requires_gb_pred_feature = GREYBOX_PRED_FEATURE in selected_features
+
+        if requires_gb_pred_feature:
+            X_qrf = X_qrf.copy()
+            X_qrf[GREYBOX_PRED_FEATURE] = gb_pred
+
+        if selected_features:
+            X_qrf = X_qrf[selected_features]
 
         if quantiles is None:
             res_pred = self.qrf.predict(X_qrf)
