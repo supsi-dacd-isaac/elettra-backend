@@ -1,0 +1,1335 @@
+import os
+import json
+import argparse
+from datetime import datetime
+from typing import List, Tuple, Dict
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from pyomo.environ import (
+    ConcreteModel,
+    Set,
+    Param,
+    Var,
+    Binary,
+    NonNegativeReals,
+    Reals,
+    Constraint,
+    Objective,
+    minimize,
+    value,
+    SolverFactory,
+)
+
+
+def time_to_minutes(time_str: str) -> int | None:
+    if not time_str:
+        return None
+    try:
+        h, m, s = map(int, time_str.split(":"))
+        return h * 60 + m
+    except Exception:
+        return None
+
+
+def load_bus_config(config_file: str) -> dict:
+    with open(config_file, "r") as f:
+        return json.load(f)
+
+
+def identify_lugano_centro_files(shift_dir: str, required_station: str | None = "Lugano, Centro") -> List[str]:
+    res = []
+    for name in os.listdir(shift_dir):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(shift_dir, name)
+        with open(path, "r") as f:
+            data = json.load(f)
+        include = required_station is None
+        if required_station is not None and isinstance(data, list):
+            include = any(
+                isinstance(trip, dict) and trip.get("end_stop_name") == required_station
+                for trip in data
+            )
+        if include:
+            res.append(path)
+    return res
+
+
+def identify_stations(shift_files: List[str]) -> List[str]:
+    stations = set()
+    for path in shift_files:
+        with open(path, "r") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            continue
+        for trip in data:
+            if not isinstance(trip, dict):
+                continue
+            s = trip.get("start_stop_name")
+            e = trip.get("end_stop_name")
+            if s and "Rimessa" not in s:
+                stations.add(s)
+            if e and "Rimessa" not in e:
+                stations.add(e)
+    return sorted(stations)
+
+
+def compute_time_bounds(shift_files: List[str]) -> Tuple[int, int]:
+    first_t = None
+    last_t = None
+    for path in shift_files:
+        with open(path, "r") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            continue
+        for trip in data:
+            if not isinstance(trip, dict):
+                continue
+            a = time_to_minutes(trip.get("arrival_time"))
+            d = time_to_minutes(trip.get("departure_time"))
+            if a is not None:
+                first_t = a if first_t is None else min(first_t, a)
+                last_t = a if last_t is None else max(last_t, a)
+            if d is not None:
+                first_t = d if first_t is None else min(first_t, d)
+                last_t = d if last_t is None else max(last_t, d)
+    if first_t is None or last_t is None:
+        raise RuntimeError("No valid times found")
+    return first_t, last_t
+
+
+def load_consumption_map(consumption_dir: str, shift_name: str) -> Dict[str, dict]:
+    path = os.path.join(consumption_dir, f"{shift_name}_predictions.json")
+    with open(path, "r") as f:
+        data = json.load(f)
+    out: Dict[str, dict] = {}
+    for pred in data.get("predictions", []):
+        tid = pred.get("trip_id")
+        if tid is not None:
+            out[str(tid)] = pred
+    return out
+
+
+def load_prediction_context(consumption_dir: str, shift_name: str) -> dict:
+    path = os.path.join(consumption_dir, f"{shift_name}_predictions.json")
+    with open(path, "r") as f:
+        data = json.load(f)
+    return data.get("contextual_parameters", {}) or {}
+
+
+def get_consumption_from_map(cmap: Dict[str, dict], trip_id: str, quantile: str = "mean") -> float:
+    p = cmap.get(str(trip_id))
+    if p is None:
+        raise ValueError(f"Trip {trip_id} not found in predictions")
+    if quantile == "mean":
+        return float(p.get("prediction_kwh"))
+    if quantile == "median":
+        return float(p.get("prediction_median_kwh"))
+    if quantile in ["0.05", "0.25", "0.50", "0.75", "0.95"]:
+        return float(p.get(f"quantile_{quantile}"))
+    raise ValueError(f"Invalid quantile: {quantile}")
+
+
+def get_sensitivity_from_map(cmap: Dict[str, dict], trip_id: str) -> float:
+    """
+    Return the per-trip sensitivity dE / dE_batt (kWh of traction vs kWh of battery).
+    Falls back to 0.0 when the prediction JSON does not contain the new field.
+    """
+    p = cmap.get(str(trip_id))
+    if p is None:
+        raise ValueError(f"Trip {trip_id} not found in predictions")
+    return float(p.get("mass_sensitivity_kwh_per_kwh_batt", 0.0))
+
+
+def print_shifts_by_route(
+    shift_names: List[str],
+    offsets: Dict[str, float] | None = None,
+    verbose: bool = False,
+):
+    """Print the list of shifts selected, divided by route."""
+    route_shifts: Dict[str, List[str]] = {}
+
+    for shift_name in shift_names:
+        parts = shift_name.split('_')
+        route = parts[1][:3] if len(parts) >= 2 else "unknown"
+        route_shifts.setdefault(route, []).append(shift_name)
+
+    print(f"\nSelected shifts by route ({len(shift_names)} total):")
+    for route in sorted(route_shifts.keys()):
+        shifts = sorted(route_shifts[route])
+        print(f"  Route {route}: {len(shifts)} shifts")
+        for shift in shifts:
+            if verbose and offsets is not None:
+                offset_val = offsets.get(shift)
+                if offset_val is not None:
+                    print(f"    - {shift} (offset: {offset_val:+.2f} kWh)")
+                    continue
+            print(f"    - {shift}")
+    print()
+
+
+def optimize_cp_fast_highs(
+    shift_dir: str,
+    consumption_dir: str,
+    cost_cps: dict,
+    max_total_power_cps: dict[str, float] | None,
+    min_soc: float,
+    max_soc: float,
+    min_session_duration: int = 0,
+    session_connection_minutes: int = 0,
+    soc_increase_weight: float = 1e4,
+    session_penalty_weight: float = 0.0,
+    early_charging_weight: float = 0.0,
+    quantile_consumption: str = "mean",
+    lock_entire_dwell: bool = False,
+    cp_slack_minutes: int = 0,
+    day_of_week: str = "mon-fri",
+    require_lugano_centro: bool = True,
+    solver_name: str = "highs",
+    verbose: bool = False,
+    max_solver_time: float | None = None,
+    mip_rel_gap: float | None = None,
+    mip_abs_gap: float | None = None,
+    feasibility_tol: float | None = None,
+    optimality_tol: float | None = None,
+    int_feas_tol: float | None = None,
+):
+    # Inputs and preprocessing
+    bus_config = load_bus_config("playground/tpl/batch_config_all_shifts.json")
+    shift_files = identify_lugano_centro_files(
+        shift_dir, "Lugano, Centro" if require_lugano_centro else None
+    )
+    if not shift_files:
+        raise RuntimeError(
+            "No shifts matched the selection criteria. "
+            "Try relaxing the Lugano Centro filter or check the input data."
+        )
+
+    debug_limit = int(os.environ.get("DEBUG_LIMIT_BUSES", "0") or "0")
+    sens_scale = float(os.environ.get("SENSITIVITY_SCALE", "1.0") or "1.0")
+    if debug_limit > 0:
+        shift_files = shift_files[:debug_limit]
+    
+    stations = identify_stations(shift_files)
+    missing_stations = [s for s in stations if s not in cost_cps]
+    if missing_stations:
+        raise RuntimeError(
+            "Stations missing in cost_cps: "
+            + ", ".join(sorted(missing_stations))
+        )
+    station_to_idx = {s: i for i, s in enumerate(stations)}
+    if max_total_power_cps is not None:
+        missing_power_limits = [s for s in stations if s not in max_total_power_cps]
+        if missing_power_limits:
+            raise RuntimeError(
+                "Stations missing in max_total_power_cps: "
+                + ", ".join(sorted(missing_power_limits))
+            )
+    power_limits_by_station: dict[int, float] = {}
+    if max_total_power_cps is not None:
+        power_limits_by_station = {
+            station_to_idx[s_name]: float(max_total_power_cps[s_name])
+            for s_name in stations
+        }
+    first_t, last_t = compute_time_bounds(shift_files)
+
+    print(f"\nStations ({len(stations)} total):")
+    for s in stations:
+        print(f"  - {s}")
+
+    num_steps = last_t - first_t + 1
+    num_buses = len(shift_files)
+    dt = 1.0 / 60.0
+
+    # Per-bus data
+    presence_mask = np.zeros((num_steps, num_buses), dtype=int)
+    station_at_minute = -np.ones((num_steps, num_buses), dtype=int)
+    discharge_base = np.zeros((num_steps, num_buses), dtype=float)
+    discharge_sens = np.zeros((num_steps, num_buses), dtype=float)
+    battery_capacity = np.zeros(num_buses, dtype=float)
+    battery_offset = np.zeros(num_buses, dtype=float)
+    max_power = np.zeros(num_buses, dtype=float)
+    shift_names = []
+    drive_events_by_bus = [[] for _ in range(num_buses)]
+
+    # Track dwell segments per bus for optional CP locking during entire dwell
+    dwell_segments_by_bus: list[list[tuple[int, int]]] = [list() for _ in range(len(shift_files))]
+
+    for b_idx, path in enumerate(shift_files):
+        filename = os.path.basename(path)
+        shift_name = filename.replace('.json', '')
+        shift_names.append(shift_name)
+
+        parts = shift_name.split('_')
+        route_cfg = None
+        if len(parts) >= 2:
+            bus_type = parts[1][:3]
+            route_cfg = bus_config.get("routes", {}).get(bus_type)
+        cap = (route_cfg or {}).get("battery_capacity_kwh", bus_config.get("default", {}).get("battery_capacity_kwh", 514))
+        pmax = (route_cfg or {}).get("max_charging_power_kw", bus_config.get("default", {}).get("max_charging_power_kw", 350))
+        battery_capacity[b_idx] = float(cap)
+        max_power[b_idx] = float(pmax)
+
+        pred_context = load_prediction_context(consumption_dir, shift_name)
+        pred_batt = pred_context.get("battery_capacity_kwh")
+        if pred_batt is not None:
+            battery_offset[b_idx] = float(cap) - float(pred_batt)
+        else:
+            battery_offset[b_idx] = 0.0
+
+        with open(path, 'r') as f:
+            data = json.load(f)
+        cmap = load_consumption_map(consumption_dir, shift_name)
+        if not isinstance(data, list):
+            continue
+        trips = []
+        for trip in data:
+            if not isinstance(trip, dict):
+                continue
+            arr = time_to_minutes(trip.get("arrival_time"))
+            dep = time_to_minutes(trip.get("departure_time"))
+            if arr is None or dep is None:
+                continue
+            end_station = trip.get("end_stop_name")
+            trip_id = trip.get("id")
+            energy = get_consumption_from_map(cmap, trip_id, quantile=quantile_consumption)
+            sensitivity = get_sensitivity_from_map(cmap, trip_id) * sens_scale
+            trips.append({
+                "arrival": arr,
+                "departure": dep,
+                "end_station": end_station,
+                "base_energy": float(energy),
+                "sensitivity": float(sensitivity),
+            })
+        if not trips:
+            continue
+        trips.sort(key=lambda r: (r["arrival"], r["departure"]))
+
+        for t in trips:
+            t_idx = t["arrival"] - first_t
+            if 0 <= t_idx < num_steps:
+                discharge_base[t_idx, b_idx] += t["base_energy"]
+                discharge_sens[t_idx, b_idx] += t["sensitivity"]
+            drive_events_by_bus[b_idx].append({
+                "departure": t["departure"],
+                "arrival": t["arrival"],
+                "base_energy": t["base_energy"],
+                "sensitivity": t["sensitivity"],
+            })
+        for i in range(len(trips) - 1):
+            arr_i = trips[i]["arrival"]
+            dep_next = trips[i + 1]["departure"]
+            st = trips[i]["end_station"]
+            if st in station_to_idx and dep_next > arr_i:
+                s_idx = station_to_idx[st]
+                start = max(0, arr_i - first_t)
+                end = max(0, dep_next - first_t)
+                presence_mask[start:end, b_idx] = 1
+                station_at_minute[start:end, b_idx] = s_idx
+                dwell_segments_by_bus[b_idx].append((start, end))  # [start, end)
+
+    shift_offset_map = {
+        shift_names[idx]: float(battery_offset[idx])
+        for idx in range(len(shift_names))
+    }
+    print_shifts_by_route(shift_names, offsets=shift_offset_map, verbose=verbose)
+
+    if verbose and num_buses > 0:
+        sens_totals = discharge_sens.sum(axis=0)
+        print(f"Sensitivity totals per bus: min={sens_totals.min():.6f}, max={sens_totals.max():.6f}")
+        top_idx = np.argsort(-sens_totals)[: min(10, num_buses)]
+        print("Top buses by total sensitivity:")
+        for idx in top_idx:
+            name = shift_names[idx] if idx < len(shift_names) else f"bus_{idx}"
+            print(f"  - {name}: {sens_totals[idx]:.6f} kWh/kWh")
+        print("Battery capacity offsets (config - prediction) per bus:")
+        for idx in range(num_buses):
+            name = shift_names[idx] if idx < len(shift_names) else f"bus_{idx}"
+            cfg = float(battery_capacity[idx])
+            pred = cfg - float(battery_offset[idx])
+            print(f"  - {name}: config={cfg:.2f} kWh, prediction={pred:.2f} kWh, offset={battery_offset[idx]:+.2f} kWh")
+
+    # Build Pyomo model
+    m = ConcreteModel()
+
+    # Index sets
+    m.T = Set(initialize=range(num_steps))
+    m.T1 = Set(initialize=range(num_steps + 1))  # for SOC
+    m.B = Set(initialize=range(num_buses))
+    m.S = Set(initialize=range(len(stations)))
+
+    # Installation slots per station (ragged): store valid (s,k) pairs
+    station_slot_costs = []  # list of np.array per station
+    install_index: list[tuple[int, int]] = []
+    for s_idx, s_name in enumerate(stations):
+        costs = cost_cps.get(s_name, [])
+        arr = np.array(costs, dtype=float)
+        station_slot_costs.append(arr)
+        for k in range(len(costs)):
+            install_index.append((s_idx, k))
+
+    m.InstallIndex = Set(dimen=2, initialize=install_index)
+    # Costs as Param over InstallIndex
+    def init_costs(mdl, s, k):
+        return float(station_slot_costs[s][k])
+
+    m.install_cost = Param(m.InstallIndex, initialize=init_costs, mutable=False)
+    m.install = Var(m.InstallIndex, domain=Binary)
+
+    # Decision variables
+    m.connect = Var(m.T, m.B, domain=Binary)
+    m.power = Var(m.T, m.B, domain=NonNegativeReals)
+    m.soc = Var(m.T1, m.B, domain=Reals)
+    m.extra_soc = Var(m.B, domain=NonNegativeReals)
+    m.start_session = Var(m.T, m.B, domain=Binary)
+
+    if os.environ.get("FIX_EXTRA_SOC_ZERO") == "1":
+        for b in m.B:
+            m.extra_soc[b].fix(0.0)
+
+    # Presence constraints: connect <= presence_mask
+    def presence_rule(mdl, t, b):
+        return mdl.connect[t, b] <= int(presence_mask[t, b])
+
+    m.presence_con = Constraint(m.T, m.B, rule=presence_rule)
+
+    # Station capacity constraints per minute
+    # Precompute buses_here per (t, s)
+    buses_here: dict[tuple[int, int], list[int]] = {}
+    for t in range(num_steps):
+        for s_idx in range(len(stations)):
+            buses_here[(t, s_idx)] = [b for b in range(num_buses) if station_at_minute[t, b] == s_idx]
+
+    def station_capacity_rule(mdl, t, s):
+        # capacity = sum of installed slots at station s
+        cap = 0
+        # If station has slots
+        for (ss, kk) in mdl.InstallIndex:
+            if ss == s:
+                cap = cap + mdl.install[ss, kk]
+        # sum of connects for buses present at s at time t
+        if buses_here.get((t, s)):
+            return sum(mdl.connect[t, b] for b in buses_here[(t, s)]) <= cap
+        else:
+            # No buses; vacuous: 0 <= cap
+            return Constraint.Skip
+
+    m.station_capacity = Constraint(m.T, m.S, rule=station_capacity_rule)
+
+    if power_limits_by_station:
+        def station_power_limit_rule(mdl, t, s):
+            limit = power_limits_by_station.get(s)
+            if limit is None:
+                return Constraint.Skip
+            buses_at_station = buses_here.get((t, s), [])
+            if not buses_at_station:
+                return Constraint.Skip
+            return sum(mdl.power[t, b] for b in buses_at_station) <= limit
+
+        m.station_power_limit = Constraint(m.T, m.S, rule=station_power_limit_rule)
+
+    # Assignment of buses to concrete CP slots (per-station) to enable CP-level cooldown
+    # Build index of (t, s, k) where slot k exists at station s
+    use_index: list[tuple[int, int, int]] = []
+    slots_per_station: list[int] = []
+    for s_idx, costs in enumerate(station_slot_costs):
+        nslots = len(costs)
+        slots_per_station.append(nslots)
+        for k in range(nslots):
+            for t in range(num_steps):
+                use_index.append((t, s_idx, k))
+    m.UseIndex = Set(dimen=3, initialize=use_index)
+
+    # Build index of (t, b, s, k) where bus b is at station s at minute t and slot k exists
+    assign_index: list[tuple[int, int, int, int]] = []
+    for t in range(num_steps):
+        for s_idx in range(len(stations)):
+            b_list = buses_here.get((t, s_idx), [])
+            nslots = len(station_slot_costs[s_idx])
+            if nslots <= 0 or not b_list:
+                continue
+            for b in b_list:
+                for k in range(nslots):
+                    assign_index.append((t, b, s_idx, k))
+    m.AssignIndex = Set(dimen=4, initialize=assign_index)
+    m.assign = Var(m.AssignIndex, domain=Binary)
+
+    # Per-slot capacity: at most one bus can occupy a slot and only if installed
+    def slot_cap_rule(mdl, t, s, k):
+        b_list = buses_here.get((t, s), [])
+        if not b_list:
+            return Constraint.Skip
+        terms = [mdl.assign[t, b, s, k] for b in b_list if (t, b, s, k) in mdl.AssignIndex]
+        if not terms:
+            return Constraint.Skip
+        return sum(terms) <= mdl.install[s, k]
+
+    m.slot_cap = Constraint(m.UseIndex, rule=slot_cap_rule)
+
+    # Each connected bus must be assigned to exactly one slot at its station
+    def bus_assign_rule(mdl, t, b):
+        s = int(station_at_minute[t, b])
+        if s < 0:
+            return Constraint.Skip
+        nslots = len(station_slot_costs[s])
+        if nslots <= 0:
+            # No slots exist: force connect to 0 implicitly via capacity, but keep here as Skip
+            return Constraint.Skip
+        terms = [mdl.assign[t, b, s, k] for k in range(nslots) if (t, b, s, k) in mdl.AssignIndex]
+        if not terms:
+            # No valid assignment choices at this time-station
+            return mdl.connect[t, b] == 0
+        return sum(terms) == mdl.connect[t, b]
+
+    m.bus_assign = Constraint(m.T, m.B, rule=bus_assign_rule)
+
+    # Prevent slot switching during a continuous charging session
+    def no_switch_rule(mdl, t, b, s, k):
+        if t == 0:
+            return Constraint.Skip
+        # Only enforce if bus is at the same station in consecutive minutes
+        s_prev = int(station_at_minute[t - 1, b])
+        if s_prev != s or s < 0:
+            return Constraint.Skip
+        if (t - 1, b, s, k) not in mdl.AssignIndex:
+            return Constraint.Skip
+        # A bus can only newly occupy a slot at time t if this is a session start
+        return mdl.assign[t, b, s, k] <= mdl.assign[t - 1, b, s, k] + mdl.start_session[t, b]
+
+    m.no_switch = Constraint(m.AssignIndex, rule=no_switch_rule)
+
+    # Cooldown (slack) after a bus leaves a CP slot: forbid reuse for cp_slack_minutes
+    if cp_slack_minutes and cp_slack_minutes > 0:
+        def cooldown_rule(mdl, t, s, k, b, delta):
+            # Enforce only where indices exist: (t,b,s,k) must be valid; future summation uses available indices
+            if (t, b, s, k) not in mdl.AssignIndex:
+                return Constraint.Skip
+            if t + 1 >= num_steps or t + delta >= num_steps:
+                return Constraint.Skip
+            # Sum of future assignments to this slot at time t+delta (by any bus present there)
+            future_buses = buses_here.get((t + delta, s), [])
+            rhs_terms = [mdl.assign[t + delta, bb, s, k] for bb in future_buses if (t + delta, bb, s, k) in mdl.AssignIndex]
+            rhs_sum = 0 if not rhs_terms else sum(rhs_terms)
+            # If bus b was on the slot at t and is disconnected at t+1, then slot must be idle at t+delta
+            return mdl.assign[t, b, s, k] - mdl.connect[t + 1, b] <= 1 - rhs_sum
+
+        # Build a simple Set for deltas 1..cp_slack_minutes
+        m.Delta = Set(initialize=list(range(1, int(cp_slack_minutes) + 1)))
+        # Index tuples for cooldown constraints where (t,b,s,k) exists
+        cooldown_index: list[tuple[int, int, int, int, int]] = []
+        for t in range(num_steps - 1):
+            for s_idx in range(len(stations)):
+                b_list = buses_here.get((t, s_idx), [])
+                nslots = len(station_slot_costs[s_idx])
+                if nslots <= 0 or not b_list:
+                    continue
+                for b in b_list:
+                    for k in range(nslots):
+                        if (t, b, s_idx, k) in assign_index:
+                            for d in range(1, int(cp_slack_minutes) + 1):
+                                if t + d < num_steps:
+                                    cooldown_index.append((t, s_idx, k, b, d))
+        m.CooldownIndex = Set(dimen=5, initialize=cooldown_index)
+        m.cooldown = Constraint(m.CooldownIndex, rule=lambda mdl, t, s, k, b, d: cooldown_rule(mdl, t, s, k, b, d))
+
+    # Installation slot ordering: install[s,k] <= install[s,k-1]
+    def slot_order_rule(mdl, s, k):
+        if k == 0:
+            return Constraint.Skip
+        if (s, k) in mdl.InstallIndex and (s, k - 1) in mdl.InstallIndex:
+            return mdl.install[s, k] <= mdl.install[s, k - 1]
+        return Constraint.Skip
+
+    m.slot_order = Constraint(m.InstallIndex, rule=lambda mdl, s, k: slot_order_rule(mdl, s, k))
+
+    # Power bound and SOC dynamics
+    def p_bound_rule(mdl, t, b):
+        return mdl.power[t, b] <= float(max_power[b]) * mdl.connect[t, b]
+
+    m.p_bound = Constraint(m.T, m.B, rule=p_bound_rule)
+
+    def soc_init_rule(mdl, b):
+        base_cap = float(battery_capacity[b])
+        return mdl.soc[0, b] == base_cap * float(max_soc) + float(max_soc) * mdl.extra_soc[b]
+
+    m.soc_init = Constraint(m.B, rule=soc_init_rule)
+
+    def soc_min_rule(mdl, t, b):
+        base_cap = float(battery_capacity[b])
+        return mdl.soc[t, b] >= base_cap * float(min_soc) + float(min_soc) * mdl.extra_soc[b]
+
+    def soc_max_rule(mdl, t, b):
+        base_cap = float(battery_capacity[b])
+        return mdl.soc[t, b] <= base_cap * float(max_soc) + float(max_soc) * mdl.extra_soc[b]
+
+    m.soc_min = Constraint(m.T1, m.B, rule=soc_min_rule)
+    m.soc_max = Constraint(m.T1, m.B, rule=soc_max_rule)
+
+    def soc_dyn_rule(mdl, t, b):
+        base_e = float(discharge_base[t, b])
+        sens_e = float(discharge_sens[t, b])
+        offset = float(battery_offset[b])
+        return mdl.soc[t + 1, b] == mdl.soc[t, b] - (base_e + sens_e * (mdl.extra_soc[b] + offset)) + float(dt) * mdl.power[t, b]
+
+    m.soc_dyn = Constraint(m.T, m.B, rule=soc_dyn_rule)
+
+    # Session starts and min-session-duration
+    # Allowed start mask
+    allowed_start_mask = None
+    if min_session_duration and min_session_duration > 0:
+        allowed_start_mask = np.zeros((num_steps, num_buses))
+        for b in range(num_buses):
+            pres = presence_mask[:, b].astype(int)
+            if num_steps >= min_session_duration:
+                window = np.convolve(pres, np.ones(min_session_duration, dtype=int), mode='valid')
+                allowed = (window == min_session_duration).astype(int)
+                allowed_start_mask[:allowed.shape[0], b] = allowed
+            allowed_start_mask[:, b] = np.minimum(allowed_start_mask[:, b], pres)
+
+        def start_mask_rule(mdl, t, b):
+            return mdl.start_session[t, b] <= int(allowed_start_mask[t, b])
+
+        m.start_mask = Constraint(m.T, m.B, rule=start_mask_rule)
+
+    def start0_rule(mdl, b):
+        return mdl.start_session[0, b] == mdl.connect[0, b]
+
+    m.start0 = Constraint(m.B, rule=start0_rule)
+
+    def start_lb_rule(mdl, t, b):
+        if t == 0:
+            return Constraint.Skip
+        return mdl.start_session[t, b] >= mdl.connect[t, b] - mdl.connect[t - 1, b]
+
+    def start_ub1_rule(mdl, t, b):
+        if t == 0:
+            return Constraint.Skip
+        return mdl.start_session[t, b] <= mdl.connect[t, b]
+
+    def start_ub2_rule(mdl, t, b):
+        if t == 0:
+            return Constraint.Skip
+        return mdl.start_session[t, b] <= 1 - mdl.connect[t - 1, b]
+
+    m.start_lb = Constraint(m.T, m.B, rule=start_lb_rule)
+    m.start_ub1 = Constraint(m.T, m.B, rule=start_ub1_rule)
+    m.start_ub2 = Constraint(m.T, m.B, rule=start_ub2_rule)
+
+    if min_session_duration and min_session_duration > 0:
+        def min_sess_rule(mdl, t, b):
+            if t > num_steps - min_session_duration:
+                return Constraint.Skip
+            return sum(mdl.connect[tau, b] for tau in range(t, t + min_session_duration)) >= min_session_duration * mdl.start_session[t, b]
+
+        m.min_sess = Constraint(m.T, m.B, rule=min_sess_rule)
+
+    connection_buffer = int(session_connection_minutes or 0)
+    if connection_buffer > 0:
+        connection_index: list[tuple[int, int, int]] = []
+        for b in range(num_buses):
+            for start_t in range(num_steps):
+                end_t = min(num_steps, start_t + connection_buffer)
+                for enforce_t in range(start_t, end_t):
+                    if enforce_t < num_steps:
+                        connection_index.append((start_t, enforce_t, b))
+
+        if connection_index:
+            m.ConnectionBufferIndex = Set(dimen=3, initialize=connection_index)
+
+            def connection_buffer_rule(mdl, start_t, enforce_t, b):
+                return mdl.power[enforce_t, b] <= float(max_power[b]) * (1 - mdl.start_session[start_t, b])
+
+            m.connection_buffer = Constraint(m.ConnectionBufferIndex, rule=connection_buffer_rule)
+
+    # Optional: lock a CP for the full dwell if a bus is connected at any time during that dwell.
+    # Enforce connect to be constant across each dwell segment.
+    if lock_entire_dwell:
+        # Build an index of (b, t) pairs where t is within a dwell and has a predecessor also in the same dwell
+        lock_pairs: list[tuple[int, int]] = []
+        for b in range(num_buses):
+            for (start, end) in dwell_segments_by_bus[b]:
+                for t in range(start + 1, end):
+                    lock_pairs.append((b, t))
+
+        m.LockIndex = Set(dimen=2, initialize=lock_pairs)
+
+        def lock_rule(mdl, b, t):
+            return mdl.connect[t, b] == mdl.connect[t - 1, b]
+
+        m.lock_dwell = Constraint(m.LockIndex, rule=lock_rule)
+
+    # Objective
+    time_weights = np.arange(num_steps, dtype=float)
+    time_weights = time_weights / max(1.0, float(num_steps - 1))
+
+    def obj_rule(mdl):
+        install_cost_term = sum(mdl.install[s, k] * m.install_cost[s, k] for (s, k) in mdl.InstallIndex)
+        session_term = 0.0
+        if session_penalty_weight and session_penalty_weight > 0:
+            session_term = float(session_penalty_weight) * sum(mdl.start_session[t, b] for t in mdl.T for b in mdl.B)
+        early_term = 0.0
+        if early_charging_weight and early_charging_weight > 0:
+            early_term = float(early_charging_weight) * sum(float(time_weights[t]) * sum(mdl.connect[t, b] for b in mdl.B) for t in mdl.T)
+        soc_increase_term = 0.0
+        if soc_increase_weight and soc_increase_weight > 0:
+            soc_increase_term = float(soc_increase_weight) * sum(mdl.extra_soc[b] for b in mdl.B)
+        return install_cost_term + session_term + early_term + soc_increase_term
+
+    m.obj = Objective(rule=obj_rule, sense=minimize)
+
+    # Solve with requested MIP solver
+    solver_key = solver_name.lower()
+    if solver_key not in {"highs", "gurobi"}:
+        raise ValueError(f"Unsupported solver '{solver_name}'. Supported solvers: highs, gurobi.")
+
+    solver = SolverFactory(solver_key)
+    if solver is None:
+        raise RuntimeError(f"Solver '{solver_name}' is not available in the current environment.")
+
+    rel_gap = 0.0 if mip_rel_gap is None else max(0.0, float(mip_rel_gap))
+    abs_gap = 0.0 if mip_abs_gap is None else max(0.0, float(mip_abs_gap))
+    feas_tol = 1e-6 if feasibility_tol is None else max(1e-12, float(feasibility_tol))
+    opt_tol = 1e-6 if optimality_tol is None else max(1e-12, float(optimality_tol))
+    integrality_tol = 1e-6 if int_feas_tol is None else max(1e-12, float(int_feas_tol))
+
+    # Tight tolerances similar across solvers (option names vary by backend)
+    if solver_key == "highs":
+        solver.options["mip_rel_gap"] = rel_gap
+        solver.options["mip_abs_gap"] = abs_gap
+        solver.options["mip_feasibility_tolerance"] = feas_tol
+        solver.options["primal_feasibility_tolerance"] = feas_tol
+        solver.options["dual_feasibility_tolerance"] = opt_tol
+        if max_solver_time is not None:
+            solver.options["time_limit"] = float(max_solver_time)
+    elif solver_key == "gurobi":
+        solver.options["MIPGap"] = rel_gap
+        solver.options["MIPGapAbs"] = abs_gap
+        solver.options["FeasibilityTol"] = feas_tol
+        solver.options["OptimalityTol"] = opt_tol
+        solver.options["IntFeasTol"] = integrality_tol
+        if max_solver_time is not None:
+            solver.options["TimeLimit"] = float(max_solver_time)
+        if os.environ.get("DEBUG_COMPUTE_IIS") == "1":
+            solver.options["IISMethod"] = 1
+
+    results = solver.solve(m, tee=verbose)
+    print(f"Solved. Solver termination: {results.solver.termination_condition}")
+    try:
+        print(f"Objective value: {value(m.obj):.9f}")
+    except Exception:
+        pass
+
+    # Extract results
+    installed_by_station: Dict[str, int] = {}
+    total_installation_cost = 0.0
+    for s_idx, s_name in enumerate(stations):
+        # count slots installed
+        costs = station_slot_costs[s_idx]
+        nslots = len(costs)
+        count = 0
+        for k in range(nslots):
+            if (s_idx, k) in m.InstallIndex:
+                v = m.install[s_idx, k].value
+                if v is not None and v >= 0.5:
+                    count += 1
+        installed_by_station[s_name] = int(count)
+        if nslots > 0 and count > 0:
+            total_installation_cost += float(np.sum(costs[:count]))
+
+    print("Installed chargers per station:")
+    for s_name, n in installed_by_station.items():
+        print(f"  - {s_name}: {n}")
+
+    # Build arrays for exports
+    connect_val = np.zeros((num_steps, num_buses))
+    power_val = np.zeros((num_steps, num_buses))
+    soc_val = np.zeros((num_steps + 1, num_buses))
+    for t in range(num_steps):
+        for b in range(num_buses):
+            connect_val[t, b] = float(m.connect[t, b].value or 0.0)
+            power_val[t, b] = float(m.power[t, b].value or 0.0)
+    for t in range(num_steps + 1):
+        for b in range(num_buses):
+            soc_val[t, b] = float(m.soc[t, b].value or 0.0)
+
+    extra_soc_val = np.zeros(num_buses)
+    for b in range(num_buses):
+        extra_soc_val[b] = float(m.extra_soc[b].value or 0.0)
+    effective_battery_capacity = battery_capacity + extra_soc_val
+
+    # Compute objective component values (print sub-objectives)
+    installed_sum = int(sum(installed_by_station.values()))
+
+    sessions_sum = 0.0
+    for t in range(num_steps):
+        for b in range(num_buses):
+            sessions_sum += float(m.start_session[t, b].value or 0.0)
+
+    time_weights = np.arange(num_steps, dtype=float)
+    time_weights = time_weights / max(1.0, float(num_steps - 1))
+    early_unscaled = 0.0
+    for t in range(num_steps):
+        early_unscaled += float(time_weights[t]) * sum(float(m.connect[t, b].value or 0.0) for b in range(num_buses))
+    session_term_val = float(session_penalty_weight) * float(sessions_sum) if session_penalty_weight and session_penalty_weight > 0 else 0.0
+    early_term_val = float(early_charging_weight) * float(early_unscaled) if early_charging_weight and early_charging_weight > 0 else 0.0
+    soc_increase_total = float(np.sum(extra_soc_val))
+    soc_increase_term_val = float(soc_increase_weight) * soc_increase_total if soc_increase_weight and soc_increase_weight > 0 else 0.0
+
+    print("Objective components:")
+    print(f"  - Installed chargers (sum): {installed_sum}")
+    print(f"  - Installation cost (primary term): {total_installation_cost:.6f}")
+    if session_penalty_weight and session_penalty_weight > 0:
+        print(f"  - Session starts (count): {int(round(sessions_sum))}")
+        print(f"  - Session term (weighted): {session_term_val:.6f}")
+    if early_charging_weight and early_charging_weight > 0:
+        print(f"  - Early charging term (unscaled): {early_unscaled:.6f}")
+        print(f"  - Early charging term (weighted): {early_term_val:.6f}")
+    if soc_increase_total > 1e-6:
+        print(f"  - Added battery capacity (kWh): {soc_increase_total:.6f}")
+        if soc_increase_weight and soc_increase_weight > 0:
+            print(f"  - SOC increase term (weighted): {soc_increase_term_val:.6f}")
+
+    battery_upgrades: list[dict[str, float | str]] = []
+    if np.any(extra_soc_val > 1e-6):
+        print("Battery capacity increases applied:")
+        for b, extra in enumerate(extra_soc_val):
+            if extra <= 1e-6:
+                continue
+            base = float(battery_capacity[b])
+            new_cap = float(effective_battery_capacity[b])
+            shift_name = shift_names[b] if b < len(shift_names) else f"bus_{b}"
+            print(f"  - {shift_name}: {base:.2f} kWh -> {new_cap:.2f} kWh (+{extra:.2f})")
+            battery_upgrades.append({
+                "shift": shift_name,
+                "base_capacity_kwh": base,
+                "added_capacity_kwh": float(extra),
+                "new_capacity_kwh": new_cap,
+            })
+
+    # Persist results (use a different prefix to avoid confusion)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_dir = os.path.join(
+        "playground",
+        "tpl",
+        "results",
+        f"fast_{solver_key}_pyomo_optimization_{timestamp}",
+    )
+    os.makedirs(results_dir, exist_ok=True)
+
+    # Log input parameters for analysis
+    input_parameters = {
+        "day_of_week": day_of_week,
+        "shift_dir": shift_dir,
+        "consumption_dir": consumption_dir,
+        "min_soc": float(min_soc),
+        "max_soc": float(max_soc),
+        "min_session_duration": int(min_session_duration),
+        "session_connection_minutes": int(session_connection_minutes),
+        "soc_increase_weight": float(soc_increase_weight),
+        "session_penalty_weight": float(session_penalty_weight),
+        "early_charging_weight": float(early_charging_weight),
+        "quantile_consumption": quantile_consumption,
+        "lock_entire_dwell": lock_entire_dwell,
+        "cp_slack_minutes": int(cp_slack_minutes),
+        "require_lugano_centro": bool(require_lugano_centro),
+        "cost_cps": cost_cps,
+        "max_total_power_cps": max_total_power_cps,
+        "timestamp": timestamp,
+        "num_buses": int(num_buses),
+        "num_stations": int(len(stations)),
+        "time_range_minutes": [int(first_t), int(last_t)],
+        "stations": stations,
+        "solver": solver_key,
+    }
+    with open(os.path.join(results_dir, "input_parameters.json"), "w") as f:
+        json.dump(input_parameters, f, indent=2, ensure_ascii=False)
+
+    with open(os.path.join(results_dir, "installed_chargers_by_station.json"), "w") as f:
+        json.dump(installed_by_station, f, indent=2, ensure_ascii=False)
+
+    # Station summary (peak and avg util)
+    station_rows = []
+    for s_idx, s_name in enumerate(stations):
+        installed = int(installed_by_station.get(s_name, 0))
+        costs_vec = station_slot_costs[s_idx]
+        install_cost = float(np.sum(costs_vec[:installed])) if installed > 0 and costs_vec.size > 0 else 0.0
+        per_time = []
+        for t in range(num_steps):
+            buses_here_t = [b for b in range(num_buses) if station_at_minute[t, b] == s_idx]
+            if buses_here_t:
+                per_time.append(float(np.sum([connect_val[t, b] for b in buses_here_t])))
+            else:
+                per_time.append(0.0)
+        peak = int(max(per_time)) if per_time else 0
+        avg_util = float(np.mean(per_time) / installed) if installed > 0 else 0.0
+        station_rows.append({
+            "station": s_name,
+            "installed": installed,
+            "installation_cost": install_cost,
+            "peak_concurrency": peak,
+            "avg_utilization_per_cp": avg_util,
+        })
+    if station_rows:
+        df_install = pd.DataFrame(station_rows)
+        df_install.sort_values(by=["installed", "installation_cost"], ascending=[False, True], inplace=True)
+        df_install.to_csv(os.path.join(results_dir, "installation_by_station.csv"), index=False)
+        with open(os.path.join(results_dir, "installation_by_station.json"), "w") as f:
+            json.dump(station_rows, f, indent=2, ensure_ascii=False)
+
+    # Build indices and discharge power for plotting
+    time_minutes_power = np.arange(first_t, last_t + 1)
+    time_minutes_soc = np.arange(first_t, last_t + 2)
+    idx_power = pd.to_datetime(time_minutes_power, unit="m", origin=pd.Timestamp("2026-01-01"))
+    idx_soc = pd.to_datetime(time_minutes_soc, unit="m", origin=pd.Timestamp("2026-01-01"))
+
+    discharge_power_plot_kw = np.zeros((num_steps, num_buses))
+    for b in range(num_buses):
+        extra = float(extra_soc_val[b])
+        offset = float(battery_offset[b])
+        for ev in drive_events_by_bus[b]:
+            dep_idx = max(0, ev["departure"] - first_t)
+            arr_idx = min(num_steps, ev["arrival"] - first_t)
+            dur = arr_idx - dep_idx
+            if dur and dur > 0:
+                eff_energy = float(ev["base_energy"]) + float(ev["sensitivity"]) * (extra + offset)
+                kw = (eff_energy * 60.0) / float(dur)
+                discharge_power_plot_kw[dep_idx:arr_idx, b] += kw
+
+    # Export per-bus power and SOC
+    for b in range(num_buses):
+        shift_name = shift_names[b]
+        pd.Series(power_val[:, b], index=idx_power, name="power_kw").to_csv(os.path.join(results_dir, f"power_{shift_name}.csv"))
+        # Smoothed SOC
+        sm_soc = np.zeros(num_steps + 1)
+        sm_soc[0] = float(soc_val[0, b])
+        for t in range(num_steps):
+            sm_soc[t + 1] = sm_soc[t] - discharge_power_plot_kw[t, b] * dt + power_val[t, b] * dt
+        pd.Series(sm_soc, index=idx_soc, name="soc_kwh").to_csv(os.path.join(results_dir, f"soc_{shift_name}.csv"))
+
+        # Plot power and SOC
+        fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+        ax_p, ax_s = axes
+        ax_p.plot(idx_power, power_val[:, b], label="Charging Power [kW]", color="tab:green")
+        ax_p.plot(idx_power, -discharge_power_plot_kw[:, b], label="Discharging Power [kW]", color="tab:red")
+        ax_p.set_ylabel("Power [kW]")
+        ax_p.legend(loc="upper right")
+        ax_p.grid(True, linestyle=":", alpha=0.5)
+        # Annotate charge session starts with station name
+        conn = (connect_val[:, b] > 0.5).astype(int)
+        starts = np.where((conn[1:] == 1) & (conn[:-1] == 0))[0] + 1
+        if conn[0] == 1:
+            starts = np.r_[0, starts]
+        for t_idx in starts:
+            ts = idx_power[t_idx]
+            ax_p.axvline(ts, color="tab:green", alpha=0.3, linestyle="--")
+            s_idx = int(station_at_minute[t_idx, b])
+            if 0 <= s_idx < len(stations):
+                station_label = stations[s_idx]
+                ax_p.text(ts, ax_p.get_ylim()[1] * 0.9, station_label, rotation=90, color="tab:green", fontsize=8, va="top")
+        ax_s.plot(idx_soc, sm_soc, color="tab:orange", label="SOC [kWh]")
+        ax_s.set_ylabel("SOC [kWh]")
+        ax_s2 = ax_s.twinx()
+        if effective_battery_capacity[b] > 0:
+            soc_percent = (np.array(sm_soc) / effective_battery_capacity[b]) * 100.0
+            ax_s2.plot(idx_soc, soc_percent, color="tab:purple", linestyle="--", label="SOC [%]")
+            ax_s2.set_ylabel("SOC [%]")
+        lines1, labels1 = ax_s.get_legend_handles_labels()
+        lines2, labels2 = ax_s2.get_legend_handles_labels()
+        ax_s.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
+        ax_s.grid(True, linestyle=":", alpha=0.5)
+        fig.suptitle(f"Shift {shift_name}: Power and SOC")
+        fig.align_labels()
+        fig.autofmt_xdate()
+        plt.savefig(os.path.join(results_dir, f"power_soc_{shift_name}.png"), bbox_inches="tight")
+        plt.close(fig)
+
+        # Sessions
+        sessions_rows = []
+        conn = (connect_val[:, b] > 0.5).astype(int)
+        starts = np.where((conn[1:] == 1) & (conn[:-1] == 0))[0] + 1
+        if conn[0] == 1:
+            starts = np.r_[0, starts]
+        ends = np.where((conn[1:] == 0) & (conn[:-1] == 1))[0]
+        if conn[-1] == 1:
+            ends = np.r_[ends, len(conn) - 1]
+        for s_i, e_i in zip(starts, ends):
+            dur = int(e_i - s_i + 1)
+            s_idx = station_at_minute[s_i, b]
+            station_label = stations[int(s_idx)] if s_idx >= 0 else None
+            energy_kwh = float(np.sum(power_val[s_i:e_i + 1, b]) * dt)
+            sessions_rows.append({
+                "shift": shift_name,
+                "start_time": str(idx_power[s_i]),
+                "end_time": str(idx_power[e_i]),
+                "duration_min": dur,
+                "station": station_label,
+                "energy_kwh": energy_kwh,
+            })
+        if sessions_rows:
+            pd.DataFrame(sessions_rows).to_csv(os.path.join(results_dir, f"sessions_{shift_name}.csv"), index=False)
+
+    # Combined grid of all shifts
+    ncols = 3
+    nrows = int(np.ceil(num_buses / ncols)) if num_buses > 0 else 1
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 6, nrows * 4), sharex=True)
+    if nrows == 1 and ncols == 1:
+        axes = np.array([[axes]])
+    elif nrows == 1:
+        axes = np.array([axes])
+    for b in range(num_buses):
+        r = b // ncols
+        c = b % ncols
+        ax = axes[r, c]
+        power_series = pd.Series(power_val[:, b], index=idx_power)
+        dis_series = pd.Series(discharge_power_plot_kw[:, b], index=idx_power)
+        sm_soc = np.zeros(num_steps + 1)
+        sm_soc[0] = float(soc_val[0, b])
+        for t in range(num_steps):
+            sm_soc[t + 1] = sm_soc[t] - float(dis_series.iloc[t]) * dt + float(power_series.iloc[t]) * dt
+        soc_series = pd.Series(sm_soc, index=idx_soc)
+        ax.plot(power_series.index, power_series.values, color="tab:green", label="Charge [kW]")
+        ax.plot(dis_series.index, -dis_series.values, color="tab:red", label="Discharge [kW]")
+        ax.set_title(shift_names[b])
+        ax.grid(True, linestyle=":", alpha=0.35)
+        ax2 = ax.twinx()
+        if effective_battery_capacity[b] > 0:
+            soc_percent = (soc_series.values / effective_battery_capacity[b]) * 100.0
+            ax2.plot(soc_series.index, soc_percent, color="tab:orange", label="SOC [%]")
+            ax2.set_ylabel("SOC [%]")
+        lines, labels = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines + lines2, labels + labels2, loc="upper right", fontsize=8)
+    total_plots = nrows * ncols
+    for k in range(num_buses, total_plots):
+        r = k // ncols
+        c = k % ncols
+        fig.delaxes(axes[r, c])
+    fig.suptitle("All Shifts: Power and SOC")
+    fig.autofmt_xdate()
+    plt.savefig(os.path.join(results_dir, "all_shifts_power_soc.png"), bbox_inches="tight")
+    plt.close(fig)
+
+    # Per-station per-CP power (assign buses to CP slots deterministically)
+    for s_idx, s_name in enumerate(stations):
+        num_cps = int(installed_by_station.get(s_name, 0))
+        if num_cps <= 0:
+            continue
+        cp_power = np.zeros((num_steps, num_cps), dtype=float)
+        # Fill per-CP series from actual assignment variables
+        for t in range(num_steps):
+            for k in range(num_cps):
+                # find bus assigned to this slot at (t, s_idx, k)
+                b_list = [b for b in range(num_buses) if station_at_minute[t, b] == s_idx and connect_val[t, b] > 0.5]
+                for b in b_list:
+                    key = (t, b, s_idx, k)
+                    if key in m.AssignIndex:
+                        a_val = float(m.assign[key].value or 0.0)
+                        if a_val > 0.5:
+                            cp_power[t, k] = power_val[t, b]
+                            break
+        df_cp = pd.DataFrame(cp_power, index=idx_power, columns=[f"cp_{i+1}_kw" for i in range(num_cps)])
+        safe = s_name.replace(",", "").replace(" ", "_").replace("/", "_")
+        df_cp.to_csv(os.path.join(results_dir, f"station_{safe}_cp_power.csv"))
+        fig, ax = plt.subplots(1, 1, figsize=(14, 5))
+        for i in range(num_cps):
+            ax.plot(df_cp.index, df_cp.iloc[:, i], label=f"CP {i+1}")
+        ax.set_title(f"{s_name}: Power per Charging Point")
+        ax.set_ylabel("kW")
+        ax.grid(True, linestyle=":", alpha=0.5)
+        ax.legend(ncol=min(4, num_cps), loc="upper right")
+        plt.savefig(os.path.join(results_dir, f"station_{safe}_cp_power.png"), bbox_inches="tight")
+        plt.close(fig)
+
+    # Aggregate sessions by station
+    station_sessions = {}
+    for f_name in os.listdir(results_dir):
+        if f_name.startswith("sessions_") and f_name.endswith(".csv"):
+            df_s = pd.read_csv(os.path.join(results_dir, f_name))
+            for _, row in df_s.iterrows():
+                station = row.get("station")
+                if pd.isna(station):
+                    continue
+                station_sessions.setdefault(station, {"sessions": 0, "total_duration_min": 0, "total_energy_kwh": 0.0})
+                station_sessions[station]["sessions"] += 1
+                station_sessions[station]["total_duration_min"] += int(row.get("duration_min", 0))
+                station_sessions[station]["total_energy_kwh"] += float(row.get("energy_kwh", 0.0))
+    if station_sessions:
+        pd.DataFrame([{ "station": k, **v } for k, v in station_sessions.items()]) \
+            .sort_values(by=["sessions", "total_duration_min"], ascending=[False, False]) \
+            .to_csv(os.path.join(results_dir, "sessions_by_station.csv"), index=False)
+
+    if battery_upgrades:
+        with open(os.path.join(results_dir, "battery_upgrades.json"), "w") as f:
+            json.dump(battery_upgrades, f, indent=2, ensure_ascii=False)
+
+    # Run parameters
+    run_params = {
+        "min_soc": float(min_soc),
+        "max_soc": float(max_soc),
+        "min_session_duration": int(min_session_duration),
+        "session_connection_minutes": int(session_connection_minutes),
+        "soc_increase_weight": float(soc_increase_weight),
+        "session_penalty_weight": float(session_penalty_weight),
+        "early_charging_weight": float(early_charging_weight),
+        "cp_slack_minutes": int(cp_slack_minutes),
+        "installed_sum": int(installed_sum),
+        "installation_cost": float(total_installation_cost),
+        "sessions_sum": int(round(sessions_sum)),
+        "early_penalty_unscaled": float(early_unscaled),
+        "added_battery_capacity_kwh": soc_increase_total,
+        "battery_capacity_kwh_original": battery_capacity.tolist(),
+        "battery_capacity_kwh_effective": effective_battery_capacity.tolist(),
+        "solver": solver_key,
+    }
+    with open(os.path.join(results_dir, "run_parameters.json"), "w") as f:
+        json.dump(run_params, f, indent=2)
+
+    print(f"Fast-{solver_key.upper()} (Pyomo) results saved under: {results_dir}")
+    return installed_by_station
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Optimize charging point placement with the fast Pyomo solver')
+    
+    # Day of week parameter
+    parser.add_argument('--day-of-week', 
+                       choices=['mon-fri', 'sat', 'sun'], 
+                       default='mon-fri',
+                       help='Day of week for simulation (default: mon-fri)')
+    parser.add_argument(
+        '--include-non-lugano-centro',
+        dest='require_lugano_centro',
+        action='store_false',
+        help='Include shifts even if they do not stop at Lugano, Centro',
+    )
+    parser.set_defaults(require_lugano_centro=True)
+    
+    # SOC parameters
+    parser.add_argument('--min-soc', 
+                       type=float, 
+                       default=0.4,
+                       help='Minimum state of charge (default: 0.4)')
+    
+    parser.add_argument('--max-soc', 
+                       type=float, 
+                       default=0.9,
+                       help='Maximum state of charge (default: 0.9)')
+    
+    # Session parameters
+    parser.add_argument('--min-session-duration', 
+                       type=int, 
+                       default=0,
+                       help='Minimum charging session duration in minutes (default: 2)')
+    
+    parser.add_argument('--session-connection-minutes',
+                       type=int,
+                       default=0,
+                       help='Connection/disconnection buffer minutes at the start of each session (default: 0)')
+    
+    parser.add_argument('--session-penalty-weight', 
+                       type=float, 
+                       default=0.01,
+                       help='Weight for session penalty in objective (default: 0.01)')
+    
+    parser.add_argument('--soc-increase-weight',
+                       type=float,
+                       default=1e4,
+                       help='Penalty weight per kWh of additional battery capacity (default: 1e4)')
+    
+    parser.add_argument('--early-charging-weight', 
+                       type=float, 
+                       default=0.0,
+                       help='Weight for early charging penalty in objective (default: 0.0)')
+    
+    # Consumption prediction parameters
+    parser.add_argument('--quantile-consumption', 
+                       choices=['mean', 'median', '0.05', '0.25', '0.50', '0.75', '0.95'], 
+                       default='0.25',
+                       help='Quantile for consumption prediction (default: 0.25)')
+    
+    # Feature flags
+    parser.add_argument('--no-lock-entire-dwell', 
+                       dest='lock_entire_dwell', 
+                       action='store_false',
+                       default=True,
+                       help='Disable locking charging point for entire dwell period (default: locking enabled)')
+
+    # Charging point slack minutes (cooldown) after a bus disconnects before next can connect
+    parser.add_argument('--cp-slack-minutes',
+                       type=int,
+                       default=0,
+                       help='Cooldown minutes between two consecutive uses of the same CP (default: 0)')
+    
+    parser.add_argument(
+        '--solver',
+        choices=['highs', 'gurobi'],
+        default='highs',
+        help='MIP solver backend to use (default: highs)',
+    )
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Enable verbose solver output',
+    )
+    parser.add_argument(
+        '--max-solver-time',
+        type=float,
+        default=None,
+        help='Maximum solver runtime in seconds',
+    )
+    parser.add_argument(
+        '--mip-rel-gap',
+        type=float,
+        default=None,
+        help='Relative MIP optimality gap tolerance (e.g., 0.01 for 1%). Default keeps solver exact.',
+    )
+    parser.add_argument(
+        '--mip-abs-gap',
+        type=float,
+        default=None,
+        help='Absolute MIP gap tolerance in objective units. Default keeps solver exact.',
+    )
+    parser.add_argument(
+        '--solver-feasibility-tol',
+        type=float,
+        default=None,
+        help='Feasibility tolerance (default: 1e-6). Larger values speed up but loosen feasibility.',
+    )
+    parser.add_argument(
+        '--solver-optimality-tol',
+        type=float,
+        default=None,
+        help='Optimality tolerance for dual/optimality checks (default: 1e-6).',
+    )
+    parser.add_argument(
+        '--solver-int-feas-tol',
+        type=float,
+        default=None,
+        help='Integrality tolerance for integer variables (Gurobi only, default: 1e-6).',
+    )
+
+    args = parser.parse_args()
+    
+    # Directory mapping
+    dirs = {
+        'mon-fri': '2026-TM_15f_lu-ve_TM_json', 
+        'sat': '2026-TM_6f_Sa_TM_json', 
+        'sun': '2026-TM_7+_Do_TM_json'
+    }
+    
+    shift_dir = f"playground/tpl/turni_macchina_2026/{dirs[args.day_of_week]}"
+    consumption_dir = f"playground/tpl/predictions/{dirs[args.day_of_week]}"
+    
+    # Cost configuration for charging points
+    cost_cps = {
+        'Albonago, Paese': [350e3],
+        'Breganzona, Posta': [350e3],
+        'Brè, Paese': [350e3],
+        'Canobbio, Ganna': [350e3],
+        'Canobbio, Mercato Resega': [1e9],
+        'Castagnola, Capolinea': [350e3],
+        'Comano, Studio TV': [350e3],
+        'Lugano, Centro': [450e3, 150e3, 150e3, 150e3],
+        'Lugano, Cornaredo': [350e3],
+        'Lugano, Pista Ghiaccio': [350e3],
+        'Lugano, Stazione': [350e3],
+        'Lugano, Stazione/Via Basilea': [350e3],
+        'Manno, Uovo di Manno': [350e3],
+        'Muzzano, Paese': [350e3],
+        'Paradiso, Carzo': [350e3],
+        'Pazzallo, P+R Fornaci': [350e3],
+        'Piano Stampa, Capolinea': [350e3],
+        'Pregassona, Piazza di Giro': [450e3],
+        'Viganello, S. Siro': [350e3],
+    }
+
+    max_total_power_cps = {
+        'Albonago, Paese': 450,
+        'Breganzona, Posta': 450,
+        'Brè, Paese': 138.5,
+        'Canobbio, Ganna': 450,
+        'Canobbio, Mercato Resega': 450,
+        'Castagnola, Capolinea': 450,
+        'Comano, Studio TV': 450,
+        'Lugano, Centro': 1000,
+        'Lugano, Cornaredo': 450,
+        'Lugano, Pista Ghiaccio': 450,
+        'Lugano, Stazione': 450,
+        'Lugano, Stazione/Via Basilea': 450,
+        'Manno, Uovo di Manno': 450,
+        'Muzzano, Paese': 450,
+        'Paradiso, Carzo': 450,
+        'Pazzallo, P+R Fornaci': 450,
+        'Piano Stampa, Capolinea': 450,
+        'Pregassona, Piazza di Giro': 450,
+        'Viganello, S. Siro': 450,
+    }
+    
+    print(f"Running optimization with parameters:")
+    print(f"  Day of week: {args.day_of_week}")
+    print(f"  Min SOC: {args.min_soc}")
+    print(f"  Max SOC: {args.max_soc}")
+    print(f"  Min session duration: {args.min_session_duration} minutes")
+    print(f"  Session connection minutes: {args.session_connection_minutes} minutes")
+    print(f"  SOC increase weight: {args.soc_increase_weight}")
+    print(f"  Session penalty weight: {args.session_penalty_weight}")
+    print(f"  Early charging weight: {args.early_charging_weight}")
+    print(f"  Quantile consumption: {args.quantile_consumption}")
+    print(f"  Lock entire dwell: {args.lock_entire_dwell}")
+    print(f"  CP slack minutes: {args.cp_slack_minutes}")
+    print(f"  Require Lugano Centro stop: {args.require_lugano_centro}")
+    print(f"  Solver: {args.solver}")
+    if args.max_solver_time is not None:
+        print(f"  Max solver time: {args.max_solver_time} seconds")
+    if args.mip_rel_gap is not None:
+        print(f"  MIP relative gap: {args.mip_rel_gap}")
+    else:
+        print("  MIP relative gap: exact")
+    if args.mip_abs_gap is not None:
+        print(f"  MIP absolute gap: {args.mip_abs_gap}")
+    else:
+        print("  MIP absolute gap: exact")
+    if args.solver_feasibility_tol is not None:
+        print(f"  Solver feasibility tol: {args.solver_feasibility_tol}")
+    if args.solver_optimality_tol is not None:
+        print(f"  Solver optimality tol: {args.solver_optimality_tol}")
+    if args.solver_int_feas_tol is not None:
+        print(f"  Solver integrality tol: {args.solver_int_feas_tol}")
+    print(f"  Shift directory: {shift_dir}")
+    print(f"  Consumption directory: {consumption_dir}")
+    print()
+
+    optimize_cp_fast_highs(
+        shift_dir=shift_dir,
+        consumption_dir=consumption_dir,
+        cost_cps=cost_cps,
+        max_total_power_cps=max_total_power_cps,
+        min_soc=args.min_soc,
+        max_soc=args.max_soc,
+        min_session_duration=args.min_session_duration,
+        session_connection_minutes=args.session_connection_minutes,
+        soc_increase_weight=args.soc_increase_weight,
+        session_penalty_weight=args.session_penalty_weight,
+        early_charging_weight=args.early_charging_weight,
+        quantile_consumption=args.quantile_consumption,
+        lock_entire_dwell=args.lock_entire_dwell,
+        cp_slack_minutes=args.cp_slack_minutes,
+        day_of_week=args.day_of_week,
+        require_lugano_centro=args.require_lugano_centro,
+        solver_name=args.solver,
+        verbose=args.verbose,
+        max_solver_time=args.max_solver_time,
+        mip_rel_gap=args.mip_rel_gap,
+        mip_abs_gap=args.mip_abs_gap,
+        feasibility_tol=args.solver_feasibility_tol,
+        optimality_tol=args.solver_optimality_tol,
+        int_feas_tol=args.solver_int_feas_tol,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
