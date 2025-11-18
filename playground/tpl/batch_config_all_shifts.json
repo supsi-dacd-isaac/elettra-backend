@@ -15,8 +15,8 @@
     },
     "402": {
       "bus_length_m": 12,
-      "battery_capacity_kwh": 350,
-      "max_charging_power_kw": 350,
+      "battery_capacity_kwh": 610,
+      "max_charging_power_kw": 450,
       "bus_model": "AU_NF"
     },
     "403": {
@@ -51,50 +51,50 @@
     },
     "408": {
       "bus_length_m": 12,
-      "battery_capacity_kwh": 350,
-      "max_charging_power_kw": 350,
+      "battery_capacity_kwh": 610,
+      "max_charging_power_kw": 450,
       "bus_model": "AU_NF"
     },
     "409": {
       "bus_length_m": 6,
-      "battery_capacity_kwh": 250,
-      "max_charging_power_kw": 250,
+      "battery_capacity_kwh": 100,
+      "max_charging_power_kw": 100,
       "bus_model": "MB_NF"
     },
     "410": {
       "bus_length_m": 6,
-      "battery_capacity_kwh": 250,
-      "max_charging_power_kw": 250,
+      "battery_capacity_kwh": 100,
+      "max_charging_power_kw": 100,
       "bus_model": "MB_NF"
     },
     "412": {
       "bus_length_m": 10,
-      "battery_capacity_kwh": 330,
-      "max_charging_power_kw": 330,
+      "battery_capacity_kwh": 510,
+      "max_charging_power_kw": 450,
       "bus_model": "AL_NF"
     },
     "415": {
       "bus_length_m": 10,
-      "battery_capacity_kwh": 330,
-      "max_charging_power_kw": 330,
+      "battery_capacity_kwh": 510,
+      "max_charging_power_kw": 450,
       "bus_model": "AL_NF"
     },
     "416": {
       "bus_length_m": 10,
-      "battery_capacity_kwh": 330,
-      "max_charging_power_kw": 330,
+      "battery_capacity_kwh": 510,
+      "max_charging_power_kw": 450,
       "bus_model": "AL_NF"
     },
     "417": {
       "bus_length_m": 6,
-      "battery_capacity_kwh": 250,
-      "max_charging_power_kw": 250,
+      "battery_capacity_kwh": 100,
+      "max_charging_power_kw": 100,
       "bus_model": "MB_NF"
     },
     "418": {
       "bus_length_m": 6,
-      "battery_capacity_kwh": 250,
-      "max_charging_power_kw": 250,
+      "battery_capacity_kwh": 100,
+      "max_charging_power_kw": 100,
       "bus_model": "MB_NF"
     }
   }

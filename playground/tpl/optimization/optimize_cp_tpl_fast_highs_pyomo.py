@@ -39,7 +39,7 @@ def load_bus_config(config_file: str) -> dict:
         return json.load(f)
 
 
-def identify_lugano_centro_files(shift_dir: str) -> List[str]:
+def identify_lugano_centro_files(shift_dir: str, required_station: str | None = "Lugano, Centro") -> List[str]:
     res = []
     for name in os.listdir(shift_dir):
         if not name.endswith(".json"):
@@ -47,7 +47,13 @@ def identify_lugano_centro_files(shift_dir: str) -> List[str]:
         path = os.path.join(shift_dir, name)
         with open(path, "r") as f:
             data = json.load(f)
-        if isinstance(data, list) and any(isinstance(t, dict) and t.get("end_stop_name") == "Lugano, Centro" for t in data):
+        include = required_station is None
+        if required_station is not None and isinstance(data, list):
+            include = any(
+                isinstance(trip, dict) and trip.get("end_stop_name") == required_station
+                for trip in data
+            )
+        if include:
             res.append(path)
     return res
 
@@ -148,10 +154,11 @@ def print_shifts_by_route(shift_files: List[str]):
     print()
 
 
-def optimize_cp_lugano_centro_fast_highs(
+def optimize_cp_fast_highs(
     shift_dir: str,
     consumption_dir: str,
     cost_cps: dict,
+    max_total_power_cps: dict[str, float] | None,
     min_soc: float,
     max_soc: float,
     min_session_duration: int = 0,
@@ -163,16 +170,46 @@ def optimize_cp_lugano_centro_fast_highs(
     lock_entire_dwell: bool = False,
     cp_slack_minutes: int = 0,
     day_of_week: str = "mon-fri",
+    require_lugano_centro: bool = True,
+    solver_name: str = "highs",
+    verbose: bool = False,
+    max_solver_time: float | None = None,
 ):
     # Inputs and preprocessing
     bus_config = load_bus_config("playground/tpl/batch_config_all_shifts.json")
-    shift_files = identify_lugano_centro_files(shift_dir)
+    shift_files = identify_lugano_centro_files(
+        shift_dir, "Lugano, Centro" if require_lugano_centro else None
+    )
+    if not shift_files:
+        raise RuntimeError(
+            "No shifts matched the selection criteria. "
+            "Try relaxing the Lugano Centro filter or check the input data."
+        )
     
     # Print shifts by route
     print_shifts_by_route(shift_files)
     
     stations = identify_stations(shift_files)
+    missing_stations = [s for s in stations if s not in cost_cps]
+    if missing_stations:
+        raise RuntimeError(
+            "Stations missing in cost_cps: "
+            + ", ".join(sorted(missing_stations))
+        )
     station_to_idx = {s: i for i, s in enumerate(stations)}
+    if max_total_power_cps is not None:
+        missing_power_limits = [s for s in stations if s not in max_total_power_cps]
+        if missing_power_limits:
+            raise RuntimeError(
+                "Stations missing in max_total_power_cps: "
+                + ", ".join(sorted(missing_power_limits))
+            )
+    power_limits_by_station: dict[int, float] = {}
+    if max_total_power_cps is not None:
+        power_limits_by_station = {
+            station_to_idx[s_name]: float(max_total_power_cps[s_name])
+            for s_name in stations
+        }
     first_t, last_t = compute_time_bounds(shift_files)
 
     print(f"\nStations ({len(stations)} total):")
@@ -318,6 +355,18 @@ def optimize_cp_lugano_centro_fast_highs(
             return Constraint.Skip
 
     m.station_capacity = Constraint(m.T, m.S, rule=station_capacity_rule)
+
+    if power_limits_by_station:
+        def station_power_limit_rule(mdl, t, s):
+            limit = power_limits_by_station.get(s)
+            if limit is None:
+                return Constraint.Skip
+            buses_at_station = buses_here.get((t, s), [])
+            if not buses_at_station:
+                return Constraint.Skip
+            return sum(mdl.power[t, b] for b in buses_at_station) <= limit
+
+        m.station_power_limit = Constraint(m.T, m.S, rule=station_power_limit_rule)
 
     # Assignment of buses to concrete CP slots (per-station) to enable CP-level cooldown
     # Build index of (t, s, k) where slot k exists at station s
@@ -565,17 +614,34 @@ def optimize_cp_lugano_centro_fast_highs(
 
     m.obj = Objective(rule=obj_rule, sense=minimize)
 
-    # Solve with HiGHS
-    solver = SolverFactory("highs")
-    # Tight tolerances similar to Gurobi settings
-    # Note: option names follow HiGHS parameters. These may vary by version.
-    solver.options["mip_rel_gap"] = 0.0
-    solver.options["mip_abs_gap"] = 0.0
-    solver.options["mip_feasibility_tolerance"] = 1e-9
-    solver.options["primal_feasibility_tolerance"] = 1e-9
-    solver.options["dual_feasibility_tolerance"] = 1e-9
+    # Solve with requested MIP solver
+    solver_key = solver_name.lower()
+    if solver_key not in {"highs", "gurobi"}:
+        raise ValueError(f"Unsupported solver '{solver_name}'. Supported solvers: highs, gurobi.")
 
-    results = solver.solve(m, tee=True)
+    solver = SolverFactory(solver_key)
+    if solver is None:
+        raise RuntimeError(f"Solver '{solver_name}' is not available in the current environment.")
+
+    # Tight tolerances similar across solvers (option names vary by backend)
+    if solver_key == "highs":
+        solver.options["mip_rel_gap"] = 0.0
+        solver.options["mip_abs_gap"] = 0.0
+        solver.options["mip_feasibility_tolerance"] = 1e-9
+        solver.options["primal_feasibility_tolerance"] = 1e-9
+        solver.options["dual_feasibility_tolerance"] = 1e-9
+        if max_solver_time is not None:
+            solver.options["time_limit"] = float(max_solver_time)
+    elif solver_key == "gurobi":
+        solver.options["MIPGap"] = 0.0
+        solver.options["MIPGapAbs"] = 0.0
+        solver.options["FeasibilityTol"] = 1e-9
+        solver.options["OptimalityTol"] = 1e-9
+        solver.options["IntFeasTol"] = 1e-9
+        if max_solver_time is not None:
+            solver.options["TimeLimit"] = float(max_solver_time)
+
+    results = solver.solve(m, tee=verbose)
     print(f"Solved. Solver termination: {results.solver.termination_condition}")
     try:
         print(f"Objective value: {value(m.obj):.9f}")
@@ -671,7 +737,12 @@ def optimize_cp_lugano_centro_fast_highs(
 
     # Persist results (use a different prefix to avoid confusion)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = os.path.join("playground", "tpl", "results", f"fast_highs_pyomo_optimization_{timestamp}")
+    results_dir = os.path.join(
+        "playground",
+        "tpl",
+        "results",
+        f"fast_{solver_key}_pyomo_optimization_{timestamp}",
+    )
     os.makedirs(results_dir, exist_ok=True)
 
     # Log input parameters for analysis
@@ -689,12 +760,15 @@ def optimize_cp_lugano_centro_fast_highs(
         "quantile_consumption": quantile_consumption,
         "lock_entire_dwell": lock_entire_dwell,
         "cp_slack_minutes": int(cp_slack_minutes),
+        "require_lugano_centro": bool(require_lugano_centro),
         "cost_cps": cost_cps,
+        "max_total_power_cps": max_total_power_cps,
         "timestamp": timestamp,
         "num_buses": int(num_buses),
         "num_stations": int(len(stations)),
         "time_range_minutes": [int(first_t), int(last_t)],
         "stations": stations,
+        "solver": solver_key,
     }
     with open(os.path.join(results_dir, "input_parameters.json"), "w") as f:
         json.dump(input_parameters, f, indent=2, ensure_ascii=False)
@@ -931,22 +1005,30 @@ def optimize_cp_lugano_centro_fast_highs(
         "added_battery_capacity_kwh": soc_increase_total,
         "battery_capacity_kwh_original": battery_capacity.tolist(),
         "battery_capacity_kwh_effective": effective_battery_capacity.tolist(),
+        "solver": solver_key,
     }
     with open(os.path.join(results_dir, "run_parameters.json"), "w") as f:
         json.dump(run_params, f, indent=2)
 
-    print(f"Fast-HiGHS (Pyomo) results saved under: {results_dir}")
+    print(f"Fast-{solver_key.upper()} (Pyomo) results saved under: {results_dir}")
     return installed_by_station
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Optimize charging point placement for Lugano Centro')
+    parser = argparse.ArgumentParser(description='Optimize charging point placement with the fast Pyomo solver')
     
     # Day of week parameter
     parser.add_argument('--day-of-week', 
                        choices=['mon-fri', 'sat', 'sun'], 
                        default='mon-fri',
                        help='Day of week for simulation (default: mon-fri)')
+    parser.add_argument(
+        '--include-non-lugano-centro',
+        dest='require_lugano_centro',
+        action='store_false',
+        help='Include shifts even if they do not stop at Lugano, Centro',
+    )
+    parser.set_defaults(require_lugano_centro=True)
     
     # SOC parameters
     parser.add_argument('--min-soc', 
@@ -962,7 +1044,7 @@ def main():
     # Session parameters
     parser.add_argument('--min-session-duration', 
                        type=int, 
-                       default=2,
+                       default=0,
                        help='Minimum charging session duration in minutes (default: 2)')
     
     parser.add_argument('--session-connection-minutes',
@@ -992,15 +1074,11 @@ def main():
                        help='Quantile for consumption prediction (default: 0.25)')
     
     # Feature flags
-    parser.add_argument('--lock-entire-dwell', 
-                       action='store_true', 
-                       default=True,
-                       help='Lock charging point for entire dwell period (default: True)')
-    
     parser.add_argument('--no-lock-entire-dwell', 
                        dest='lock_entire_dwell', 
                        action='store_false',
-                       help='Disable locking charging point for entire dwell period')
+                       default=True,
+                       help='Disable locking charging point for entire dwell period (default: locking enabled)')
 
     # Charging point slack minutes (cooldown) after a bus disconnects before next can connect
     parser.add_argument('--cp-slack-minutes',
@@ -1008,6 +1086,24 @@ def main():
                        default=0,
                        help='Cooldown minutes between two consecutive uses of the same CP (default: 0)')
     
+    parser.add_argument(
+        '--solver',
+        choices=['highs', 'gurobi'],
+        default='highs',
+        help='MIP solver backend to use (default: highs)',
+    )
+    parser.add_argument(
+        '--verbose',
+        action='store_true',
+        help='Enable verbose solver output',
+    )
+    parser.add_argument(
+        '--max-solver-time',
+        type=float,
+        default=None,
+        help='Maximum solver runtime in seconds',
+    )
+
     args = parser.parse_args()
     
     # Directory mapping
@@ -1022,15 +1118,47 @@ def main():
     
     # Cost configuration for charging points
     cost_cps = {
+        'Albonago, Paese': [1],
+        'Breganzona, Posta': [1],
         'Brè, Paese': [1],
         'Canobbio, Ganna': [1],
+        'Canobbio, Mercato Resega': [1e9],
+        'Castagnola, Capolinea': [1],
         'Comano, Studio TV': [1],
-        'Lugano, Centro': [20, 0.3, 0.3, 0.3],
+        'Lugano, Centro': [2, 0.3, 0.3, 0.3],
         'Lugano, Cornaredo': [1],
         'Lugano, Pista Ghiaccio': [1],
+        'Lugano, Stazione': [1],
+        'Lugano, Stazione/Via Basilea': [1],
+        'Manno, Uovo di Manno': [1],
+        'Muzzano, Paese': [1],
+        'Paradiso, Carzo': [1],
         'Pazzallo, P+R Fornaci': [1],
         'Piano Stampa, Capolinea': [1],
-        'Pregassona, Piazza di Giro': [1],
+        'Pregassona, Piazza di Giro': [2],
+        'Viganello, S. Siro': [1],
+    }
+
+    max_total_power_cps = {
+        'Albonago, Paese': 450,
+        'Breganzona, Posta': 450,
+        'Brè, Paese': 138.5,
+        'Canobbio, Ganna': 450,
+        'Canobbio, Mercato Resega': 450,
+        'Castagnola, Capolinea': 450,
+        'Comano, Studio TV': 450,
+        'Lugano, Centro': 1000,
+        'Lugano, Cornaredo': 450,
+        'Lugano, Pista Ghiaccio': 450,
+        'Lugano, Stazione': 450,
+        'Lugano, Stazione/Via Basilea': 450,
+        'Manno, Uovo di Manno': 450,
+        'Muzzano, Paese': 450,
+        'Paradiso, Carzo': 450,
+        'Pazzallo, P+R Fornaci': 450,
+        'Piano Stampa, Capolinea': 450,
+        'Pregassona, Piazza di Giro': 450,
+        'Viganello, S. Siro': 450,
     }
     
     print(f"Running optimization with parameters:")
@@ -1045,14 +1173,19 @@ def main():
     print(f"  Quantile consumption: {args.quantile_consumption}")
     print(f"  Lock entire dwell: {args.lock_entire_dwell}")
     print(f"  CP slack minutes: {args.cp_slack_minutes}")
+    print(f"  Require Lugano Centro stop: {args.require_lugano_centro}")
+    print(f"  Solver: {args.solver}")
+    if args.max_solver_time is not None:
+        print(f"  Max solver time: {args.max_solver_time} seconds")
     print(f"  Shift directory: {shift_dir}")
     print(f"  Consumption directory: {consumption_dir}")
     print()
 
-    optimize_cp_lugano_centro_fast_highs(
+    optimize_cp_fast_highs(
         shift_dir=shift_dir,
         consumption_dir=consumption_dir,
         cost_cps=cost_cps,
+        max_total_power_cps=max_total_power_cps,
         min_soc=args.min_soc,
         max_soc=args.max_soc,
         min_session_duration=args.min_session_duration,
@@ -1064,6 +1197,10 @@ def main():
         lock_entire_dwell=args.lock_entire_dwell,
         cp_slack_minutes=args.cp_slack_minutes,
         day_of_week=args.day_of_week,
+        require_lugano_centro=args.require_lugano_centro,
+        solver_name=args.solver,
+        verbose=args.verbose,
+        max_solver_time=args.max_solver_time,
     )
     return 0
 
