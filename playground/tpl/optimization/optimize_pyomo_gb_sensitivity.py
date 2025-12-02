@@ -196,6 +196,7 @@ def optimize_cp_fast_highs(
     feasibility_tol: float | None = None,
     optimality_tol: float | None = None,
     int_feas_tol: float | None = None,
+    state_of_health: float = 1.0,
 ):
     # Inputs and preprocessing
     bus_config = load_bus_config("playground/tpl/batch_config_all_shifts.json")
@@ -270,7 +271,7 @@ def optimize_cp_fast_highs(
             route_cfg = bus_config.get("routes", {}).get(bus_type)
         cap = (route_cfg or {}).get("battery_capacity_kwh", bus_config.get("default", {}).get("battery_capacity_kwh", 514))
         pmax = (route_cfg or {}).get("max_charging_power_kw", bus_config.get("default", {}).get("max_charging_power_kw", 350))
-        battery_capacity[b_idx] = float(cap)
+        battery_capacity[b_idx] = float(cap) * state_of_health
         max_power[b_idx] = float(pmax)
 
         pred_context = load_prediction_context(consumption_dir, shift_name)
@@ -826,6 +827,7 @@ def optimize_cp_fast_highs(
         "consumption_dir": consumption_dir,
         "min_soc": float(min_soc),
         "max_soc": float(max_soc),
+        "state_of_health": float(state_of_health),
         "min_session_duration": int(min_session_duration),
         "session_connection_minutes": int(session_connection_minutes),
         "soc_increase_weight": float(soc_increase_weight),
@@ -1069,6 +1071,7 @@ def optimize_cp_fast_highs(
     run_params = {
         "min_soc": float(min_soc),
         "max_soc": float(max_soc),
+        "state_of_health": float(state_of_health),
         "min_session_duration": int(min_session_duration),
         "session_connection_minutes": int(session_connection_minutes),
         "soc_increase_weight": float(soc_increase_weight),
@@ -1107,6 +1110,13 @@ def main():
     )
     parser.set_defaults(require_lugano_centro=True)
     
+    parser.add_argument(
+        '--use-optimized-shifts',
+        action='store_true',
+        default=False,
+        help='Use optimized turni macchina (with reduced dwell time at Lugano Centro)',
+    )
+    
     # SOC parameters
     parser.add_argument('--min-soc', 
                        type=float, 
@@ -1117,6 +1127,11 @@ def main():
                        type=float, 
                        default=0.9,
                        help='Maximum state of charge (default: 0.9)')
+    
+    parser.add_argument('--state-of-health', '--soh',
+                       type=float,
+                       default=1.0,
+                       help='Battery state of health multiplier for capacity (default: 1.0)')
     
     # Session parameters
     parser.add_argument('--min-session-duration', 
@@ -1147,7 +1162,7 @@ def main():
     # Consumption prediction parameters
     parser.add_argument('--quantile-consumption', 
                        choices=['mean', 'median', '0.05', '0.25', '0.50', '0.75', '0.95'], 
-                       default='0.25',
+                       default='mean',
                        help='Quantile for consumption prediction (default: 0.25)')
     
     # Feature flags
@@ -1220,7 +1235,12 @@ def main():
         'sun': '2026-TM_7+_Do_TM_json'
     }
     
-    shift_dir = f"playground/tpl/turni_macchina_2026/{dirs[args.day_of_week]}"
+    base_dir = dirs[args.day_of_week]
+    if args.use_optimized_shifts:
+        base_dir = f"{base_dir}_optimized"
+    
+    shift_dir = f"playground/tpl/turni_macchina_2026/{base_dir}"
+    # Consumption predictions are based on original shifts (same trip IDs)
     consumption_dir = f"playground/tpl/predictions/{dirs[args.day_of_week]}"
     
     # Cost configuration for charging points
@@ -1232,7 +1252,7 @@ def main():
         'Canobbio, Mercato Resega': [1e9],
         'Castagnola, Capolinea': [350e3],
         'Comano, Studio TV': [350e3],
-        'Lugano, Centro': [450e3, 150e3, 150e3, 150e3],
+        'Lugano, Centro': [450e9, 150e3, 150e3, 150e3],
         'Lugano, Cornaredo': [350e3],
         'Lugano, Pista Ghiaccio': [350e3],
         'Lugano, Stazione': [350e3],
@@ -1270,8 +1290,10 @@ def main():
     
     print(f"Running optimization with parameters:")
     print(f"  Day of week: {args.day_of_week}")
+    print(f"  Use optimized shifts: {args.use_optimized_shifts}")
     print(f"  Min SOC: {args.min_soc}")
     print(f"  Max SOC: {args.max_soc}")
+    print(f"  State of Health: {args.state_of_health}")
     print(f"  Min session duration: {args.min_session_duration} minutes")
     print(f"  Session connection minutes: {args.session_connection_minutes} minutes")
     print(f"  SOC increase weight: {args.soc_increase_weight}")
@@ -1327,6 +1349,7 @@ def main():
         feasibility_tol=args.solver_feasibility_tol,
         optimality_tol=args.solver_optimality_tol,
         int_feas_tol=args.solver_int_feas_tol,
+        state_of_health=args.state_of_health,
     )
     return 0
 
