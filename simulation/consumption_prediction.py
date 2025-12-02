@@ -181,7 +181,7 @@ class ConsumptionPredictor:
                 raise ValueError(f"Missing required features for model: {missing_non_auto}")
             
             # Validate presence of greybox required columns
-            gb_required = {'bus_length_m', 'bus_battery_kwh', 'total_distance_m', 'driving_average_speed_kmh', 'total_ascent_m', 'total_descent_m'}
+            gb_required = {'bus_length_m', 'bus_battery_kwh', 'total_distance_m', 'driving_average_speed_kmh', 'total_ascent_m', 'total_descent_m', 'driving_time_minutes', 'total_duration_minutes'}
             missing_gb = gb_required - set(df.columns)
             if missing_gb:
                 raise ValueError(f"Missing required greybox features: {missing_gb}")
@@ -210,7 +210,10 @@ class ConsumptionPredictor:
             aux_energy_fn: Optional function(X_df) -> np.ndarray|pd.Series of aux energy per row (kWh)
             
         Returns:
-            DataFrame with predictions and prediction intervals
+            DataFrame with predictions and prediction intervals.
+            For greybox models, also includes:
+            - drivetrain_kwh: Mechanical/drivetrain energy consumption
+            - auxiliary_kwh: Auxiliary (HVAC, etc.) energy consumption
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_model() first.")
@@ -259,9 +262,41 @@ class ConsumptionPredictor:
         if trip_ids is not None:
             results.insert(0, 'trip_id', trip_ids)
         
+        # Add drivetrain and auxiliary consumption breakdown for greybox models
+        if self.is_greybox:
+            # Get auxiliary consumption first (deterministic, based on temp and duration)
+            if aux_energy_fn is not None:
+                aux_out = aux_energy_fn(X)
+                if isinstance(aux_out, pd.Series):
+                    auxiliary_kwh = aux_out.to_numpy(dtype=float)
+                else:
+                    auxiliary_kwh = np.asarray(aux_out, dtype=float).reshape(-1)
+            else:
+                auxiliary_kwh = self.model._aux_energy(X)
+            results['auxiliary_kwh'] = auxiliary_kwh
+            
+            # Drivetrain = total - auxiliary = gb_pred + res_pred
+            # This includes mechanical (greybox) + QRF residual correction
+            # Mean drivetrain
+            drivetrain_kwh = y_pred_mean - auxiliary_kwh
+            results['drivetrain_kwh'] = drivetrain_kwh
+            
+            # Median drivetrain
+            drivetrain_median_kwh = y_pred_median - auxiliary_kwh
+            results['drivetrain_median_kwh'] = drivetrain_median_kwh
+            
+            logger.info(f"  Drivetrain total: {drivetrain_kwh.sum():.2f} kWh")
+            logger.info(f"  Auxiliary total: {auxiliary_kwh.sum():.2f} kWh")
+        
         # Add quantile predictions
         for i, q in enumerate(quantiles):
             results[f'quantile_{q:.2f}'] = y_pred_quantiles[:, i]
+        
+        # Add drivetrain quantiles for greybox models
+        # Since auxiliary is deterministic: drivetrain_qXX = total_qXX - auxiliary
+        if self.is_greybox:
+            for i, q in enumerate(quantiles):
+                results[f'drivetrain_quantile_{q:.2f}'] = y_pred_quantiles[:, i] - auxiliary_kwh
         
         logger.info(f"✓ Generated predictions for {len(results)} trips")
         
@@ -324,6 +359,31 @@ class ConsumptionPredictor:
                 logger.warning(f"Failed to compute greybox battery sensitivity: {exc}")
         
         # Compile results
+        summary_data = {
+            'total_consumption_kwh': float(predictions['prediction_kwh'].sum()),
+            'mean_consumption_per_trip_kwh': float(predictions['prediction_kwh'].mean()),
+            'total_distance_km': float(features['total_distance_m'].sum() / 1000) if 'total_distance_m' in features.columns else None,
+            'consumption_per_km_kwh': float(predictions['prediction_kwh'].sum() / (features['total_distance_m'].sum() / 1000)) if 'total_distance_m' in features.columns and features['total_distance_m'].sum() > 0 else None,
+        }
+        
+        # Add drivetrain and auxiliary breakdown if available (greybox models)
+        total_km = summary_data.get('total_distance_km')
+        has_distance = isinstance(total_km, (int, float)) and total_km and total_km > 0
+        
+        if 'drivetrain_kwh' in predictions.columns:
+            total_drivetrain = float(predictions['drivetrain_kwh'].sum())
+            summary_data['total_drivetrain_kwh'] = total_drivetrain
+            summary_data['mean_drivetrain_per_trip_kwh'] = float(predictions['drivetrain_kwh'].mean())
+            if has_distance:
+                summary_data['drivetrain_per_km_kwh'] = float(total_drivetrain / total_km)
+        
+        if 'auxiliary_kwh' in predictions.columns:
+            total_auxiliary = float(predictions['auxiliary_kwh'].sum())
+            summary_data['total_auxiliary_kwh'] = total_auxiliary
+            summary_data['mean_auxiliary_per_trip_kwh'] = float(predictions['auxiliary_kwh'].mean())
+            if has_distance:
+                summary_data['auxiliary_per_km_kwh'] = float(total_auxiliary / total_km)
+        
         results = {
             'shift_id': json_data.get('shift_id'),
             'file': json_data.get('file'),
@@ -337,12 +397,7 @@ class ConsumptionPredictor:
             # relevant for downstream optimization.
             'greybox_params': greybox_params if greybox_params else None,
             'predictions': predictions.to_dict(orient='records'),
-            'summary': {
-                'total_consumption_kwh': float(predictions['prediction_kwh'].sum()),
-                'mean_consumption_per_trip_kwh': float(predictions['prediction_kwh'].mean()),
-                'total_distance_km': float(features['total_distance_m'].sum() / 1000) if 'total_distance_m' in features.columns else None,
-                'consumption_per_km_kwh': float(predictions['prediction_kwh'].sum() / (features['total_distance_m'].sum() / 1000)) if 'total_distance_m' in features.columns and features['total_distance_m'].sum() > 0 else None,
-            }
+            'summary': summary_data
         }
         
         # Add quantile summary
@@ -353,6 +408,14 @@ class ConsumptionPredictor:
             has_distance = isinstance(total_km, (int, float)) and total_km and total_km > 0
             if has_distance:
                 results['summary']['consumption_per_km_kwh_quantiles'] = {}
+            
+            # Check if drivetrain quantiles are available (greybox models)
+            has_drivetrain_quantiles = f'drivetrain_quantile_{quantiles[0]:.2f}' in predictions.columns
+            if has_drivetrain_quantiles:
+                results['summary']['drivetrain_quantiles'] = {}
+                if has_distance:
+                    results['summary']['drivetrain_per_km_kwh_quantiles'] = {}
+            
             for q in quantiles:
                 q_key = f'quantile_{q:.2f}'
                 if q_key in predictions.columns:
@@ -361,6 +424,15 @@ class ConsumptionPredictor:
                     results['summary']['quantiles'][q_label] = total_q_kwh
                     if has_distance:
                         results['summary']['consumption_per_km_kwh_quantiles'][q_label] = float(total_q_kwh / total_km)
+                
+                # Add drivetrain quantile totals
+                dt_q_key = f'drivetrain_quantile_{q:.2f}'
+                if dt_q_key in predictions.columns:
+                    total_dt_q_kwh = float(predictions[dt_q_key].sum())
+                    q_label = f'q{int(q*100):02d}'
+                    results['summary']['drivetrain_quantiles'][q_label] = total_dt_q_kwh
+                    if has_distance:
+                        results['summary']['drivetrain_per_km_kwh_quantiles'][q_label] = float(total_dt_q_kwh / total_km)
         
         logger.info(f"✓ Total predicted consumption: {results['summary']['total_consumption_kwh']:.2f} kWh")
         
