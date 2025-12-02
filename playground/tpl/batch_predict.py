@@ -86,8 +86,15 @@ def print_detailed_statistics(results_summary: list):
         total_trips = sum(s['num_trips'] for s in shifts)
         total_distance = sum(s.get('distance_statistics', {}).get('total_km', 0) for s in shifts)
         
+        # Calculate drivetrain and auxiliary totals
+        total_drivetrain = sum(s.get('total_drivetrain_kwh', 0) or 0 for s in shifts)
+        total_auxiliary = sum(s.get('total_auxiliary_kwh', 0) or 0 for s in shifts)
+        
         print(f"📈 MODEL TOTALS:")
         print(f"  Total Consumption: {total_consumption:.2f} kWh")
+        if total_drivetrain > 0 or total_auxiliary > 0:
+            print(f"    ├─ Drivetrain: {total_drivetrain:.2f} kWh ({100*total_drivetrain/total_consumption:.1f}%)")
+            print(f"    └─ Auxiliary:  {total_auxiliary:.2f} kWh ({100*total_auxiliary/total_consumption:.1f}%)")
         print(f"  Total Trips: {total_trips}")
         print(f"  Total Distance: {total_distance:.2f} km")
         print(f"  Avg Consumption per Trip: {total_consumption/total_trips:.2f} kWh")
@@ -99,6 +106,15 @@ def print_detailed_statistics(results_summary: list):
         for shift in sorted(shifts, key=lambda x: x['total_consumption_kwh'], reverse=True):
             print(f"\n  🔸 {shift['shift_id']} (Bus {shift.get('bus_id', 'N/A')}):")
             print(f"     Consumption: {shift['total_consumption_kwh']:.2f} kWh")
+            
+            # Show drivetrain and auxiliary breakdown if available
+            shift_drivetrain = shift.get('total_drivetrain_kwh')
+            shift_auxiliary = shift.get('total_auxiliary_kwh')
+            if shift_drivetrain is not None and shift_auxiliary is not None:
+                total = shift['total_consumption_kwh']
+                print(f"       ├─ Drivetrain: {shift_drivetrain:.2f} kWh ({100*shift_drivetrain/total:.1f}%)")
+                print(f"       └─ Auxiliary:  {shift_auxiliary:.2f} kWh ({100*shift_auxiliary/total:.1f}%)")
+            
             print(f"     Trips: {shift['num_trips']}")
             
             # Consumption statistics
@@ -124,10 +140,15 @@ def print_detailed_statistics(results_summary: list):
             # Quantile statistics
             if 'quantile_statistics' in shift and shift['quantile_statistics']:
                 quant_stats = shift['quantile_statistics']
-                print(f"     Quantile Totals:")
+                dt_quant_stats = shift.get('drivetrain_quantile_statistics', {})
+                print(f"     Quantile Totals (Total / Drivetrain):")
                 for q_label, q_value in sorted(quant_stats.items()):
                     q_pct = int(q_label[1:])  # Extract percentage from 'q05', 'q25', etc.
-                    print(f"       Q{q_pct:2d}%: {q_value:.2f} kWh")
+                    dt_value = dt_quant_stats.get(q_label, None)
+                    if dt_value is not None:
+                        print(f"       Q{q_pct:2d}%: {q_value:.2f} kWh / {dt_value:.2f} kWh")
+                    else:
+                        print(f"       Q{q_pct:2d}%: {q_value:.2f} kWh")
 
 
 def get_shift_params(config: dict, shift_id: str, bus_id: str = None) -> dict:
@@ -306,6 +327,12 @@ def batch_predict(
             logger.info(f"  ✓ Predictions saved to: {output_file.name}")
             logger.info(f"  Total consumption: {results['summary']['total_consumption_kwh']:.2f} kWh")
             
+            # Log drivetrain and auxiliary breakdown if available
+            if 'total_drivetrain_kwh' in results['summary']:
+                logger.info(f"    ├─ Drivetrain: {results['summary']['total_drivetrain_kwh']:.2f} kWh")
+            if 'total_auxiliary_kwh' in results['summary']:
+                logger.info(f"    └─ Auxiliary: {results['summary']['total_auxiliary_kwh']:.2f} kWh")
+            
             # Track summary with detailed statistics
             num_trips = len(results['predictions'])
             summary = results['summary']
@@ -324,6 +351,26 @@ def batch_predict(
                 'q75': predictions_df['prediction_kwh'].quantile(0.75)
             }
             
+            # Drivetrain and auxiliary statistics (if available from greybox model)
+            drivetrain_stats = {}
+            auxiliary_stats = {}
+            if 'drivetrain_kwh' in predictions_df.columns:
+                drivetrain_stats = {
+                    'total_kwh': float(predictions_df['drivetrain_kwh'].sum()),
+                    'mean': float(predictions_df['drivetrain_kwh'].mean()),
+                    'std': float(predictions_df['drivetrain_kwh'].std()),
+                    'min': float(predictions_df['drivetrain_kwh'].min()),
+                    'max': float(predictions_df['drivetrain_kwh'].max())
+                }
+            if 'auxiliary_kwh' in predictions_df.columns:
+                auxiliary_stats = {
+                    'total_kwh': float(predictions_df['auxiliary_kwh'].sum()),
+                    'mean': float(predictions_df['auxiliary_kwh'].mean()),
+                    'std': float(predictions_df['auxiliary_kwh'].std()),
+                    'min': float(predictions_df['auxiliary_kwh'].min()),
+                    'max': float(predictions_df['auxiliary_kwh'].max())
+                }
+            
             # Distance statistics (if available)
             distance_stats = {}
             if 'total_distance_km' in summary and summary['total_distance_km'] > 0:
@@ -339,6 +386,11 @@ def batch_predict(
             if 'quantiles' in summary and summary['quantiles']:
                 quantile_stats = summary['quantiles']
             
+            # Drivetrain quantile statistics (if available)
+            drivetrain_quantile_stats = {}
+            if 'drivetrain_quantiles' in summary and summary['drivetrain_quantiles']:
+                drivetrain_quantile_stats = summary['drivetrain_quantiles']
+            
             summary_entry = {
                 'shift_id': shift_id,
                 'bus_id': bus_id,
@@ -348,9 +400,14 @@ def batch_predict(
                 'external_temp_celsius': params['external_temp_celsius'],
                 'num_trips': num_trips,
                 'total_consumption_kwh': summary['total_consumption_kwh'],
+                'total_drivetrain_kwh': summary.get('total_drivetrain_kwh'),
+                'total_auxiliary_kwh': summary.get('total_auxiliary_kwh'),
                 'consumption_statistics': consumption_stats,
+                'drivetrain_statistics': drivetrain_stats if drivetrain_stats else None,
+                'auxiliary_statistics': auxiliary_stats if auxiliary_stats else None,
                 'distance_statistics': distance_stats,
                 'quantile_statistics': quantile_stats,
+                'drivetrain_quantile_statistics': drivetrain_quantile_stats if drivetrain_quantile_stats else None,
                 'output_file': str(output_file.name)
             }
 
