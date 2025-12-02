@@ -188,3 +188,37 @@ node_modules/
 
 # Playwright MCP artifacts
 .playwright-mcp/
+
+# Model cache
+model_cache/
+
+# Playground generated outputs
+playground/tpl/predictions/
+playground/tpl/results/
+playground/tpl/statistics/
+playground/tpl/turni_centro_heatmaps_final/
+playground/tpl/turni_macchina_2026/
+playground/tpl/optimization/dev/
+playground/tpl/batch_config_all_shifts_backup.json
+playground/tpl/batch_config_all_shifts_12deg.json
+playground/tpl/batch_config_from_shifts.json
+playground/tpl/example_predictions.json
+
+# Playground utility scripts
+playground/build_shift_csv_from_excel.py
+playground/build_shift_json_from_excel.py
+playground/plot_shift_bars.py
+playground/read_shift_excel.py
+
+# Temporary documentation files
+CONSUMPTION_PREDICTION_IMPLEMENTATION.md
+PROBABILISTIC_PREDICTIONS_UPDATE.md
+SIMPLIFIED_OUTPUT_AND_BATCH_PROCESSING.md
+TEST_RESULTS.md
+
+# Temporary test/verification scripts
+display_trip_statistics.py
+test_trip_statistics.py
+verify_combined_trips.py
+verify_trip_statistics_features.py
+test.parquet
