@@ -120,6 +120,14 @@ def load_prediction_context(consumption_dir: str, shift_name: str) -> dict:
     return data.get("contextual_parameters", {}) or {}
 
 
+def load_prediction_summary(consumption_dir: str, shift_name: str) -> dict:
+    """Load summary data from prediction file including total distance."""
+    path = os.path.join(consumption_dir, f"{shift_name}_predictions.json")
+    with open(path, "r") as f:
+        data = json.load(f)
+    return data.get("summary", {}) or {}
+
+
 def get_consumption_from_map(cmap: Dict[str, dict], trip_id: str, quantile: str = "mean") -> float:
     p = cmap.get(str(trip_id))
     if p is None:
@@ -253,6 +261,9 @@ def optimize_cp_fast_highs(
     battery_capacity = np.zeros(num_buses, dtype=float)
     battery_offset = np.zeros(num_buses, dtype=float)
     max_power = np.zeros(num_buses, dtype=float)
+    total_distance_km = np.zeros(num_buses, dtype=float)
+    total_base_consumption = np.zeros(num_buses, dtype=float)
+    total_sensitivity = np.zeros(num_buses, dtype=float)
     shift_names = []
     drive_events_by_bus = [[] for _ in range(num_buses)]
 
@@ -280,6 +291,10 @@ def optimize_cp_fast_highs(
             battery_offset[b_idx] = float(cap) - float(pred_batt)
         else:
             battery_offset[b_idx] = 0.0
+
+        # Load distance from prediction summary
+        pred_summary = load_prediction_summary(consumption_dir, shift_name)
+        total_distance_km[b_idx] = float(pred_summary.get("total_distance_km", 0.0) or 0.0)
 
         with open(path, 'r') as f:
             data = json.load(f)
@@ -320,6 +335,9 @@ def optimize_cp_fast_highs(
                 "base_energy": t["base_energy"],
                 "sensitivity": t["sensitivity"],
             })
+            # Track totals for consumption per km calculation
+            total_base_consumption[b_idx] += t["base_energy"]
+            total_sensitivity[b_idx] += t["sensitivity"]
         for i in range(len(trips) - 1):
             arr_i = trips[i]["arrival"]
             dep_next = trips[i + 1]["departure"]
@@ -810,6 +828,60 @@ def optimize_cp_fast_highs(
                 "new_capacity_kwh": new_cap,
             })
 
+    # Compute and output consumption per km (accounting for battery size sensitivity)
+    consumption_per_km_data: list[dict] = []
+    print("\nConsumption per km by shift (effective, accounting for battery sizing):")
+    print(f"  {'Shift':<25} {'Base kWh':>10} {'Sens Adj':>10} {'Eff kWh':>10} {'Distance':>10} {'kWh/km':>8}")
+    print(f"  {'-'*25} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*8}")
+    
+    total_eff_consumption = 0.0
+    total_dist = 0.0
+    for b in range(num_buses):
+        shift_name = shift_names[b] if b < len(shift_names) else f"bus_{b}"
+        base_cons = float(total_base_consumption[b])
+        sens_total = float(total_sensitivity[b])
+        extra = float(extra_soc_val[b])
+        offset = float(battery_offset[b])
+        # Effective consumption = base + sensitivity * (extra_soc + offset)
+        sens_adjustment = sens_total * (extra + offset)
+        eff_consumption = base_cons + sens_adjustment
+        dist_km = float(total_distance_km[b])
+        
+        if dist_km > 0:
+            kwh_per_km = eff_consumption / dist_km
+        else:
+            kwh_per_km = float('nan')
+        
+        total_eff_consumption += eff_consumption
+        total_dist += dist_km
+        
+        consumption_per_km_data.append({
+            "shift": shift_name,
+            "base_consumption_kwh": base_cons,
+            "sensitivity_adjustment_kwh": sens_adjustment,
+            "effective_consumption_kwh": eff_consumption,
+            "distance_km": dist_km,
+            "kwh_per_km": kwh_per_km if dist_km > 0 else None,
+        })
+        
+        if dist_km > 0:
+            print(f"  {shift_name:<25} {base_cons:>10.2f} {sens_adjustment:>+10.2f} {eff_consumption:>10.2f} {dist_km:>10.2f} {kwh_per_km:>8.3f}")
+        else:
+            print(f"  {shift_name:<25} {base_cons:>10.2f} {sens_adjustment:>+10.2f} {eff_consumption:>10.2f} {dist_km:>10.2f} {'N/A':>8}")
+    
+    print(f"  {'-'*25} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*8}")
+    overall_kwh_per_km = total_eff_consumption / total_dist if total_dist > 0 else None
+    if total_dist > 0:
+        print(f"  {'TOTAL':<25} {'':<10} {'':<10} {total_eff_consumption:>10.2f} {total_dist:>10.2f} {overall_kwh_per_km:>8.3f}")
+    else:
+        print(f"  {'TOTAL':<25} {'':<10} {'':<10} {total_eff_consumption:>10.2f} {total_dist:>10.2f} {'N/A':>8}")
+    
+    # Sort by kwh_per_km for the saved output
+    consumption_per_km_data_sorted = sorted(
+        consumption_per_km_data,
+        key=lambda x: x["kwh_per_km"] if x["kwh_per_km"] is not None else float('inf')
+    )
+
     # Persist results (use a different prefix to avoid confusion)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir = os.path.join(
@@ -1066,6 +1138,19 @@ def optimize_cp_fast_highs(
     if battery_upgrades:
         with open(os.path.join(results_dir, "battery_upgrades.json"), "w") as f:
             json.dump(battery_upgrades, f, indent=2, ensure_ascii=False)
+
+    # Save consumption per km data
+    consumption_summary = {
+        "total_effective_consumption_kwh": total_eff_consumption,
+        "total_distance_km": total_dist,
+        "overall_kwh_per_km": overall_kwh_per_km,
+        "shifts": consumption_per_km_data_sorted,
+    }
+    with open(os.path.join(results_dir, "consumption_per_km.json"), "w") as f:
+        json.dump(consumption_summary, f, indent=2, ensure_ascii=False)
+    pd.DataFrame(consumption_per_km_data_sorted).to_csv(
+        os.path.join(results_dir, "consumption_per_km.csv"), index=False
+    )
 
     # Run parameters
     run_params = {
