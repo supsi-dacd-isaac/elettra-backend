@@ -26,18 +26,23 @@ def compute_battery_sensitivity_from_metadata(
         m = rho_batt * bus_battery_kwh + k1 * bus_length_m + k2
 
         E_mech = alpha_roll  * m * L
-               + alpha_aero  * L * v^2
+               + alpha_aero  * L * v^2 * (driving_time / total_duration)
                + alpha_up    * m * h_up
                + alpha_down  * m * h_down
 
     where:
-        L      = total_distance_m
-        v      = driving_average_speed_kmh / 3.6  [m/s]
-        h_up   = total_ascent_m
-        h_down = total_descent_m
+        L              = total_distance_m
+        v              = driving_average_speed_kmh / 3.6  [m/s]
+        h_up           = total_ascent_m
+        h_down         = total_descent_m
+        driving_time   = driving_time_minutes
+        total_duration = total_duration_minutes
 
-    Since E_mech is linear in bus_battery_kwh, its derivative w.r.t.
-    bus_battery_kwh is:
+    The dwell time correction (driving_time / total_duration) accounts for
+    the fact that aerodynamic drag only applies when the bus is moving.
+
+    Since the aero term does not depend on mass, and the mass-dependent terms
+    are linear in bus_battery_kwh, the derivative w.r.t. bus_battery_kwh is:
 
         dE_mech / d(bus_battery_kwh)
             = rho_batt * (alpha_roll * L + alpha_up * h_up + alpha_down * h_down)

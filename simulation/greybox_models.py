@@ -14,6 +14,8 @@ REQUIRED_COLS = [
     "driving_average_speed_kmh",
     "total_ascent_m",
     "total_descent_m",
+    "driving_time_minutes",
+    "total_duration_minutes",
 ]
 
 GREYBOX_PRED_FEATURE = "greybox_pred_kwh"
@@ -36,15 +38,21 @@ class MechanicalGreyBox:
         m = rho_batt * bus_battery_kwh + k1 * bus_length_m + k2
 
         E_mech = alpha_roll  * m * L
-               + alpha_aero  * L * v^2
+               + alpha_aero  * L * v^2 * (driving_time / total_duration)
                + alpha_up    * m * h_up
                + alpha_down  * m * h_down
 
     where:
-        L      = total_distance_m
-        v      = driving_average_speed_kmh / 3.6  [m/s]
-        h_up   = total_ascent_m
-        h_down = total_descent_m
+        L              = total_distance_m
+        v              = driving_average_speed_kmh / 3.6  [m/s]
+        h_up           = total_ascent_m
+        h_down         = total_descent_m
+        driving_time   = driving_time_minutes
+        total_duration = total_duration_minutes
+
+    The dwell time correction (driving_time / total_duration) accounts for
+    the fact that aerodynamic drag only applies when the bus is moving,
+    not during stops/dwell time.
     """
 
     def __init__(self, battery_pack_density_kg_per_kwh: float = 6.0) -> None:
@@ -63,15 +71,19 @@ class MechanicalGreyBox:
         h_down = X["total_descent_m"].to_numpy(dtype=float)
         length = X["bus_length_m"].to_numpy(dtype=float)
         batt_kwh = X["bus_battery_kwh"].to_numpy(dtype=float)
-        return L, v, h_up, h_down, length, batt_kwh
+        driving_time_minutes = X["driving_time_minutes"].to_numpy(dtype=float)
+        total_duration_minutes = X["total_duration_minutes"].to_numpy(dtype=float)
+        return L, v, h_up, h_down, length, batt_kwh, driving_time_minutes, total_duration_minutes
 
     def _predict_with_params(self, X: pd.DataFrame, theta: np.ndarray) -> np.ndarray:
         alpha_roll, alpha_aero, alpha_up, alpha_down, k1, k2 = theta
-        L, v, h_up, h_down, length, batt_kwh = self._extract_arrays(X)
+        L, v, h_up, h_down, length, batt_kwh, driving_time_minutes, total_duration_minutes = self._extract_arrays(X)
         m = self.battery_pack_density * batt_kwh + k1 * length + k2
+        # Dwell time correction: aero drag only applies during actual driving
+        dwell_time_factor = driving_time_minutes / total_duration_minutes
         E_mech = (
             alpha_roll * m * L
-            + alpha_aero * L * (v ** 2)
+            + alpha_aero * L * (v ** 2) * dwell_time_factor
             + alpha_up * m * h_up
             + alpha_down * m * h_down
         )
