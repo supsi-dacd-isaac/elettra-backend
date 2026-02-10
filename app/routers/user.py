@@ -12,11 +12,12 @@ from app.schemas.database import (
 from app.schemas.responses import (
     DepotCreateRequest, DepotUpdateRequest, DepotReadWithLocation,
     ShiftReadWithStructure, ShiftStructureItem,
+    ShiftInfoResponse, RouteInfoBrief, TripInfoBrief,
 )
 from app.schemas.requests import ShiftCreateRequest, ShiftUpdateRequest
 from app.models import (
     Users, BusesModels, Buses, Depots, GtfsStops,
-    Shifts, ShiftsStructures, GtfsTrips
+    Shifts, ShiftsStructures, GtfsTrips, GtfsRoutes, GtfsCalendar
 )
 from app.core.auth import get_current_user
 
@@ -356,12 +357,11 @@ async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(g
 
 @router.get("/shifts/", response_model=List[ShiftReadWithStructure])
 async def list_shifts(skip: int = 0, limit: int = 100, bus_id: Optional[UUID] = None, user_id: Optional[UUID] = None, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    q = select(Shifts)
+    # Always filter shifts by the current authenticated user's buses
+    # The user_id query parameter is ignored for security - we use current_user.id instead
+    q = select(Shifts).join(Buses).where(Buses.user_id == current_user.id)
     if bus_id is not None:
         q = q.where(Shifts.bus_id == bus_id)
-    if user_id is not None:
-        # Filter shifts by user via their bus user_id
-        q = q.join(Buses, isouter=True).where((Buses.user_id == user_id))
     q = q.offset(skip).limit(limit)
     shifts = (await db.execute(q)).scalars().all()
 
@@ -380,27 +380,116 @@ async def list_shifts(skip: int = 0, limit: int = 100, bus_id: Optional[UUID] = 
     return results
 
 
-@router.get("/shifts/{shift_id}", response_model=ShiftReadWithStructure)
-async def read_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    shift = await db.get(Shifts, shift_id)
+async def _get_shift_if_owned(shift_id: UUID, user_id: UUID, db: AsyncSession) -> Shifts:
+    """Fetch a shift and verify the current user owns it (via bus). Raises 404 if not found or not owned."""
+    result = await db.execute(
+        select(Shifts)
+        .join(Buses)
+        .where(Shifts.id == shift_id, Buses.user_id == user_id)
+    )
+    shift = result.scalar_one_or_none()
     if shift is None:
         raise HTTPException(status_code=404, detail="Shift not found")
+    return shift
+
+
+@router.get("/shifts/{shift_id}", response_model=ShiftReadWithStructure)
+async def read_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    shift = await _get_shift_if_owned(shift_id, current_user.id, db)
     rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id).order_by(ShiftsStructures.sequence_number))).scalars().all()
     structure = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in rows]
     return ShiftReadWithStructure(id=shift.id, name=shift.name, bus_id=shift.bus_id, structure=structure)
 
 
+@router.get("/shifts/{shift_id}/info", response_model=ShiftInfoResponse)
+async def shift_info(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    """
+    Get detailed information about a shift including:
+    - Route info (id, name)
+    - Days of the week (from trip service/calendar)
+    - All trips with their details
+    """
+    shift = await _get_shift_if_owned(shift_id, current_user.id, db)
+
+    # Get all trips with their routes and calendars via shift_structures
+    result = await db.execute(
+        select(
+            ShiftsStructures.sequence_number,
+            GtfsTrips,
+            GtfsRoutes,
+            GtfsCalendar
+        )
+        .join(GtfsTrips, ShiftsStructures.trip_id == GtfsTrips.id)
+        .join(GtfsRoutes, GtfsTrips.route_id == GtfsRoutes.id)
+        .join(GtfsCalendar, GtfsTrips.service_id == GtfsCalendar.id)
+        .where(ShiftsStructures.shift_id == shift.id)
+        .order_by(ShiftsStructures.sequence_number)
+    )
+    rows = result.all()
+
+    # Build trips list
+    trips: list[TripInfoBrief] = []
+    route_info: Optional[RouteInfoBrief] = None
+    days_set: set[str] = set()
+
+    for seq_num, trip, route, calendar in rows:
+        # Build trip info
+        trips.append(TripInfoBrief(
+            id=trip.id,
+            trip_id=trip.trip_id,
+            trip_headsign=trip.trip_headsign,
+            departure_time=trip.departure_time,
+            arrival_time=trip.arrival_time,
+            start_stop_name=trip.start_stop_name,
+            end_stop_name=trip.end_stop_name,
+            sequence_number=seq_num,
+        ))
+
+        # Get route info from first trip (all trips in a shift typically share the same route)
+        if route_info is None:
+            route_name = route.route_short_name or route.route_long_name or route.route_id
+            route_info = RouteInfoBrief(id=route.id, name=route_name)
+
+        # Collect days of week from calendar
+        if calendar.monday:
+            days_set.add("monday")
+        if calendar.tuesday:
+            days_set.add("tuesday")
+        if calendar.wednesday:
+            days_set.add("wednesday")
+        if calendar.thursday:
+            days_set.add("thursday")
+        if calendar.friday:
+            days_set.add("friday")
+        if calendar.saturday:
+            days_set.add("saturday")
+        if calendar.sunday:
+            days_set.add("sunday")
+
+    # Sort days in order
+    day_order = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    days_of_week = [d for d in day_order if d in days_set]
+
+    return ShiftInfoResponse(
+        id=shift.id,
+        name=shift.name,
+        bus_id=shift.bus_id,
+        route=route_info,
+        days_of_week=days_of_week,
+        trips=trips,
+    )
+
+
 @router.put("/shifts/{shift_id}", response_model=ShiftReadWithStructure)
 async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    shift = await db.get(Shifts, shift_id)
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    shift = await _get_shift_if_owned(shift_id, current_user.id, db)
 
     update_data = payload.model_dump(exclude_unset=True)
 
     if 'bus_id' in update_data and update_data['bus_id'] is not None:
-        bus = await db.get(Buses, update_data['bus_id'])
-        if bus is None:
+        # Ensure the new bus also belongs to the current user
+        bus = await db.execute(select(Buses).where(Buses.id == update_data['bus_id'], Buses.user_id == current_user.id))
+        if bus.scalar_one_or_none() is None:
             raise HTTPException(status_code=400, detail="Bus not found")
 
     if 'name' in update_data:
@@ -431,9 +520,7 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
 
 @router.delete("/shifts/{shift_id}")
 async def delete_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    shift = await db.get(Shifts, shift_id)
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    shift = await _get_shift_if_owned(shift_id, current_user.id, db)
     await db.execute(delete(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id))
     await db.delete(shift)
     await db.commit()
