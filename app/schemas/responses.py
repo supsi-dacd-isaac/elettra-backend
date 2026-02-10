@@ -128,3 +128,34 @@ class CombinedTripStatisticsResponse(BaseModel):
     statistics: dict
     error: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class RouteInfoBrief(BaseModel):
+    """Brief route information for shift info response"""
+    id: UUID
+    name: str  # route_short_name or route_long_name
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TripInfoBrief(BaseModel):
+    """Brief trip information for shift info response"""
+    id: UUID
+    trip_id: str
+    trip_headsign: Optional[str]
+    departure_time: Optional[str]
+    arrival_time: Optional[str]
+    start_stop_name: Optional[str]
+    end_stop_name: Optional[str]
+    sequence_number: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ShiftInfoResponse(BaseModel):
+    """Detailed shift information including route, day of week, and trips"""
+    id: UUID
+    name: str
+    bus_id: Optional[UUID]
+    route: Optional[RouteInfoBrief]
+    days_of_week: list[str]  # e.g., ["monday", "tuesday", ...]
+    trips: list[TripInfoBrief]
+    model_config = ConfigDict(from_attributes=True)
