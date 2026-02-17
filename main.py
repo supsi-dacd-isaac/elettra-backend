@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import textwrap
-from app.routers import agency, auth, gtfs, simulation, user as user_router
+from app.routers import agency, auth, environmental, gtfs, simulation, user as user_router
 from app.core.config import get_cached_settings
 from app.schemas.health import HealthCheckResponse, ServiceStatus
 from app.database import get_async_session
@@ -83,11 +83,20 @@ app = FastAPI(
         - Weather Integration: PVGIS TMY weather data
         - Elevation Profiles: SwissTopo elevation data integration
         
+        ### Environmental Calculations (LCA)
+        - Vehicle Catalogue: Browse Energie Schweiz LCA vehicle database
+        - Impact Analysis: Life-cycle environmental impact (GWP, PM, NOx, …)
+        - Vehicle Mass: Mass composition breakdown
+        - Electricity Mixes: Swiss electricity mix data
+        - Fuel Blends: Fuel blend composition data
+        - Data Versions: Historical data version management
+        
         ### External Services Integration
         - OSRM Routing: Driving distance calculations
         - SwissTopo: Elevation profile generation
         - PVGIS: Weather data for solar calculations
         - MinIO: File storage for elevation profiles
+        - Energie Schweiz LCA API: Environmental impact data
         
         ## Technical Features
         - Async PostgreSQL database operations
@@ -120,6 +129,7 @@ app.include_router(agency.router, prefix="/api/v1/agency", tags=["Agency"])
 app.include_router(user_router.router, prefix="/api/v1/user", tags=["User"])
 app.include_router(gtfs.router, prefix="/api/v1/gtfs", tags=["GTFS"])
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])
+app.include_router(environmental.router, prefix="/api/v1/environmental", tags=["Environmental Calculations"])
 
 # ----------------------------------------------------------------------------
 # Global error handlers

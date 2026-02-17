@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = Field(..., validation_alias=AliasPath("performance", "request_timeout_seconds"))
     max_request_size_mb: int = Field(..., validation_alias=AliasPath("performance", "max_request_size_mb"))
 
+    # ---- LCA (Life Cycle Analysis) API ----
+    lca_api_base_url: str = Field(
+        default="https://d2ztsj2ne13pqv.cloudfront.net",
+        validation_alias=AliasPath("lca", "api_base_url"),
+    )
+
     # Optional key (keep empty dict if missing)
     external_api_endpoints: Dict[str, str] = Field(default_factory=dict)
 
@@ -204,6 +210,7 @@ def get_settings() -> Settings:
         "APP_DEBUG": (["app", "debug"], _as_bool),
         "APP_ALLOWED_ORIGINS": (["cors", "origins"], _as_csv_list),
         "APP_SECRET_KEY": (["auth", "secret_key"], str),
+        "LCA_API_BASE_URL": (["lca", "api_base_url"], str),
     }
 
     for env_key, (path_keys, caster) in override_env_map.items():
