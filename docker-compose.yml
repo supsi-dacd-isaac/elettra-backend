@@ -31,6 +31,11 @@ services:
       ELETTRA_CONFIG_FILE: /app/config/elettra-config.docker.yaml
       # Optionally override log level at runtime
       LOG_LEVEL: INFO
+      # LCA API server selection (DEV / INT / PROD)
+      # DEV:  https://d2ztsj2ne13pqv.cloudfront.net
+      # INT:  https://d2r4i81snxys0y.cloudfront.net
+      # PROD: https://d32sjses1ja2ls.cloudfront.net
+      LCA_API_BASE_URL: ${LCA_API_BASE_URL:-https://d2ztsj2ne13pqv.cloudfront.net}
     ports:
       - "8002:8000"
     volumes:
