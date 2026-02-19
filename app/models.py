@@ -3,7 +3,7 @@ import datetime
 import decimal
 import uuid
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Double, Enum, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, REAL, String, Text, UniqueConstraint, Uuid, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Double, Enum, ForeignKeyConstraint, Index, Integer, Numeric, PrimaryKeyConstraint, REAL, String, Text, UniqueConstraint, Uuid, VARCHAR, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -362,3 +362,24 @@ class ShiftsStructures(Base):
 
     shift: Mapped['Shifts'] = relationship('Shifts', back_populates='shifts_structures')
     trip: Mapped['GtfsTrips'] = relationship('GtfsTrips', back_populates='shifts_structures')
+
+
+class BusesLcaData(Base):
+    __tablename__ = 'buses_lca_data'
+    __table_args__ = (
+        PrimaryKeyConstraint('id', name='buses_lca_data_pkey'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    traffic_characteristics: Mapped[Optional[str]] = mapped_column(Text)
+    functional_unit: Mapped[str] = mapped_column(VARCHAR, nullable=False)
+    size: Mapped[Optional[str]] = mapped_column(VARCHAR)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    vehicle_subtype: Mapped[Optional[str]] = mapped_column(VARCHAR)
+    powertrain: Mapped[Optional[str]] = mapped_column(VARCHAR)
+    geography: Mapped[Optional[str]] = mapped_column(VARCHAR)
+    passenger_capacity: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False)

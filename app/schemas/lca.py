@@ -1,12 +1,16 @@
 """
-Pydantic schemas for the Energie Schweiz LCA (Life Cycle Analysis) API.
+Pydantic schemas for the Energie Schweiz LCA (Life Cycle Analysis) API
+and the Elettra environmental calculation endpoints.
 
 Remote API docs: https://d2pqfjzfn7r7rw.cloudfront.net/index.html
 """
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Dict, List, Optional
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 
@@ -195,3 +199,110 @@ class DataVersion(BaseModel):
     name: Optional[str] = None
 
     model_config = {"extra": "allow"}
+
+
+# ---------------------------------------------------------------------------
+# Shift yearly distance
+# ---------------------------------------------------------------------------
+
+class RecurrenceType(str, Enum):
+    """How often a shift repeats within a week."""
+    weekly_once = "weekly_once"   # 1 day/week  → ×52
+    weekdays = "weekdays"        # 5 days/week → ×260
+    daily = "daily"              # 7 days/week → ×364
+    custom = "custom"            # N days/year (user-supplied)
+
+
+class ShiftTripDistance(BaseModel):
+    """Distance breakdown for a single trip inside a shift."""
+    trip_id: UUID
+    gtfs_trip_id: Optional[str] = None
+    sequence_number: int
+    distance_m: Optional[float] = Field(
+        None,
+        description="Trip distance in metres (from shape_dist_traveled). "
+                    "Null when the trip has no shape data (e.g. depot trips).",
+    )
+
+
+class ShiftYearlyDistanceResponse(BaseModel):
+    """Response for GET /shifts/{shift_id}/yearly-distance."""
+    shift_id: UUID
+    shift_name: str
+    daily_distance_m: float = Field(
+        ..., description="Sum of all trip distances in the shift (metres)."
+    )
+    daily_distance_km: float = Field(
+        ..., description="Same value expressed in kilometres."
+    )
+    recurrence: RecurrenceType
+    recurrence_days: int = Field(
+        ..., description="Number of operating days in a year used for the calculation."
+    )
+    yearly_distance_m: float
+    yearly_distance_km: float
+    trips: List[ShiftTripDistance] = Field(
+        ..., description="Per-trip distance breakdown."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Yearly environmental impact
+# ---------------------------------------------------------------------------
+
+class LcaVehicleInfo(BaseModel):
+    """Matched LCA vehicle used for the impact calculation."""
+    lca_vehicle_id: UUID
+    lca_vehicle_name: str
+    lca_size: Optional[str] = None
+    powertrain: Optional[str] = None
+    passenger_capacity: Optional[float] = None
+
+
+class YearlyEmissionBreakdown(BaseModel):
+    """
+    Yearly emissions for a single environmental indicator, broken down by
+    lifecycle phase.  Each value = impact_per_pkm × yearly_distance_km × passengers.
+    """
+    unit: str = Field(
+        ..., description="Unit of measure for every numeric value in this breakdown."
+    )
+    direct: Optional[float] = None
+    directNonExhaust: Optional[float] = None
+    energyChain: Optional[float] = None
+    maintenance: Optional[float] = None
+    vehicle: Optional[float] = None
+    endOfLife: Optional[float] = None
+    infrastructure: Optional[float] = None
+    total: Optional[float] = Field(
+        None, description="Sum of all lifecycle phases for this indicator."
+    )
+
+    model_config = {"extra": "allow"}
+
+
+class YearlyImpactResponse(BaseModel):
+    """Response for GET /shifts/{shift_id}/yearly-impact."""
+    shift_id: UUID
+    shift_name: str
+    lca_vehicle: LcaVehicleInfo
+    bus_model_name: str
+    bus_model_size: Optional[str] = None
+    passengers: float
+    recurrence: RecurrenceType
+    recurrence_days: int
+    daily_distance_km: float
+    yearly_distance_km: float
+    functional_unit: str = Field(
+        ..., description="Unit of the upstream impact data (e.g. pkm)."
+    )
+    impact_per_unit: VehicleImpact = Field(
+        ..., description="Raw per-pkm impact from the LCA API."
+    )
+    yearly_impact: Dict[str, YearlyEmissionBreakdown] = Field(
+        ...,
+        description=(
+            "Yearly absolute impact for each indicator. "
+            "Computed as impact_per_pkm × yearly_distance_km × passengers."
+        ),
+    )
