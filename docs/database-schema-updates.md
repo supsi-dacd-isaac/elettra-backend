@@ -24,6 +24,14 @@ export DB_URL="postgresql+psycopg2://[USER]:[PASSWORD]@localhost:5440/elettra"
 sqlacodegen "$DB_URL" --outfile app/models.py
 ```
 
+Equivalent in windows powershell
+```bash
+$env:DB_URL = "postgresql+psycopg2://[USER]:[PASSWORD]@localhost:5440/elettra"
+
+sqlacodegen $env:DB_URL --outfile app/models.py
+```
+
+
 This command:
 - Connects to the database using the provided connection string
 - Analyzes the current database schema
@@ -33,6 +41,12 @@ This command:
 ### Step 2: Generate Database Schemas
 
 Next, generate the database schemas from the updated models:
+
+```bash
+python generate_schemas.py --models-module app.models --out app/schemas/database.py --base-class-name Base
+```
+
+Equivalent in windows powershell:
 
 ```bash
 python generate_schemas.py --models-module app.models --out app/schemas/database.py --base-class-name Base
@@ -50,6 +64,12 @@ Export the current database schema to the SQL file:
 
 ```bash
 export PGPASSWORD='[PASSWORD]' && pg_dump --schema-only -U [USER] -h localhost -p 5440 -d elettra -f db/elettra_schema.sql
+```
+
+Equialent in windows powershell:
+```bash
+$env:PGPASSWORD='[PASSWORD]’
+& "C:/Program Files/PostgreSQL/18/bin/pg_dump.exe" --schema-only -U [USER] -h localhost -p 5440 -d elettra -f "app/db/db_schema.sql”
 ```
 
 This command:
