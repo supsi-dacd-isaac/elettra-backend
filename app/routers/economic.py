@@ -10,6 +10,7 @@ Every input is overridable per-request via query parameters.
 
 import json
 import logging
+import math
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -83,8 +84,9 @@ def _charger_cost(power_kw: float) -> float:
 
 
 def _fee_connection(power_kw: float) -> float:
-    """fee_connect [CHF] = a*kW + b"""
-    return _d("grid_connection_fee_per_kw") * power_kw + _d("grid_connection_fee_const")
+    """fee_connect [CHF] = max(a*kW + b, 0); clamped because a negative fee is nonsensical."""
+    raw = _d("grid_connection_fee_per_kw") * power_kw + _d("grid_connection_fee_const")
+    return max(raw, 0.0)
 
 
 def _diesel_bus_cost(length_m: float) -> float:
@@ -97,9 +99,21 @@ def _diesel_bus_cost(length_m: float) -> float:
 
 
 def _capital_recovery_factor(interest_rate: float, lifetime: int) -> float:
-    """CRF = (q^t * i) / (q^t - 1), with q = 1 + i."""
+    """CRF = (q^t * i) / (q^t - 1), with q = 1 + i.
+
+    Special cases:
+    - i = 0  → CRF = 1 / t  (uniform distribution over lifetime)
+    - q^t overflows → CRF ≈ i  (limit as t → ∞ or q very large)
+    """
+    if interest_rate == 0.0:
+        return 1.0 / lifetime
     q = 1.0 + interest_rate
-    q_t = q ** lifetime
+    try:
+        q_t = q ** lifetime
+    except OverflowError:
+        return interest_rate
+    if math.isinf(q_t):
+        return interest_rate
     return (q_t * interest_rate) / (q_t - 1.0)
 
 
@@ -259,10 +273,10 @@ async def get_annualized_cost(
         ..., gt=0, description="One-off investment [CHF]."
     ),
     lifetime_years: int = Query(
-        ..., gt=0, description="Asset lifetime [years]."
+        ..., gt=0, le=200, description="Asset lifetime [years] (max 200)."
     ),
     interest_rate: Optional[float] = Query(
-        None, ge=0, description="Discount / interest rate."
+        None, ge=0, le=1.0, description="Discount / interest rate (0–1)."
     ),
     current_user: Users = Depends(get_current_user),
 ):
@@ -432,7 +446,7 @@ async def get_full_comparison(
         None, gt=0, description="Annual mileage [km/year]."
     ),
     interest_rate: Optional[float] = Query(
-        None, ge=0, description="Discount / interest rate."
+        None, ge=0, le=1.0, description="Discount / interest rate (0–1)."
     ),
     bus_length_m: Optional[float] = Query(
         None, gt=0, description="Bus length [m]."
@@ -453,19 +467,19 @@ async def get_full_comparison(
         None, gt=0, description="Diesel price [CHF/l]."
     ),
     lifetime_bus: Optional[int] = Query(
-        None, gt=0, description="Electric bus lifetime [years]."
+        None, gt=0, le=200, description="Electric bus lifetime [years] (max 200)."
     ),
     lifetime_battery: Optional[int] = Query(
-        None, gt=0, description="Battery lifetime [years]."
+        None, gt=0, le=200, description="Battery lifetime [years] (max 200)."
     ),
     lifetime_charger: Optional[int] = Query(
-        None, gt=0, description="Charger lifetime [years]."
+        None, gt=0, le=200, description="Charger lifetime [years] (max 200)."
     ),
     lifetime_connection: Optional[int] = Query(
-        None, gt=0, description="Grid connection lifetime [years]."
+        None, gt=0, le=200, description="Grid connection lifetime [years] (max 200)."
     ),
     lifetime_diesel_bus: Optional[int] = Query(
-        None, gt=0, description="Diesel bus lifetime [years]."
+        None, gt=0, le=200, description="Diesel bus lifetime [years] (max 200)."
     ),
     current_user: Users = Depends(get_current_user),
 ):
