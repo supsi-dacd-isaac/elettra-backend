@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import textwrap
-from app.routers import agency, auth, environmental, gtfs, simulation, user as user_router
+from app.routers import agency, auth, economic, environmental, gtfs, simulation, user as user_router
 from app.core.config import get_cached_settings
 from app.schemas.health import HealthCheckResponse, ServiceStatus
 from app.database import get_async_session
@@ -91,6 +91,12 @@ app = FastAPI(
         - Fuel Blends: Fuel blend composition data
         - Data Versions: Historical data version management
         
+        ### Economic Evaluations
+        - Investment Costs: Battery, bus body, charger, grid connection, diesel bus
+        - Cost Annualisation: Capital Recovery Factor (CRF) calculations
+        - Operating Expenses: Maintenance, energy (electric), fuel (diesel)
+        - Full Comparison: Side-by-side electric vs diesel annual cost analysis
+        
         ### External Services Integration
         - OSRM Routing: Driving distance calculations
         - SwissTopo: Elevation profile generation
@@ -130,6 +136,7 @@ app.include_router(user_router.router, prefix="/api/v1/user", tags=["User"])
 app.include_router(gtfs.router, prefix="/api/v1/gtfs", tags=["GTFS"])
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])
 app.include_router(environmental.router, prefix="/api/v1/environmental", tags=["Environmental Calculations"])
+app.include_router(economic.router, prefix="/api/v1/economic", tags=["Economic Evaluations"])
 
 # ----------------------------------------------------------------------------
 # Global error handlers
