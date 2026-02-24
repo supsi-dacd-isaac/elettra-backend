@@ -11,6 +11,64 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
+# Default parameters
+# ---------------------------------------------------------------------------
+
+class EconomicDefaultsResponse(BaseModel):
+    """All default economic parameters loaded from ``config/economic_defaults.json``."""
+
+    # Scenario / operational parameters
+    annual_km: float = Field(..., description="Default annual mileage [km/year].")
+    interest_rate: float = Field(..., description="Default discount / interest rate.")
+    bus_length_m: float = Field(..., description="Default bus length [m].")
+    battery_capacity_kwh: float = Field(..., description="Default battery capacity [kWh].")
+    charger_power_kw: float = Field(..., description="Default charger rated power [kW].")
+    annual_consumption_kwh: float = Field(..., description="Default annual electricity consumption [kWh/year].")
+    energy_price_per_kwh: float = Field(..., description="Default electricity price [CHF/kWh].")
+    fuel_cost_per_l: float = Field(..., description="Default diesel fuel price [CHF/l].")
+
+    # Lifetimes
+    lifetime_bus: int = Field(..., description="Electric bus lifetime [years].")
+    lifetime_battery: int = Field(..., description="Battery lifetime [years].")
+    lifetime_charger: int = Field(..., description="Charger lifetime [years].")
+    lifetime_connection: int = Field(..., description="Grid connection lifetime [years].")
+    lifetime_diesel_bus: int = Field(..., description="Diesel bus lifetime [years].")
+
+    # Equation coefficients — Battery
+    battery_cost_per_kwh: float = Field(..., description="Battery unit cost coefficient [CHF/kWh].")
+
+    # Equation coefficients — Electric bus body (a·m² + b·m + c)
+    bus_no_batt_quad_coeff: float = Field(..., description="Electric bus body quadratic coeff (a).")
+    bus_no_batt_lin_coeff: float = Field(..., description="Electric bus body linear coeff (b).")
+    bus_no_batt_const: float = Field(..., description="Electric bus body constant (c) [CHF].")
+
+    # Equation coefficients — Charger (a·kW + b)
+    charger_cost_per_kw: float = Field(..., description="Charger cost slope [CHF/kW].")
+    charger_cost_const: float = Field(..., description="Charger cost intercept [CHF].")
+
+    # Equation coefficients — Grid connection (a·kW + b)
+    grid_connection_fee_per_kw: float = Field(..., description="Grid connection fee slope [CHF/kW].")
+    grid_connection_fee_const: float = Field(..., description="Grid connection fee intercept [CHF].")
+
+    # Equation coefficients — Diesel bus (a·m² + b·m + c)
+    diesel_bus_quad_coeff: float = Field(..., description="Diesel bus quadratic coeff (a).")
+    diesel_bus_lin_coeff: float = Field(..., description="Diesel bus linear coeff (b).")
+    diesel_bus_const: float = Field(..., description="Diesel bus constant (c) [CHF].")
+
+    # Equation coefficients — Electric maintenance (a·m + b) [CHF/km]
+    electric_maint_cost_per_m: float = Field(..., description="Electric maintenance slope [CHF/km per m].")
+    electric_maint_cost_const: float = Field(..., description="Electric maintenance intercept [CHF/km].")
+
+    # Equation coefficients — Diesel maintenance (a·m + b) [CHF/km]
+    diesel_maint_cost_per_m: float = Field(..., description="Diesel maintenance slope [CHF/km per m].")
+    diesel_maint_cost_const: float = Field(..., description="Diesel maintenance intercept [CHF/km].")
+
+    # Equation coefficients — Diesel consumption (a·m + b) [l/km]
+    diesel_consumption_per_m: float = Field(..., description="Diesel consumption slope [l/km per m].")
+    diesel_consumption_const: float = Field(..., description="Diesel consumption intercept [l/km].")
+
+
+# ---------------------------------------------------------------------------
 # Investment cost responses
 # ---------------------------------------------------------------------------
 
