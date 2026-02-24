@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List, Optional
@@ -20,6 +20,14 @@ from app.models import (
     Shifts, ShiftsStructures, GtfsTrips, GtfsRoutes, GtfsCalendar
 )
 from app.core.auth import get_current_user
+from app.core.shift_distance import (
+    RecurrenceType,
+    compute_shift_yearly_distance,
+)
+from app.schemas.lca import (
+    ShiftTripDistance,
+    ShiftYearlyDistanceResponse,
+)
 
 router = APIRouter()
 
@@ -525,5 +533,68 @@ async def delete_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_sess
     await db.delete(shift)
     await db.commit()
     return {"message": "Shift deleted successfully"}
+
+
+# ========================================================================== #
+# Shift yearly distance
+# ========================================================================== #
+
+@router.get(
+    "/shifts/{shift_id}/yearly-distance",
+    response_model=ShiftYearlyDistanceResponse,
+    summary="Calculate shift yearly distance",
+    description=(
+        "Computes the total daily distance of a shift (sum of its trip "
+        "distances derived from GTFS ``shape_dist_traveled``) and projects "
+        "it to a yearly figure based on the chosen recurrence pattern.\n\n"
+        "**Recurrence options:**\n"
+        "- ``weekly_once`` – shift runs 1 day/week → 52 days/year\n"
+        "- ``weekdays`` – shift runs Mon–Fri → 260 days/year\n"
+        "- ``daily`` – shift runs every day → 364 days/year\n"
+        "- ``custom`` – provide ``custom_days`` (number of operating days "
+        "per year)\n\n"
+        "Trips without shape data (e.g. depot trips) are included in the "
+        "breakdown with ``distance_m = null`` but do not count towards the "
+        "total."
+    ),
+)
+async def get_shift_yearly_distance(
+    shift_id: UUID,
+    recurrence: RecurrenceType = Query(
+        ...,
+        description="How often the shift repeats.",
+    ),
+    custom_days: Optional[int] = Query(
+        None,
+        ge=1,
+        le=366,
+        description="Number of operating days/year (required when recurrence=custom).",
+    ),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    info = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+
+    trips = [
+        ShiftTripDistance(
+            trip_id=t.trip_id,
+            gtfs_trip_id=t.gtfs_trip_id,
+            sequence_number=t.sequence_number,
+            distance_m=t.distance_m,
+        )
+        for t in info.trips
+    ]
+
+    return ShiftYearlyDistanceResponse(
+        shift_id=info.shift_id,
+        shift_name=info.shift_name,
+        daily_distance_m=info.daily_distance_m,
+        daily_distance_km=info.daily_distance_km,
+        recurrence=recurrence,
+        recurrence_days=info.recurrence_days,
+        yearly_distance_m=info.yearly_distance_m,
+        yearly_distance_km=info.yearly_distance_km,
+        trips=trips,
+    )
 
 

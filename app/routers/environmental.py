@@ -25,14 +25,12 @@ from app.models import (
     Buses, BusesLcaData, BusesModels,
     GtfsStopsTimes, GtfsTrips, Shifts, ShiftsStructures, Users,
 )
+from app.core.shift_distance import RECURRENCE_DAYS, RecurrenceType
 from app.schemas.lca import (
     DataVersion,
     ElectricityMix,
     FuelBlend,
     LcaVehicleInfo,
-    RecurrenceType,
-    ShiftTripDistance,
-    ShiftYearlyDistanceResponse,
     VehicleComplete,
     VehicleImpact,
     VehicleMass,
@@ -88,127 +86,6 @@ def _extract_query_params(request: Request) -> Dict[str, str]:
     requiring explicit FastAPI ``Query`` declarations for every possible key.
     """
     return dict(request.query_params)
-
-
-_RECURRENCE_DAYS = {
-    RecurrenceType.weekly_once: 52,
-    RecurrenceType.weekdays: 260,     # 52 × 5
-    RecurrenceType.daily: 364,        # 52 × 7
-}
-
-
-# ========================================================================== #
-# Shift yearly distance  (GET2)
-# ========================================================================== #
-
-@router.get(
-    "/shifts/{shift_id}/yearly-distance",
-    response_model=ShiftYearlyDistanceResponse,
-    summary="Calculate shift yearly distance",
-    description=(
-        "Computes the total daily distance of a shift (sum of its trip "
-        "distances derived from GTFS ``shape_dist_traveled``) and projects "
-        "it to a yearly figure based on the chosen recurrence pattern.\n\n"
-        "**Recurrence options:**\n"
-        "- ``weekly_once`` – shift runs 1 day/week → 52 days/year\n"
-        "- ``weekdays`` – shift runs Mon–Fri → 260 days/year\n"
-        "- ``daily`` – shift runs every day → 364 days/year\n"
-        "- ``custom`` – provide ``custom_days`` (number of operating days "
-        "per year)\n\n"
-        "Trips without shape data (e.g. depot trips) are included in the "
-        "breakdown with ``distance_m = null`` but do not count towards the "
-        "total."
-    ),
-)
-async def get_shift_yearly_distance(
-    shift_id: UUID,
-    recurrence: RecurrenceType = Query(
-        ...,
-        description="How often the shift repeats.",
-    ),
-    custom_days: Optional[int] = Query(
-        None,
-        ge=1,
-        le=366,
-        description="Number of operating days/year (required when recurrence=custom).",
-    ),
-    db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
-):
-    # --- validate recurrence -------------------------------------------------
-    if recurrence == RecurrenceType.custom:
-        if custom_days is None:
-            raise HTTPException(
-                status_code=422,
-                detail="custom_days is required when recurrence=custom",
-            )
-        days_per_year = custom_days
-    else:
-        days_per_year = _RECURRENCE_DAYS[recurrence]
-
-    # --- fetch shift ---------------------------------------------------------
-    shift = await db.get(Shifts, shift_id)
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
-
-    # --- trip distances via shape_dist_traveled ------------------------------
-    stmt = (
-        select(
-            ShiftsStructures.trip_id,
-            ShiftsStructures.sequence_number,
-            GtfsTrips.trip_id.label("gtfs_trip_id"),
-            func.max(GtfsStopsTimes.shape_dist_traveled).label("max_dist"),
-        )
-        .join(GtfsTrips, GtfsTrips.id == ShiftsStructures.trip_id)
-        .outerjoin(GtfsStopsTimes, GtfsStopsTimes.trip_id == GtfsTrips.id)
-        .where(ShiftsStructures.shift_id == shift_id)
-        .group_by(
-            ShiftsStructures.trip_id,
-            ShiftsStructures.sequence_number,
-            GtfsTrips.trip_id,
-        )
-        .order_by(ShiftsStructures.sequence_number)
-    )
-
-    result = await db.execute(stmt)
-    rows = result.all()
-
-    if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail="Shift has no trips in its structure",
-        )
-
-    # --- build response ------------------------------------------------------
-    trips: List[ShiftTripDistance] = []
-    daily_distance_m = 0.0
-
-    for trip_uuid, seq, gtfs_tid, max_dist in rows:
-        dist = float(max_dist) if max_dist is not None else None
-        trips.append(
-            ShiftTripDistance(
-                trip_id=trip_uuid,
-                gtfs_trip_id=gtfs_tid,
-                sequence_number=seq,
-                distance_m=dist,
-            )
-        )
-        if dist is not None:
-            daily_distance_m += dist
-
-    yearly_distance_m = daily_distance_m * days_per_year
-
-    return ShiftYearlyDistanceResponse(
-        shift_id=shift_id,
-        shift_name=shift.name,
-        daily_distance_m=round(daily_distance_m, 2),
-        daily_distance_km=round(daily_distance_m / 1000.0, 3),
-        recurrence=recurrence,
-        recurrence_days=days_per_year,
-        yearly_distance_m=round(yearly_distance_m, 2),
-        yearly_distance_km=round(yearly_distance_m / 1000.0, 3),
-        trips=trips,
-    )
 
 
 # ========================================================================== #
@@ -311,7 +188,7 @@ async def get_shift_yearly_impact(
             )
         days_per_year = custom_days
     else:
-        days_per_year = _RECURRENCE_DAYS[recurrence]
+        days_per_year = RECURRENCE_DAYS[recurrence]
 
     # --- shift → bus → bus_model → specs.size --------------------------------
     shift = await db.get(Shifts, shift_id)

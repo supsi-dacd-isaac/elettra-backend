@@ -16,10 +16,14 @@ import math
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
+from app.core.shift_distance import RecurrenceType, compute_shift_yearly_distance
+from app.database import get_async_session
 from app.models import Users
 from app.schemas.economic import (
     AnnualizedCostResponse,
@@ -335,14 +339,16 @@ async def get_annualized_cost(
     "/opex/electric-maintenance",
     response_model=ElectricMaintenanceCostResponse,
     summary="Electric bus maintenance cost",
-    description="``CHF/km = cost_per_m·m + cost_const``",
+    description="``CHF/km = cost_per_m·m + cost_const``.  Annual km derived from shift yearly distance.",
 )
 async def get_electric_maintenance_cost(
+    shift_id: UUID = Query(..., description="Shift UUID (required)."),
+    recurrence: RecurrenceType = Query(..., description="How often the shift repeats."),
     length_m: float = Query(
         ..., gt=0, description="Bus length [m] (required)."
     ),
-    annual_km: float = Query(
-        ..., gt=0, description="Annual mileage [km/year] (required)."
+    custom_days: Optional[int] = Query(
+        None, ge=1, le=366, description="Operating days/year (required when recurrence=custom)."
     ),
     cost_per_m: Optional[float] = Query(
         None, description="Slope coefficient [CHF/km per m]. Default from config."
@@ -350,14 +356,18 @@ async def get_electric_maintenance_cost(
     cost_const: Optional[float] = Query(
         None, description="Intercept [CHF/km]. Default from config."
     ),
+    db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    annual_km = dist.yearly_distance_km
     a = _or(cost_per_m, "electric_maint_cost_per_m")
     b = _or(cost_const, "electric_maint_cost_const")
     cpk = _electric_maint_cost_per_km(length_m, a, b)
     return ElectricMaintenanceCostResponse(
+        shift_id=shift_id,
         length_m=length_m,
-        annual_km=annual_km,
+        annual_km=round(annual_km, 3),
         cost_per_km_chf=round(cpk, 6),
         cost_per_year_chf=round(cpk * annual_km, 2),
     )
@@ -394,14 +404,16 @@ async def get_electric_energy_cost(
     "/opex/diesel-maintenance",
     response_model=DieselMaintenanceCostResponse,
     summary="Diesel bus maintenance cost",
-    description="``CHF/km = cost_per_m·m + cost_const``",
+    description="``CHF/km = cost_per_m·m + cost_const``.  Annual km derived from shift yearly distance.",
 )
 async def get_diesel_maintenance_cost(
+    shift_id: UUID = Query(..., description="Shift UUID (required)."),
+    recurrence: RecurrenceType = Query(..., description="How often the shift repeats."),
     length_m: float = Query(
         ..., gt=0, description="Bus length [m] (required)."
     ),
-    annual_km: float = Query(
-        ..., gt=0, description="Annual mileage [km/year] (required)."
+    custom_days: Optional[int] = Query(
+        None, ge=1, le=366, description="Operating days/year (required when recurrence=custom)."
     ),
     cost_per_m: Optional[float] = Query(
         None, description="Slope coefficient [CHF/km per m]. Default from config."
@@ -409,14 +421,18 @@ async def get_diesel_maintenance_cost(
     cost_const: Optional[float] = Query(
         None, description="Intercept [CHF/km]. Default from config."
     ),
+    db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    annual_km = dist.yearly_distance_km
     a = _or(cost_per_m, "diesel_maint_cost_per_m")
     b = _or(cost_const, "diesel_maint_cost_const")
     cpk = _diesel_maint_cost_per_km(length_m, a, b)
     return DieselMaintenanceCostResponse(
+        shift_id=shift_id,
         length_m=length_m,
-        annual_km=annual_km,
+        annual_km=round(annual_km, 3),
         cost_per_km_chf=round(cpk, 6),
         cost_per_year_chf=round(cpk * annual_km, 2),
     )
@@ -452,14 +468,19 @@ async def get_diesel_consumption(
     "/opex/diesel-fuel",
     response_model=DieselFuelCostResponse,
     summary="Diesel bus annual fuel cost",
-    description="``cost [CHF/year] = annual_km × (consumption_per_m·m + consumption_const) × fuel_cost_per_l``",
+    description=(
+        "``cost [CHF/year] = annual_km × (consumption_per_m·m + consumption_const) × fuel_cost_per_l``.  "
+        "Annual km derived from shift yearly distance."
+    ),
 )
 async def get_diesel_fuel_cost(
+    shift_id: UUID = Query(..., description="Shift UUID (required)."),
+    recurrence: RecurrenceType = Query(..., description="How often the shift repeats."),
     length_m: float = Query(
         ..., gt=0, description="Bus length [m] (required)."
     ),
-    annual_km: float = Query(
-        ..., gt=0, description="Annual mileage [km/year] (required)."
+    custom_days: Optional[int] = Query(
+        None, ge=1, le=366, description="Operating days/year (required when recurrence=custom)."
     ),
     fuel_cost_per_l: Optional[float] = Query(
         None, gt=0, description="Fuel price [CHF/l]. Default from config."
@@ -470,15 +491,19 @@ async def get_diesel_fuel_cost(
     consumption_const: Optional[float] = Query(
         None, description="Consumption intercept [l/km]. Default from config."
     ),
+    db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    annual_km = dist.yearly_distance_km
     fpl = _or(fuel_cost_per_l, "fuel_cost_per_l")
     ca = _or(consumption_per_m, "diesel_consumption_per_m")
     cb = _or(consumption_const, "diesel_consumption_const")
     cons = _diesel_consumption_l_per_km(length_m, ca, cb)
     return DieselFuelCostResponse(
+        shift_id=shift_id,
         length_m=length_m,
-        annual_km=annual_km,
+        annual_km=round(annual_km, 3),
         fuel_cost_per_l=fpl,
         consumption_l_per_km=round(cons, 6),
         cost_per_year_chf=round(annual_km * cons * fpl, 2),
@@ -502,10 +527,10 @@ async def get_diesel_fuel_cost(
     ),
 )
 async def get_full_comparison(
+    # --- Shift-based distance ---
+    shift_id: UUID = Query(..., description="Shift UUID (required)."),
+    recurrence: RecurrenceType = Query(..., description="How often the shift repeats."),
     # --- Mandatory physical inputs ---
-    annual_km: float = Query(
-        ..., gt=0, description="Annual mileage [km/year] (required)."
-    ),
     bus_length_m: float = Query(
         ..., gt=0, description="Bus length [m] (required)."
     ),
@@ -517,6 +542,9 @@ async def get_full_comparison(
     ),
     annual_consumption_kwh: float = Query(
         ..., gt=0, description="Annual electricity consumption [kWh/year] (required)."
+    ),
+    custom_days: Optional[int] = Query(
+        None, ge=1, le=366, description="Operating days/year (required when recurrence=custom)."
     ),
     # --- Optional configuration parameters ---
     interest_rate: Optional[float] = Query(
@@ -603,8 +631,13 @@ async def get_full_comparison(
     diesel_consumption_const: Optional[float] = Query(
         None, description="Diesel consumption intercept [l/km]."
     ),
+    db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    # Compute yearly distance from shift
+    dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    annual_km = dist.yearly_distance_km
+
     # Resolve optional params to defaults
     ir = _or(interest_rate, "interest_rate")
     epk = _or(energy_price_per_kwh, "energy_price_per_kwh")
@@ -721,7 +754,8 @@ async def get_full_comparison(
     )
 
     return FullComparisonResponse(
-        annual_km=annual_km,
+        shift_id=shift_id,
+        annual_km=round(annual_km, 3),
         interest_rate=ir,
         bus_length_m=bus_length_m,
         battery_capacity_kwh=battery_capacity_kwh,

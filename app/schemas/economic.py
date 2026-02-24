@@ -7,6 +7,8 @@ and a full electric-vs-diesel comparison for public transport buses.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 
@@ -18,7 +20,7 @@ class EconomicDefaultsResponse(BaseModel):
     """All default economic parameters loaded from ``config/economic_defaults.json``."""
 
     # Scenario / operational parameters
-    annual_km: float = Field(..., description="Default annual mileage [km/year].")
+    annual_km: float = Field(..., description="Reference annual mileage [km/year].")
     interest_rate: float = Field(..., description="Default discount / interest rate.")
     bus_length_m: float = Field(..., description="Default bus length [m].")
     battery_capacity_kwh: float = Field(..., description="Default battery capacity [kWh].")
@@ -129,8 +131,9 @@ class AnnualizedCostResponse(BaseModel):
 
 class ElectricMaintenanceCostResponse(BaseModel):
     """Annual maintenance cost for an electric bus."""
+    shift_id: UUID = Field(..., description="Shift used to derive annual distance.")
     length_m: float = Field(..., description="Bus length [m].")
-    annual_km: float = Field(..., description="Annual mileage [km/year].")
+    annual_km: float = Field(..., description="Yearly distance derived from shift [km/year].")
     cost_per_km_chf: float = Field(
         ..., description="Maintenance unit cost [CHF/km]."
     )
@@ -158,8 +161,9 @@ class ElectricEnergyCostResponse(BaseModel):
 
 class DieselMaintenanceCostResponse(BaseModel):
     """Annual maintenance cost for a diesel bus."""
+    shift_id: UUID = Field(..., description="Shift used to derive annual distance.")
     length_m: float = Field(..., description="Bus length [m].")
-    annual_km: float = Field(..., description="Annual mileage [km/year].")
+    annual_km: float = Field(..., description="Yearly distance derived from shift [km/year].")
     cost_per_km_chf: float = Field(
         ..., description="Maintenance unit cost [CHF/km]."
     )
@@ -178,8 +182,9 @@ class DieselConsumptionResponse(BaseModel):
 
 class DieselFuelCostResponse(BaseModel):
     """Annual diesel fuel cost."""
+    shift_id: UUID = Field(..., description="Shift used to derive annual distance.")
     length_m: float = Field(..., description="Bus length [m].")
-    annual_km: float = Field(..., description="Annual mileage [km/year].")
+    annual_km: float = Field(..., description="Yearly distance derived from shift [km/year].")
     fuel_cost_per_l: float = Field(..., description="Fuel price [CHF/l].")
     consumption_l_per_km: float = Field(
         ..., description="Fuel consumption [l/km]."
@@ -221,8 +226,9 @@ class CostSummary(BaseModel):
 class FullComparisonResponse(BaseModel):
     """Side-by-side annual cost comparison: electric vs diesel bus."""
 
-    # Echoed input parameters
-    annual_km: float
+    # Shift-derived distance
+    shift_id: UUID = Field(..., description="Shift used to derive annual distance.")
+    annual_km: float = Field(..., description="Yearly distance derived from shift [km/year].")
     interest_rate: float
     bus_length_m: float
     battery_capacity_kwh: float

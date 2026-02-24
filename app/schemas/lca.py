@@ -7,11 +7,12 @@ Remote API docs: https://d2pqfjzfn7r7rw.cloudfront.net/index.html
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+from app.core.shift_distance import RecurrenceType
 
 
 # ---------------------------------------------------------------------------
@@ -204,14 +205,6 @@ class DataVersion(BaseModel):
 # ---------------------------------------------------------------------------
 # Shift yearly distance
 # ---------------------------------------------------------------------------
-
-class RecurrenceType(str, Enum):
-    """How often a shift repeats within a week."""
-    weekly_once = "weekly_once"   # 1 day/week  → ×52
-    weekdays = "weekdays"        # 5 days/week → ×260
-    daily = "daily"              # 7 days/week → ×364
-    custom = "custom"            # N days/year (user-supplied)
-
 
 class ShiftTripDistance(BaseModel):
     """Distance breakdown for a single trip inside a shift."""
