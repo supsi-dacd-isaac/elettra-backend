@@ -28,6 +28,7 @@ PyYAML>=6.0.1
 httpx>=0.25.2
 aiofiles>=23.2.1
 requests>=2.31.0
+beautifulsoup4>=4.12.3
 
 # GTFS and geospatial processing
 gtfs-kit>=5.2.0
@@ -55,3 +56,7 @@ map-services @ https://github.com/supsi-dacd-isaac/map-services/archive/refs/hea
 quantile-forest>=1.3.3
 joblib>=1.3.2
 scikit-learn>=1.3.2
+
+# Optimization
+pyomo>=6.9.4
+highspy>=1.11.0

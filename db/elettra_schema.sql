@@ -338,6 +338,26 @@ CREATE TABLE public.trip_predictions (
 ALTER TABLE public.trip_predictions OWNER TO admin;
 
 --
+-- Name: optimization_runs; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.optimization_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    bus_model_id uuid NOT NULL,
+    mode text NOT NULL,
+    status text DEFAULT 'pending' NOT NULL,
+    input_params jsonb NOT NULL,
+    prediction_run_ids jsonb,
+    results jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT optimization_runs_mode_check CHECK ((mode = ANY (ARRAY['battery_only'::text, 'charging_only'::text, 'joint'::text])))
+);
+
+ALTER TABLE public.optimization_runs OWNER TO admin;
+
+--
 -- Name: users; Type: TABLE; Schema: public; Owner: admin
 --
 
@@ -521,6 +541,14 @@ ALTER TABLE ONLY public.prediction_runs
 
 
 --
+-- Name: optimization_runs optimization_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.optimization_runs
+    ADD CONSTRAINT optimization_runs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trip_predictions trip_predictions_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
 --
 
@@ -676,6 +704,20 @@ CREATE INDEX prediction_runs_bus_model_id_idx ON public.prediction_runs USING bt
 
 
 --
+-- Name: optimization_runs_user_id_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX optimization_runs_user_id_idx ON public.optimization_runs USING btree (user_id);
+
+
+--
+-- Name: optimization_runs_bus_model_id_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX optimization_runs_bus_model_id_idx ON public.optimization_runs USING btree (bus_model_id);
+
+
+--
 -- Name: trip_predictions_run_id_idx; Type: INDEX; Schema: public; Owner: admin
 --
 
@@ -815,6 +857,22 @@ ALTER TABLE ONLY public.prediction_runs
 
 ALTER TABLE ONLY public.prediction_runs
     ADD CONSTRAINT prediction_runs_bus_model_id_fkey FOREIGN KEY (bus_model_id) REFERENCES public.buses_models(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: optimization_runs optimization_runs_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.optimization_runs
+    ADD CONSTRAINT optimization_runs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: optimization_runs optimization_runs_bus_model_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.optimization_runs
+    ADD CONSTRAINT optimization_runs_bus_model_id_fkey FOREIGN KEY (bus_model_id) REFERENCES public.buses_models(id) ON DELETE RESTRICT;
 
 
 --

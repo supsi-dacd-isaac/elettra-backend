@@ -10,6 +10,10 @@ class PredictionSubmitResponse(BaseModel):
     prediction_run_ids: list[UUID]
 
 
+class OptimizationSubmitResponse(BaseModel):
+    optimization_run_id: UUID
+
+
 class GtfsStopsReadWithTimes(BaseModel):
     id: UUID
     stop_id: str

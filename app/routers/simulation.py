@@ -7,14 +7,15 @@ import numpy as np
 import pandas as pd
 
 from app.database import get_async_session
-from app.schemas.database import PredictionRunsRead, TripPredictionsRead
-from app.schemas.responses import PredictionSubmitResponse, CombinedTripStatisticsResponse
-from app.schemas.requests import TripStatisticsRequest, PredictionRequest
+from app.schemas.database import PredictionRunsRead, TripPredictionsRead, OptimizationRunsRead
+from app.schemas.responses import PredictionSubmitResponse, OptimizationSubmitResponse, CombinedTripStatisticsResponse
+from app.schemas.requests import TripStatisticsRequest, PredictionRequest, OptimizationRequest
 from app.schemas.external_apis import PvgisTmyResponse
 from app.models import (
     Users, WeatherMeasurements,
     GtfsTrips, GtfsStops, GtfsStopsTimes,
     PredictionRuns, TripPredictions, Shifts, BusesModels,
+    OptimizationRuns,
 )
 from app.core.auth import get_current_user
 from app.utils.trip_statistics import (
@@ -103,6 +104,73 @@ async def get_prediction_run_predictions(
         .order_by(TripPredictions.sequence_number)
     )
     return result.scalars().all()
+
+
+# ---------------------------------------------------------------------------
+# Optimization Runs endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/optimization-runs/", response_model=OptimizationSubmitResponse)
+async def create_optimization_run(
+    request: OptimizationRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    """Create and start an optimization run (background task)."""
+    if request.bus_model_id is not None:
+        bus_model = await db.get(BusesModels, request.bus_model_id)
+        if bus_model is None:
+            raise HTTPException(status_code=404, detail="Bus model not found")
+
+    for shift_id in request.shift_ids:
+        shift = await db.get(Shifts, shift_id)
+        if shift is None:
+            raise HTTPException(status_code=404, detail=f"Shift {shift_id} not found")
+
+    if request.prediction_run_ids:
+        for pred_id in request.prediction_run_ids:
+            pred = await db.get(PredictionRuns, pred_id)
+            if pred is None:
+                raise HTTPException(status_code=404, detail=f"Prediction run {pred_id} not found")
+            if pred.status != "completed":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Prediction run {pred_id} is not completed (status={pred.status})",
+                )
+
+    input_params = request.model_dump(mode="json")
+
+    run = OptimizationRuns(
+        user_id=current_user.id,
+        bus_model_id=request.bus_model_id,
+        mode=request.mode,
+        input_params=input_params,
+        prediction_run_ids=[str(pid) for pid in request.prediction_run_ids] if request.prediction_run_ids else None,
+        status="pending",
+    )
+    db.add(run)
+    await db.flush()
+    run_id = run.id
+    await db.commit()
+
+    from app.services.optimization import run_optimization_background
+    background_tasks.add_task(run_optimization_background, run_id)
+
+    return OptimizationSubmitResponse(optimization_run_id=run_id)
+
+
+@router.get("/optimization-runs/{run_id}", response_model=OptimizationRunsRead)
+async def get_optimization_run(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    """Get optimization run status and results."""
+    run = await db.get(OptimizationRuns, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Optimization run not found")
+    return run
 
 
 # PVGIS TMY endpoint (authenticated users only)

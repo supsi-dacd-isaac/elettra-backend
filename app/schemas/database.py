@@ -154,6 +154,28 @@ class TripPredictionsRead(BaseModel):
     }])
     model_config = ConfigDict(from_attributes=True)
 
+class OptimizationRunsRead(BaseModel):
+    id: UUID
+    user_id: UUID
+    bus_model_id: Optional[UUID] = None
+    mode: str = Field(examples=["charging_only"])
+    status: str = Field(examples=["completed"])
+    input_params: dict = Field(examples=[{
+        "shift_ids": ["3fa85f64-5717-4562-b3fc-2c963f66afa6"],
+        "min_soc": 0.4,
+        "max_soc": 0.9,
+    }])
+    prediction_run_ids: Optional[list] = None
+    results: Optional[dict] = Field(default=None, examples=[{
+        "objective_value": 700000.0,
+        "solver_status": "optimal",
+        "solve_time_seconds": 12.5,
+        "total_installation_cost_chf": 700000.0,
+    }])
+    created_at: datetime
+    completed_at: Optional[datetime]
+    model_config = ConfigDict(from_attributes=True)
+
 class GtfsTripsCreate(BaseModel):
     route_id: UUID
     service_id: UUID

@@ -358,6 +358,31 @@ class TripPredictions(Base):
     trip: Mapped['GtfsTrips'] = relationship('GtfsTrips')
 
 
+class OptimizationRuns(Base):
+    __tablename__ = 'optimization_runs'
+    __table_args__ = (
+        ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='SET NULL', name='optimization_runs_user_id_fkey'),
+        ForeignKeyConstraint(['bus_model_id'], ['buses_models.id'], ondelete='RESTRICT', name='optimization_runs_bus_model_id_fkey'),
+        PrimaryKeyConstraint('id', name='optimization_runs_pkey'),
+        Index('optimization_runs_user_id_idx', 'user_id'),
+        Index('optimization_runs_bus_model_id_idx', 'bus_model_id'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    bus_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    input_params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    prediction_run_ids: Mapped[Optional[list]] = mapped_column(JSONB)
+    results: Mapped[Optional[dict]] = mapped_column(JSONB)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+    completed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+
+    user: Mapped['Users'] = relationship('Users')
+    bus_model: Mapped['BusesModels'] = relationship('BusesModels')
+
+
 class Shifts(Base):
     __tablename__ = 'shifts'
     __table_args__ = (

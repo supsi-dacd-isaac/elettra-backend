@@ -24,12 +24,12 @@ REAL_SHIFT_JSON = pathlib.Path(__file__).resolve().parent / "fixtures/shift_01_4
 
 BUS_MODEL_SPECS = {
     "bus_length_m": 18,
-    "battery_pack_size_kwh": 37,
-    "min_battery_packs": 10,
-    "max_battery_packs": 14,
-    "battery_pack_weight_kg": 253,
-    "max_passengers": 120,
-    "empty_weight_kg": 18000,
+    "battery_pack_size_kwh": 88,
+    "min_battery_packs": 3,
+    "max_battery_packs": 8,
+    "battery_pack_weight_kg": 603,
+    "max_passengers": 131,
+    "empty_weight_kg": 16493,
     "max_charging_power_kw": 450,
     "auxiliary_consumption_kw": {
         "default": {
@@ -724,25 +724,26 @@ def test_weight_override_battery_packs(client: TestClient, prediction_env, recor
     sid = prediction_env["shift_id"]
     bmid = prediction_env["bus_model_id"]
 
-    run_10, preds_10 = _submit_and_wait(client, token, sid, bmid, num_battery_packs=10)
-    run_14, preds_14 = _submit_and_wait(client, token, sid, bmid, num_battery_packs=14)
+    run_lo, preds_lo = _submit_and_wait(client, token, sid, bmid, num_battery_packs=4)
+    run_hi, preds_hi = _submit_and_wait(client, token, sid, bmid, num_battery_packs=8)
 
-    ctx_10 = run_10.get("contextual_parameters", {})
-    ctx_14 = run_14.get("contextual_parameters", {})
+    ctx_lo = run_lo.get("contextual_parameters", {})
+    ctx_hi = run_hi.get("contextual_parameters", {})
 
-    weight_10 = ctx_10.get("total_weight_kg", 0)
-    weight_14 = ctx_14.get("total_weight_kg", 0)
-    batt_10 = ctx_10.get("battery_capacity_kwh", 0)
-    batt_14 = ctx_14.get("battery_capacity_kwh", 0)
-    packs_10 = ctx_10.get("num_battery_packs", 0)
-    packs_14 = ctx_14.get("num_battery_packs", 0)
+    weight_lo = ctx_lo.get("total_weight_kg", 0)
+    weight_hi = ctx_hi.get("total_weight_kg", 0)
+    batt_lo = ctx_lo.get("battery_capacity_kwh", 0)
+    batt_hi = ctx_hi.get("battery_capacity_kwh", 0)
+    packs_lo = ctx_lo.get("num_battery_packs", 0)
+    packs_hi = ctx_hi.get("num_battery_packs", 0)
 
-    record("weight_packs_10_ctx", packs_10 == 10, f"packs={packs_10}")
-    record("weight_packs_14_ctx", packs_14 == 14, f"packs={packs_14}")
+    pack_weight = BUS_MODEL_SPECS["battery_pack_weight_kg"]
+    record("weight_packs_lo_ctx", packs_lo == 4, f"packs={packs_lo}")
+    record("weight_packs_hi_ctx", packs_hi == 8, f"packs={packs_hi}")
 
-    # 4 extra packs × 253 kg = 1012 kg difference
-    expected_delta_kg = 4 * 253
-    actual_delta_kg = weight_14 - weight_10
+    # 4 extra packs × 603 kg = 2412 kg difference
+    expected_delta_kg = 4 * pack_weight
+    actual_delta_kg = weight_hi - weight_lo
     record(
         "weight_delta_correct",
         abs(actual_delta_kg - expected_delta_kg) < 1,
@@ -751,24 +752,24 @@ def test_weight_override_battery_packs(client: TestClient, prediction_env, recor
 
     record(
         "weight_battery_capacity",
-        batt_14 > batt_10,
-        f"10 packs={batt_10} kWh, 14 packs={batt_14} kWh",
+        batt_hi > batt_lo,
+        f"4 packs={batt_lo} kWh, 8 packs={batt_hi} kWh",
     )
 
-    # Heavier bus → higher consumption
-    total_10 = run_10.get("summary", {}).get("total_consumption_kwh", 0)
-    total_14 = run_14.get("summary", {}).get("total_consumption_kwh", 0)
+    # Heavier bus -> higher consumption
+    total_lo = run_lo.get("summary", {}).get("total_consumption_kwh", 0)
+    total_hi = run_hi.get("summary", {}).get("total_consumption_kwh", 0)
     record(
         "weight_consumption_increases",
-        total_14 > total_10,
-        f"10 packs={total_10:.2f} kWh, 14 packs={total_14:.2f} kWh, diff={total_14 - total_10:.2f} kWh",
+        total_hi > total_lo,
+        f"4 packs={total_lo:.2f} kWh, 8 packs={total_hi:.2f} kWh, diff={total_hi - total_lo:.2f} kWh",
     )
 
     # Per-trip: every trip should have higher consumption with more packs
-    kwh_10 = {p["trip_id"]: float(p["prediction_kwh"]) for p in preds_10}
-    kwh_14 = {p["trip_id"]: float(p["prediction_kwh"]) for p in preds_14}
-    common = set(kwh_10) & set(kwh_14)
-    all_higher = all(kwh_14[tid] > kwh_10[tid] for tid in common)
+    kwh_lo = {p["trip_id"]: float(p["prediction_kwh"]) for p in preds_lo}
+    kwh_hi = {p["trip_id"]: float(p["prediction_kwh"]) for p in preds_hi}
+    common = set(kwh_lo) & set(kwh_hi)
+    all_higher = all(kwh_hi[tid] > kwh_lo[tid] for tid in common)
     record(
         "weight_all_trips_higher",
         all_higher,
@@ -776,19 +777,19 @@ def test_weight_override_battery_packs(client: TestClient, prediction_env, recor
     )
 
     # Log the drivetrain breakdown for insight
-    dt_10 = run_10.get("summary", {}).get("total_drivetrain_kwh", 0)
-    dt_14 = run_14.get("summary", {}).get("total_drivetrain_kwh", 0)
-    aux_10 = run_10.get("summary", {}).get("total_auxiliary_kwh", 0)
-    aux_14 = run_14.get("summary", {}).get("total_auxiliary_kwh", 0)
+    dt_lo = run_lo.get("summary", {}).get("total_drivetrain_kwh", 0)
+    dt_hi = run_hi.get("summary", {}).get("total_drivetrain_kwh", 0)
+    aux_lo = run_lo.get("summary", {}).get("total_auxiliary_kwh", 0)
+    aux_hi = run_hi.get("summary", {}).get("total_auxiliary_kwh", 0)
     record(
         "weight_drivetrain_increases",
-        dt_14 > dt_10,
-        f"10 packs drivetrain={dt_10:.2f} kWh, 14 packs drivetrain={dt_14:.2f} kWh",
+        dt_hi > dt_lo,
+        f"4 packs drivetrain={dt_lo:.2f} kWh, 8 packs drivetrain={dt_hi:.2f} kWh",
     )
     record(
         "weight_auxiliary_unchanged",
-        abs(aux_14 - aux_10) < 0.01,
-        f"10 packs aux={aux_10:.2f} kWh, 14 packs aux={aux_14:.2f} kWh",
+        abs(aux_hi - aux_lo) < 0.01,
+        f"4 packs aux={aux_lo:.2f} kWh, 8 packs aux={aux_hi:.2f} kWh",
     )
 
 
@@ -808,8 +809,8 @@ def test_weight_override_occupancy(client: TestClient, prediction_env, record):
     weight_0 = ctx_0.get("total_weight_kg", 0)
     weight_100 = ctx_100.get("total_weight_kg", 0)
 
-    # max_passengers=120, 100% occupancy → 120×70 = 8400 kg more than 0%
-    expected_delta_kg = 120 * 70
+    max_pax = BUS_MODEL_SPECS["max_passengers"]
+    expected_delta_kg = max_pax * 70
     actual_delta_kg = weight_100 - weight_0
     record(
         "occupancy_delta_correct",
