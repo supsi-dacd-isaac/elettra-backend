@@ -6,14 +6,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
-class SimulationRunResults(BaseModel):
-    """Schema for returning simulation run output results, either complete or filtered"""
-    run_id: UUID
-    status: str
-    output_results: Optional[dict | list | None]
-    completed_at: Optional[datetime]
-    requested_keys: Optional[list[str]] = None  # Shows which keys were requested if filtered
-    model_config = ConfigDict(from_attributes=True)
+class PredictionSubmitResponse(BaseModel):
+    prediction_run_ids: list[UUID]
 
 
 class GtfsStopsReadWithTimes(BaseModel):

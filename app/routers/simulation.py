@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
@@ -7,15 +7,14 @@ import numpy as np
 import pandas as pd
 
 from app.database import get_async_session
-from app.schemas.database import (
-    SimulationRunsCreate, SimulationRunsRead, SimulationRunsUpdate,
-)
-from app.schemas.responses import SimulationRunResults, TripStatisticsResponse, CombinedTripStatisticsResponse
-from app.schemas.requests import TripStatisticsRequest
+from app.schemas.database import PredictionRunsRead, TripPredictionsRead
+from app.schemas.responses import PredictionSubmitResponse, CombinedTripStatisticsResponse
+from app.schemas.requests import TripStatisticsRequest, PredictionRequest
 from app.schemas.external_apis import PvgisTmyResponse
 from app.models import (
-    Users, SimulationRuns, WeatherMeasurements,
-    GtfsTrips, GtfsStops, GtfsStopsTimes
+    Users, WeatherMeasurements,
+    GtfsTrips, GtfsStops, GtfsStopsTimes,
+    PredictionRuns, TripPredictions, Shifts, BusesModels,
 )
 from app.core.auth import get_current_user
 from app.utils.trip_statistics import (
@@ -26,101 +25,85 @@ from app.utils.trip_statistics import (
 
 router = APIRouter()
 
-# Simulation Runs endpoints (authenticated users only)
-@router.post("/simulation-runs/", response_model=SimulationRunsRead)
-async def create_simulation_run(sim_run: SimulationRunsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_sim_run = SimulationRuns(**sim_run.model_dump(exclude_unset=True))
-    db.add(db_sim_run)
-    await db.commit()
-    await db.refresh(db_sim_run)
-    return db_sim_run
 
-@router.get("/simulation-runs/", response_model=List[SimulationRunsRead])
-async def read_simulation_runs(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    result = await db.execute(select(SimulationRuns).offset(skip).limit(limit))
-    sim_runs = result.scalars().all()
-    return sim_runs
+# ---------------------------------------------------------------------------
+# Prediction Runs endpoints
+# ---------------------------------------------------------------------------
 
-@router.get("/simulation-runs/{run_id}", response_model=SimulationRunsRead)
-async def read_simulation_run(run_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    sim_run = await db.get(SimulationRuns, run_id)
-    if sim_run is None:
-        raise HTTPException(status_code=404, detail="Simulation run not found")
-    return sim_run
-
-@router.put("/simulation-runs/{run_id}", response_model=SimulationRunsRead)
-async def update_simulation_run(run_id: UUID, sim_run_update: SimulationRunsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_sim_run = await db.get(SimulationRuns, run_id)
-    if db_sim_run is None:
-        raise HTTPException(status_code=404, detail="Simulation run not found")
-
-    update_data = sim_run_update.model_dump(exclude_unset=True, exclude={'id'})
-    for field, value in update_data.items():
-        setattr(db_sim_run, field, value)
-
-    await db.commit()
-    await db.refresh(db_sim_run)
-    return db_sim_run
-
-@router.get("/simulation-runs/{run_id}/results", response_model=SimulationRunResults)
-async def get_simulation_run_results(
-    run_id: UUID,
-    keys: str = None,  # Optional comma-separated list of keys to filter
+@router.post("/prediction-runs/", response_model=PredictionSubmitResponse)
+async def create_prediction_runs(
+    request: PredictionRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user)
+    current_user: Users = Depends(get_current_user),
 ):
-    """
-    Get simulation run output results, either complete or filtered by specific keys.
+    bus_model = await db.get(BusesModels, request.bus_model_id)
+    if bus_model is None:
+        raise HTTPException(status_code=404, detail="Bus model not found")
 
-    Args:
-        run_id: UUID of the simulation run
-        keys: Optional comma-separated list of JSON keys to extract from output_results
-              Example: ?keys=energy_consumption,battery_usage,costs
-              If not provided, returns all output_results
+    run_ids: list[UUID] = []
+    for shift_id in request.shift_ids:
+        shift = await db.get(Shifts, shift_id)
+        if shift is None:
+            raise HTTPException(status_code=404, detail=f"Shift {shift_id} not found")
 
-    Returns:
-        SimulationRunResults with either complete or filtered output_results
-    """
-    # Get the simulation run
-    sim_run = await db.get(SimulationRuns, run_id)
-    if sim_run is None:
-        raise HTTPException(status_code=404, detail="Simulation run not found")
+        run = PredictionRuns(
+            user_id=current_user.id,
+            shift_id=shift_id,
+            bus_model_id=request.bus_model_id,
+            model_name=request.model_name,
+            external_temp_celsius=request.external_temp_celsius,
+            auxiliary_heating_type=request.auxiliary_heating_type,
+            occupancy_percent=request.occupancy_percent,
+            status="pending",
+        )
+        db.add(run)
+        await db.flush()
+        run_ids.append(run.id)
 
-    requested_keys = None
+    await db.commit()
 
-    # Check if output_results exists
-    if sim_run.output_results is None:
-        output_results = None
-    elif keys:
-        # Filter output_results by requested keys
-        requested_keys = [key.strip() for key in keys.split(',')]
+    from app.services.prediction import run_prediction_background
+    for run_id in run_ids:
+        background_tasks.add_task(
+            run_prediction_background,
+            prediction_run_id=run_id,
+            quantiles=request.quantiles,
+            num_battery_packs=request.num_battery_packs,
+        )
 
-        # Handle both dict and list cases for output_results
-        if isinstance(sim_run.output_results, dict):
-            # Filter dictionary keys
-            filtered_results = {}
-            for key in requested_keys:
-                if key in sim_run.output_results:
-                    filtered_results[key] = sim_run.output_results[key]
-            output_results = filtered_results if filtered_results else None
-        elif isinstance(sim_run.output_results, list):
-            # For list results, return the original list but note the requested keys
-            output_results = sim_run.output_results
-            # Note: For list results, we can't filter by keys, so we return all data
-        else:
-            output_results = sim_run.output_results
-    else:
-        # Return all output_results
-        output_results = sim_run.output_results
+    return PredictionSubmitResponse(prediction_run_ids=run_ids)
 
-    # Create response
-    return SimulationRunResults(
-        run_id=sim_run.id,
-        status=sim_run.status,
-        output_results=output_results,
-        completed_at=sim_run.completed_at,
-        requested_keys=requested_keys
+
+@router.get("/prediction-runs/{run_id}", response_model=PredictionRunsRead)
+async def get_prediction_run(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    run = await db.get(PredictionRuns, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Prediction run not found")
+    return run
+
+
+@router.get("/prediction-runs/{run_id}/predictions", response_model=List[TripPredictionsRead])
+async def get_prediction_run_predictions(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    run = await db.get(PredictionRuns, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Prediction run not found")
+
+    result = await db.execute(
+        select(TripPredictions)
+        .where(TripPredictions.prediction_run_id == run_id)
+        .order_by(TripPredictions.sequence_number)
     )
+    return result.scalars().all()
+
 
 # PVGIS TMY endpoint (authenticated users only)
 @router.get("/pvgis-tmy/", response_model=PvgisTmyResponse)

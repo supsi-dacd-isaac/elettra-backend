@@ -21,7 +21,8 @@ __all__ = [
     "VariantsCreate", "VariantsUpdate", "VariantsRead",
     "GtfsStopsTimesCreate", "GtfsStopsTimesUpdate", "GtfsStopsTimesRead",
     "ShiftsStructuresCreate", "ShiftsStructuresUpdate", "ShiftsStructuresRead",
-    "SimulationRunsCreate", "SimulationRunsUpdate", "SimulationRunsRead",
+    "PredictionRunsCreate", "PredictionRunsRead",
+    "TripPredictionsRead",
     
     # Auth schemas
     "UserLogin", "Token", "LogoutResponse", "RoleEnum", "UserRegister",
@@ -30,7 +31,7 @@ __all__ = [
     "PvgisTmyRequest", "PvgisTmyResponse", "ElevationProfileResponse",
     
     # Custom response schemas
-    "SimulationRunResults", "GtfsStopsReadWithTimes", "VariantsReadWithRoute", "GtfsRoutesReadWithVariant",
+    "PredictionSubmitResponse", "GtfsStopsReadWithTimes", "VariantsReadWithRoute", "GtfsRoutesReadWithVariant",
     
     # Health check schemas
     "HealthCheckResponse", "ServiceStatus",

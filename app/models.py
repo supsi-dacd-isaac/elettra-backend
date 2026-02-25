@@ -160,7 +160,7 @@ class Users(Base):
     buses_models: Mapped[list['BusesModels']] = relationship('BusesModels', back_populates='user')
     depots: Mapped[list['Depots']] = relationship('Depots', back_populates='user')
     buses: Mapped[list['Buses']] = relationship('Buses', back_populates='user')
-    simulation_runs: Mapped[list['SimulationRuns']] = relationship('SimulationRuns', back_populates='user')
+    prediction_runs: Mapped[list['PredictionRuns']] = relationship('PredictionRuns', back_populates='user')
 
 
 class BusesModels(Base):
@@ -180,6 +180,7 @@ class BusesModels(Base):
 
     user: Mapped['Users'] = relationship('Users', back_populates='buses_models')
     buses: Mapped[list['Buses']] = relationship('Buses', back_populates='bus_model')
+    prediction_runs: Mapped[list['PredictionRuns']] = relationship('PredictionRuns', back_populates='bus_model', passive_deletes=True)
 
 
 class Depots(Base):
@@ -252,7 +253,6 @@ class Variants(Base):
     shape_id: Mapped[str] = mapped_column(String, nullable=False)
 
     route: Mapped['GtfsRoutes'] = relationship('GtfsRoutes', back_populates='variants')
-    simulation_runs: Mapped[list['SimulationRuns']] = relationship('SimulationRuns', back_populates='variant')
 
 
 class Buses(Base):
@@ -303,27 +303,59 @@ class GtfsStopsTimes(Base):
     trip: Mapped['GtfsTrips'] = relationship('GtfsTrips', back_populates='gtfs_stops_times')
 
 
-class SimulationRuns(Base):
-    __tablename__ = 'simulation_runs'
+class PredictionRuns(Base):
+    __tablename__ = 'prediction_runs'
     __table_args__ = (
-        ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='SET NULL', name='simulation_runs_user_id_fkey'),
-        ForeignKeyConstraint(['variant_id'], ['variants.id'], ondelete='CASCADE', name='simulation_runs_variant_id_fkey'),
-        PrimaryKeyConstraint('id', name='simulation_runs_pkey'),
-        Index('simulation_runs_variant_id_idx', 'variant_id')
+        ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='SET NULL', name='prediction_runs_user_id_fkey'),
+        ForeignKeyConstraint(['shift_id'], ['shifts.id'], ondelete='CASCADE', name='prediction_runs_shift_id_fkey'),
+        ForeignKeyConstraint(['bus_model_id'], ['buses_models.id'], ondelete='RESTRICT', name='prediction_runs_bus_model_id_fkey'),
+        PrimaryKeyConstraint('id', name='prediction_runs_pkey'),
+        Index('prediction_runs_shift_id_idx', 'shift_id'),
+        Index('prediction_runs_bus_model_id_idx', 'bus_model_id'),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    input_params: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    status: Mapped[str] = mapped_column(Enum('pending', 'running', 'completed', 'failed', name='sim_status'), nullable=False, server_default=text("'pending'::sim_status"))
+    shift_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    bus_model_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    external_temp_celsius: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)
+    auxiliary_heating_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'default'"))
+    occupancy_percent: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False, server_default=text("50"))
+    contextual_parameters: Mapped[Optional[dict]] = mapped_column(JSONB)
+    summary: Mapped[Optional[dict]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
-    variant_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    optimal_battery_kwh: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric)
-    output_results: Mapped[Optional[dict]] = mapped_column(JSONB)
     completed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
 
-    user: Mapped['Users'] = relationship('Users', back_populates='simulation_runs')
-    variant: Mapped['Variants'] = relationship('Variants', back_populates='simulation_runs')
+    user: Mapped['Users'] = relationship('Users', back_populates='prediction_runs')
+    shift: Mapped['Shifts'] = relationship('Shifts', back_populates='prediction_runs')
+    bus_model: Mapped['BusesModels'] = relationship('BusesModels', back_populates='prediction_runs')
+    trip_predictions: Mapped[list['TripPredictions']] = relationship('TripPredictions', back_populates='prediction_run', cascade='all, delete-orphan')
+
+
+class TripPredictions(Base):
+    __tablename__ = 'trip_predictions'
+    __table_args__ = (
+        ForeignKeyConstraint(['prediction_run_id'], ['prediction_runs.id'], ondelete='CASCADE', name='trip_predictions_run_id_fkey'),
+        ForeignKeyConstraint(['trip_id'], ['gtfs_trips.id'], ondelete='CASCADE', name='trip_predictions_trip_id_fkey'),
+        PrimaryKeyConstraint('id', name='trip_predictions_pkey'),
+        Index('trip_predictions_run_id_idx', 'prediction_run_id'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    prediction_run_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    trip_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    prediction_kwh: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)
+    prediction_median_kwh: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric)
+    drivetrain_kwh: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric)
+    auxiliary_kwh: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric)
+    mass_sensitivity_kwh_per_kwh_batt: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric)
+    quantiles: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    prediction_run: Mapped['PredictionRuns'] = relationship('PredictionRuns', back_populates='trip_predictions')
+    trip: Mapped['GtfsTrips'] = relationship('GtfsTrips')
 
 
 class Shifts(Base):
@@ -341,6 +373,7 @@ class Shifts(Base):
 
     bus: Mapped[Optional['Buses']] = relationship('Buses', back_populates='shifts')
     shifts_structures: Mapped[list['ShiftsStructures']] = relationship('ShiftsStructures', back_populates='shift')
+    prediction_runs: Mapped[list['PredictionRuns']] = relationship('PredictionRuns', back_populates='shift', passive_deletes=True)
 
 
 class ShiftsStructures(Base):
@@ -362,6 +395,32 @@ class ShiftsStructures(Base):
 
     shift: Mapped['Shifts'] = relationship('Shifts', back_populates='shifts_structures')
     trip: Mapped['GtfsTrips'] = relationship('GtfsTrips', back_populates='shifts_structures')
+
+
+class BusesManufacturers(Base):
+    __tablename__ = 'buses_manufacturers'
+    __table_args__ = (
+        PrimaryKeyConstraint('id', name='buses_manufacturers_pkey'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    models_refs: Mapped[list['BusesModelsRefs']] = relationship('BusesModelsRefs', back_populates='manufacturer')
+
+
+class BusesModelsRefs(Base):
+    __tablename__ = 'buses_models_refs'
+    __table_args__ = (
+        ForeignKeyConstraint(['buses_manufacturer_id'], ['buses_manufacturers.id'], name='buses_models_refs_manufacturer_fk'),
+        PrimaryKeyConstraint('id', name='buses_models_refs_pkey'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    buses_manufacturer_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+
+    manufacturer: Mapped['BusesManufacturers'] = relationship('BusesManufacturers', back_populates='models_refs')
 
 
 class BusesLcaData(Base):

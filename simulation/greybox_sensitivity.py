@@ -17,6 +17,7 @@ import pandas as pd
 def compute_battery_sensitivity_from_metadata(
     features: pd.DataFrame,
     greybox_params: Dict[str, float],
+    battery_pack_density_override: float | None = None,
 ) -> np.ndarray:
     """
     Compute dE_mech / d(bus_battery_kwh) for each row in `features`.
@@ -30,25 +31,18 @@ def compute_battery_sensitivity_from_metadata(
                + alpha_up    * m * h_up
                + alpha_down  * m * h_down
 
-    where:
-        L              = total_distance_m
-        v              = driving_average_speed_kmh / 3.6  [m/s]
-        h_up           = total_ascent_m
-        h_down         = total_descent_m
-        driving_time   = driving_time_minutes
-        total_duration = total_duration_minutes
-
-    The dwell time correction (driving_time / total_duration) accounts for
-    the fact that aerodynamic drag only applies when the bus is moving.
-
     Since the aero term does not depend on mass, and the mass-dependent terms
     are linear in bus_battery_kwh, the derivative w.r.t. bus_battery_kwh is:
 
         dE_mech / d(bus_battery_kwh)
             = rho_batt * (alpha_roll * L + alpha_up * h_up + alpha_down * h_down)
 
-    This routine implements exactly that expression using the parameters
-    stored in model metadata (`greybox_params`).
+    Args:
+        features: DataFrame with trip-level features
+        greybox_params: Parameters from model metadata
+        battery_pack_density_override: If provided, uses actual
+            battery_pack_weight_kg / battery_pack_size_kwh from bus specs
+            instead of the model's fitted battery_pack_density.
     """
     required_cols = {"total_distance_m", "total_ascent_m", "total_descent_m"}
     missing = required_cols - set(features.columns)
@@ -63,8 +57,10 @@ def compute_battery_sensitivity_from_metadata(
     alpha_up = float(greybox_params.get("alpha_up"))
     alpha_down = float(greybox_params.get("alpha_down"))
 
-    # Prefer explicit battery_pack_density from greybox_params, fall back to 6.0
-    rho_batt = float(greybox_params.get("battery_pack_density", 6.0))
+    if battery_pack_density_override is not None:
+        rho_batt = float(battery_pack_density_override)
+    else:
+        rho_batt = float(greybox_params.get("battery_pack_density", 6.0))
 
     sensitivity = rho_batt * (
         alpha_roll * L

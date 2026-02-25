@@ -297,23 +297,45 @@ CREATE TABLE public.shifts_structures (
 ALTER TABLE public.shifts_structures OWNER TO admin;
 
 --
--- Name: simulation_runs; Type: TABLE; Schema: public; Owner: admin
+-- Name: prediction_runs; Type: TABLE; Schema: public; Owner: admin
 --
 
-CREATE TABLE public.simulation_runs (
+CREATE TABLE public.prediction_runs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
-    input_params jsonb NOT NULL,
-    optimal_battery_kwh numeric,
-    output_results jsonb,
-    status public.sim_status DEFAULT 'pending'::public.sim_status NOT NULL,
+    shift_id uuid NOT NULL,
+    bus_model_id uuid NOT NULL,
+    model_name text NOT NULL,
+    external_temp_celsius numeric NOT NULL,
+    auxiliary_heating_type text DEFAULT 'default' NOT NULL,
+    occupancy_percent numeric DEFAULT 50 NOT NULL,
+    contextual_parameters jsonb,
+    summary jsonb,
+    status text DEFAULT 'pending' NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    completed_at timestamp with time zone,
-    variant_id uuid NOT NULL
+    completed_at timestamp with time zone
 );
 
+ALTER TABLE public.prediction_runs OWNER TO admin;
 
-ALTER TABLE public.simulation_runs OWNER TO admin;
+--
+-- Name: trip_predictions; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.trip_predictions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    prediction_run_id uuid NOT NULL,
+    trip_id uuid NOT NULL,
+    sequence_number integer NOT NULL,
+    prediction_kwh numeric NOT NULL,
+    prediction_median_kwh numeric,
+    drivetrain_kwh numeric,
+    auxiliary_kwh numeric,
+    mass_sensitivity_kwh_per_kwh_batt numeric,
+    quantiles jsonb
+);
+
+ALTER TABLE public.trip_predictions OWNER TO admin;
 
 --
 -- Name: users; Type: TABLE; Schema: public; Owner: admin
@@ -491,11 +513,19 @@ ALTER TABLE ONLY public.shifts_structures
 
 
 --
--- Name: simulation_runs simulation_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+-- Name: prediction_runs prediction_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
 --
 
-ALTER TABLE ONLY public.simulation_runs
-    ADD CONSTRAINT simulation_runs_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prediction_runs
+    ADD CONSTRAINT prediction_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trip_predictions trip_predictions_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.trip_predictions
+    ADD CONSTRAINT trip_predictions_pkey PRIMARY KEY (id);
 
 
 --
@@ -632,10 +662,24 @@ CREATE INDEX shifts_structures_trip_idx ON public.shifts_structures USING btree 
 
 
 --
--- Name: simulation_runs_variant_id_idx; Type: INDEX; Schema: public; Owner: admin
+-- Name: prediction_runs_shift_id_idx; Type: INDEX; Schema: public; Owner: admin
 --
 
-CREATE INDEX simulation_runs_variant_id_idx ON public.simulation_runs USING btree (variant_id);
+CREATE INDEX prediction_runs_shift_id_idx ON public.prediction_runs USING btree (shift_id);
+
+
+--
+-- Name: prediction_runs_bus_model_id_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX prediction_runs_bus_model_id_idx ON public.prediction_runs USING btree (bus_model_id);
+
+
+--
+-- Name: trip_predictions_run_id_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX trip_predictions_run_id_idx ON public.trip_predictions USING btree (prediction_run_id);
 
 
 --
@@ -750,19 +794,43 @@ ALTER TABLE ONLY public.shifts_structures
 
 
 --
--- Name: simulation_runs simulation_runs_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+-- Name: prediction_runs prediction_runs_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
 --
 
-ALTER TABLE ONLY public.simulation_runs
-    ADD CONSTRAINT simulation_runs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prediction_runs
+    ADD CONSTRAINT prediction_runs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
--- Name: simulation_runs simulation_runs_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+-- Name: prediction_runs prediction_runs_shift_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
 --
 
-ALTER TABLE ONLY public.simulation_runs
-    ADD CONSTRAINT simulation_runs_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.variants(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prediction_runs
+    ADD CONSTRAINT prediction_runs_shift_id_fkey FOREIGN KEY (shift_id) REFERENCES public.shifts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: prediction_runs prediction_runs_bus_model_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.prediction_runs
+    ADD CONSTRAINT prediction_runs_bus_model_id_fkey FOREIGN KEY (bus_model_id) REFERENCES public.buses_models(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: trip_predictions trip_predictions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.trip_predictions
+    ADD CONSTRAINT trip_predictions_run_id_fkey FOREIGN KEY (prediction_run_id) REFERENCES public.prediction_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: trip_predictions trip_predictions_trip_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.trip_predictions
+    ADD CONSTRAINT trip_predictions_trip_id_fkey FOREIGN KEY (trip_id) REFERENCES public.gtfs_trips(id) ON DELETE CASCADE;
 
 
 --

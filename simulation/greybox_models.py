@@ -75,11 +75,18 @@ class MechanicalGreyBox:
         total_duration_minutes = X["total_duration_minutes"].to_numpy(dtype=float)
         return L, v, h_up, h_down, length, batt_kwh, driving_time_minutes, total_duration_minutes
 
-    def _predict_with_params(self, X: pd.DataFrame, theta: np.ndarray) -> np.ndarray:
+    def _predict_with_params(
+        self,
+        X: pd.DataFrame,
+        theta: np.ndarray,
+        override_mass: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         alpha_roll, alpha_aero, alpha_up, alpha_down, k1, k2 = theta
         L, v, h_up, h_down, length, batt_kwh, driving_time_minutes, total_duration_minutes = self._extract_arrays(X)
-        m = self.battery_pack_density * batt_kwh + k1 * length + k2
-        # Dwell time correction: aero drag only applies during actual driving
+        if override_mass is not None:
+            m = np.asarray(override_mass, dtype=float)
+        else:
+            m = self.battery_pack_density * batt_kwh + k1 * length + k2
         dwell_time_factor = driving_time_minutes / total_duration_minutes
         E_mech = (
             alpha_roll * m * L
@@ -106,7 +113,11 @@ class MechanicalGreyBox:
         self.params_ = prms
         return self
 
-    def predict(self, X: pd.DataFrame) -> np.ndarray:
+    def predict(
+        self,
+        X: pd.DataFrame,
+        override_mass: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         if self.params_ is None:
             raise RuntimeError("MechanicalGreyBox not fitted yet.")
         theta = np.array([
@@ -118,7 +129,7 @@ class MechanicalGreyBox:
             self.params_.k2,
         ], dtype=float)
         X_local = X[REQUIRED_COLS].copy()
-        return self._predict_with_params(X_local, theta)
+        return self._predict_with_params(X_local, theta, override_mass=override_mass)
 
     def get_params_dict(self) -> Dict[str, float]:
         if self.params_ is None:
@@ -183,9 +194,10 @@ class CombinedGreyboxQRF:
         self,
         X: pd.DataFrame,
         quantiles: Optional[List[float]] = None,
-        aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None
+        aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None,
+        override_mass: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        gb_pred = self.greybox.predict(X)
+        gb_pred = self.greybox.predict(X, override_mass=override_mass)
         if aux_energy_fn is not None:
             aux_out = aux_energy_fn(X)
             if isinstance(aux_out, pd.Series):

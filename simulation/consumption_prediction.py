@@ -199,7 +199,8 @@ class ConsumptionPredictor:
         self,
         features: pd.DataFrame,
         quantiles: Optional[List[float]] = None,
-        aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None
+        aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None,
+        override_mass: Optional[np.ndarray] = None,
     ) -> pd.DataFrame:
         """
         Make consumption predictions with uncertainty quantification.
@@ -234,21 +235,21 @@ class ConsumptionPredictor:
         # Point prediction (median from QRF)
         logger.info(f"Predicting with features shape: {X.shape}")
         if self.is_greybox:
-            y_pred_median = self.model.predict(X, aux_energy_fn=aux_energy_fn)
+            y_pred_median = self.model.predict(X, aux_energy_fn=aux_energy_fn, override_mass=override_mass)
         else:
             y_pred_median = self.model.predict(X)
         
         # Mean prediction from QRF
         logger.info("Computing mean prediction")
         if self.is_greybox:
-            y_pred_mean = self.model.predict(X, quantiles="mean", aux_energy_fn=aux_energy_fn)
+            y_pred_mean = self.model.predict(X, quantiles="mean", aux_energy_fn=aux_energy_fn, override_mass=override_mass)
         else:
             y_pred_mean = self.model.predict(X, quantiles="mean")
         
         # Quantile predictions
         logger.info(f"Computing quantiles: {quantiles}")
         if self.is_greybox:
-            y_pred_quantiles = self.model.predict(X, quantiles=quantiles, aux_energy_fn=aux_energy_fn)
+            y_pred_quantiles = self.model.predict(X, quantiles=quantiles, aux_energy_fn=aux_energy_fn, override_mass=override_mass)
         else:
             y_pred_quantiles = self.model.predict(X, quantiles=quantiles)
         
@@ -309,7 +310,9 @@ class ConsumptionPredictor:
         battery_capacity_kwh: float,
         external_temp_celsius: float,
         quantiles: Optional[List[float]] = None,
-        aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None
+        aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None,
+        override_mass: Optional[np.ndarray] = None,
+        battery_pack_density_override: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         End-to-end prediction from trip statistics JSON.
@@ -342,7 +345,7 @@ class ConsumptionPredictor:
         )
         
         # Make predictions
-        predictions = self.predict(features, quantiles=quantiles, aux_energy_fn=aux_energy_fn)
+        predictions = self.predict(features, quantiles=quantiles, aux_energy_fn=aux_energy_fn, override_mass=override_mass)
 
         # If this is a greybox model and we have parameters, compute and attach
         # battery-size sensitivities per trip. The sensitivity expresses how
@@ -353,7 +356,10 @@ class ConsumptionPredictor:
             greybox_params = self.metadata.get("greybox_params")
         if self.is_greybox and greybox_params:
             try:
-                sens = compute_battery_sensitivity_from_metadata(features, greybox_params)
+                sens = compute_battery_sensitivity_from_metadata(
+                    features, greybox_params,
+                    battery_pack_density_override=battery_pack_density_override,
+                )
                 predictions["mass_sensitivity_kwh_per_kwh_batt"] = sens
             except Exception as exc:
                 logger.warning(f"Failed to compute greybox battery sensitivity: {exc}")

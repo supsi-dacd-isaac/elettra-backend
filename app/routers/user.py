@@ -8,6 +8,7 @@ from app.database import get_async_session
 from app.schemas.database import (
     BusesModelsCreate, BusesModelsRead, BusesModelsUpdate,
     BusesCreate, BusesRead, BusesUpdate,
+    BusesManufacturersRead, BusesModelsRefsRead,
 )
 from app.schemas.responses import (
     DepotCreateRequest, DepotUpdateRequest, DepotReadWithLocation,
@@ -17,7 +18,8 @@ from app.schemas.responses import (
 from app.schemas.requests import ShiftCreateRequest, ShiftUpdateRequest
 from app.models import (
     Users, BusesModels, Buses, Depots, GtfsStops,
-    Shifts, ShiftsStructures, GtfsTrips, GtfsRoutes, GtfsCalendar
+    Shifts, ShiftsStructures, GtfsTrips, GtfsRoutes, GtfsCalendar,
+    BusesManufacturers, BusesModelsRefs,
 )
 from app.core.auth import get_current_user
 from app.core.shift_distance import (
@@ -30,6 +32,32 @@ from app.schemas.lca import (
 )
 
 router = APIRouter()
+
+
+@router.get("/bus-manufacturers/", response_model=List[BusesManufacturersRead])
+async def read_bus_manufacturers(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    result = await db.execute(select(BusesManufacturers).order_by(BusesManufacturers.name))
+    return result.scalars().all()
+
+
+@router.get("/bus-manufacturers/{manufacturer_id}/models", response_model=List[BusesModelsRefsRead])
+async def read_bus_models_refs_by_manufacturer(
+    manufacturer_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    manufacturer = await db.get(BusesManufacturers, manufacturer_id)
+    if manufacturer is None:
+        raise HTTPException(status_code=404, detail="Manufacturer not found")
+    result = await db.execute(
+        select(BusesModelsRefs)
+        .where(BusesModelsRefs.buses_manufacturer_id == manufacturer_id)
+        .order_by(BusesModelsRefs.name)
+    )
+    return result.scalars().all()
 
 
 @router.get("/bus-models/", response_model=List[BusesModelsRead])

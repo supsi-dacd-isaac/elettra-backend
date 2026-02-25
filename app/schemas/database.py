@@ -4,7 +4,7 @@ from typing import Optional, Any
 from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 class DepotsCreate(BaseModel):
     user_id: UUID
@@ -96,37 +96,62 @@ class ShiftsRead(BaseModel):
     bus_id: Optional[UUID]
     model_config = ConfigDict(from_attributes=True)
 
-class SimulationRunsCreate(BaseModel):
+class PredictionRunsCreate(BaseModel):
     user_id: UUID
-    input_params: dict | list | None
-    status: str
-    created_at: datetime
-    variant_id: UUID
-    optimal_battery_kwh: Optional[Decimal] = None
-    output_results: Optional[dict | list | None] = None
+    shift_id: UUID
+    bus_model_id: UUID
+    model_name: str
+    external_temp_celsius: Decimal = Field(examples=[15.0])
+    auxiliary_heating_type: str = "default"
+    occupancy_percent: Decimal = Field(default=Decimal("50"), examples=[50.0])
+    contextual_parameters: Optional[dict] = None
+    summary: Optional[dict] = None
+    status: str = "pending"
     completed_at: Optional[datetime] = None
 
-class SimulationRunsUpdate(BaseModel):
-    id: Optional[UUID] = None
-    user_id: Optional[UUID] = None
-    input_params: Optional[dict | list | None] = None
-    status: Optional[str] = None
-    created_at: Optional[datetime] = None
-    variant_id: Optional[UUID] = None
-    optimal_battery_kwh: Optional[Decimal] = None
-    output_results: Optional[dict | list | None] = None
-    completed_at: Optional[datetime] = None
-
-class SimulationRunsRead(BaseModel):
+class PredictionRunsRead(BaseModel):
     id: UUID
     user_id: UUID
-    input_params: dict | list | None
-    status: str
+    shift_id: UUID
+    bus_model_id: UUID
+    model_name: str = Field(examples=["greybox_qrf_production_crps_optimized_3"])
+    external_temp_celsius: Decimal = Field(examples=[15.0])
+    auxiliary_heating_type: str = Field(examples=["default"])
+    occupancy_percent: Decimal = Field(examples=[50.0])
+    contextual_parameters: Optional[dict] = Field(default=None, examples=[{
+        "total_weight_kg": 22530.0,
+        "num_battery_packs": 12,
+        "battery_capacity_kwh": 444.0,
+        "bus_length_m": 18.0,
+        "quantiles": [0.05, 0.5, 0.95],
+    }])
+    summary: Optional[dict] = Field(default=None, examples=[{
+        "total_consumption_kwh": 429.36,
+        "total_drivetrain_kwh": 349.89,
+        "total_auxiliary_kwh": 79.47,
+        "consumption_per_km_kwh": 2.46,
+        "total_distance_km": 174.6,
+    }])
+    status: str = Field(examples=["completed"])
     created_at: datetime
-    variant_id: UUID
-    optimal_battery_kwh: Optional[Decimal]
-    output_results: Optional[dict | list | None]
     completed_at: Optional[datetime]
+    model_config = ConfigDict(from_attributes=True)
+
+class TripPredictionsRead(BaseModel):
+    id: UUID
+    prediction_run_id: UUID
+    trip_id: UUID
+    sequence_number: int = Field(examples=[1])
+    prediction_kwh: Decimal = Field(examples=[9.15])
+    prediction_median_kwh: Optional[Decimal] = Field(default=None, examples=[8.97])
+    drivetrain_kwh: Optional[Decimal] = Field(default=None, examples=[7.44])
+    auxiliary_kwh: Optional[Decimal] = Field(default=None, examples=[1.69])
+    mass_sensitivity_kwh_per_kwh_batt: Optional[Decimal] = Field(default=None, examples=[0.00227])
+    quantiles: Optional[dict] = Field(default=None, examples=[{
+        "0.05": 5.82,
+        "0.50": 8.97,
+        "0.95": 13.21,
+    }])
     model_config = ConfigDict(from_attributes=True)
 
 class GtfsTripsCreate(BaseModel):
@@ -469,6 +494,17 @@ class BusesModelsRead(BaseModel):
     user_id: UUID
     manufacturer: Optional[str]
     description: Optional[str]
+    model_config = ConfigDict(from_attributes=True)
+
+class BusesManufacturersRead(BaseModel):
+    id: UUID
+    name: str
+    model_config = ConfigDict(from_attributes=True)
+
+class BusesModelsRefsRead(BaseModel):
+    id: UUID
+    name: str
+    buses_manufacturer_id: UUID
     model_config = ConfigDict(from_attributes=True)
 
 class GtfsCalendarCreate(BaseModel):
