@@ -19,6 +19,16 @@ from fastapi.testclient import TestClient
 
 __report_module__ = "fleet_optimization"
 
+CAPTURED_BODIES_DIR = pathlib.Path(__file__).resolve().parent / "captured_bodies"
+
+
+def _save_post_body(mode: str, body: dict) -> None:
+    CAPTURED_BODIES_DIR.mkdir(exist_ok=True)
+    dest = CAPTURED_BODIES_DIR / f"optimization_run_{mode}.json"
+    with open(dest, "w") as f:
+        json.dump(body, f, indent=2, default=str)
+
+
 API_BASE = "/api/v1/user"
 SIM_BASE = "/api/v1/simulation"
 AUTH_BASE = "/auth"
@@ -105,29 +115,29 @@ BUS_MODEL_SPECS = {
 }
 
 CHARGING_STATIONS_BY_NAME = {
-    "Albonago, Paese":            {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Breganzona, Posta":          {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Brè, Paese":                 {"slot_costs_chf": [350e3],                     "max_total_power_kw": 138.5},
-    "Canobbio, Ganna":            {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Canobbio, Mercato Resega":   {"slot_costs_chf": [1e9],                       "max_total_power_kw": 450},
-    "Castagnola, Capolinea":      {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Comano, Studio TV":          {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Lugano, Centro":             {"slot_costs_chf": [350e3, 150e3, 150e3, 150e3],"max_total_power_kw": 1000},
-    "Lugano, Cornaredo":          {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Lugano, Pista Ghiaccio":     {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Lugano, Stazione":           {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Lugano, Stazione/Via Basilea": {"slot_costs_chf": [350e3],                   "max_total_power_kw": 450},
-    "Manno, Uovo di Manno":       {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Muzzano, Paese":             {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Paradiso, Carzo":            {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Pazzallo, P+R Fornaci":      {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Piano Stampa, Capolinea":    {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
-    "Pregassona, Piazza di Giro": {"slot_costs_chf": [450e3],                     "max_total_power_kw": 450},
-    "Viganello, S. Siro":         {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450},
+    "Albonago, Paese":            {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Breganzona, Posta":          {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Brè, Paese":                 {"slot_costs_chf": [350e3],                     "max_total_power_kw": 138.5,"max_power_per_slot_kw": 138.5},
+    "Canobbio, Ganna":            {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Canobbio, Mercato Resega":   {"slot_costs_chf": [1e9],                       "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Castagnola, Capolinea":      {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Comano, Studio TV":          {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Lugano, Centro":             {"slot_costs_chf": [350e3, 150e3, 150e3, 150e3],"max_total_power_kw": 1000, "max_power_per_slot_kw": 300},
+    "Lugano, Cornaredo":          {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Lugano, Pista Ghiaccio":     {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Lugano, Stazione":           {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Lugano, Stazione/Via Basilea": {"slot_costs_chf": [350e3],                   "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Manno, Uovo di Manno":       {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Muzzano, Paese":             {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Paradiso, Carzo":            {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Pazzallo, P+R Fornaci":      {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Piano Stampa, Capolinea":    {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Pregassona, Piazza di Giro": {"slot_costs_chf": [450e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
+    "Viganello, S. Siro":         {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
 }
 
 DEPOT_STATION_NAMES = ["TPL Rimessa 1", "TPL Rimessa 2", "TPL Rimessa 3"]
-DEPOT_CONFIG = {"slot_costs_chf": [100e3, 100e3, 100e3, 100e3], "max_total_power_kw": 450}
+DEPOT_CONFIG = {"slot_costs_chf": [100e3, 100e3, 100e3, 100e3], "max_total_power_kw": 1000, "max_power_per_slot_kw": 80}
 
 
 # ---------------------------------------------------------------------------
@@ -440,11 +450,14 @@ def fleet_env(client: TestClient):
         sids = name_to_stop_ids.get(name, [])
         for sid in sids:
             if sid not in known_stop_ids:
-                charging_stations_config.append({
+                entry = {
                     "stop_id": sid,
                     "slot_costs_chf": cfg["slot_costs_chf"],
                     "max_total_power_kw": cfg["max_total_power_kw"],
-                })
+                }
+                if "max_power_per_slot_kw" in cfg:
+                    entry["max_power_per_slot_kw"] = cfg["max_power_per_slot_kw"]
+                charging_stations_config.append(entry)
                 known_stop_ids.add(sid)
 
     # Depot: 1 slot per bus in the fleet, high power
@@ -460,6 +473,7 @@ def fleet_env(client: TestClient):
                     "stop_id": sid,
                     "slot_costs_chf": [100_000.0] * depot_slots,
                     "max_total_power_kw": depot_power,
+                    "max_power_per_slot_kw": DEPOT_CONFIG["max_power_per_slot_kw"],
                 })
                 known_stop_ids.add(sid)
 
@@ -522,19 +536,21 @@ def test_fleet_charging_only(client: TestClient, fleet_env, record):
     all_shift_ids, all_pred_ids = _collect_all_ids(fleet_env)
     stations = fleet_env["charging_stations_config"]
 
+    body = {
+        "mode": "charging_only",
+        "shift_ids": all_shift_ids,
+        "prediction_run_ids": all_pred_ids,
+        "charging_stations": stations,
+        "min_soc": 0.4,
+        "max_soc": 0.9,
+        "lock_entire_dwell": True,
+        "solver_name": "highs",
+        "max_solver_time_seconds": 600,
+    }
+    _save_post_body("charging_only", body)
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
-        json={
-            "mode": "charging_only",
-            "shift_ids": all_shift_ids,
-            "prediction_run_ids": all_pred_ids,
-            "charging_stations": stations,
-            "min_soc": 0.4,
-            "max_soc": 0.9,
-            "lock_entire_dwell": True,
-            "solver_name": "highs",
-            "max_solver_time_seconds": 600,
-        },
+        json=body,
         headers=auth_headers(token),
     )
     assert r.status_code == 200, f"charging_only submit failed: {r.text}"
@@ -565,23 +581,26 @@ def test_fleet_battery_only(client: TestClient, fleet_env, record):
             "stop_id": s["stop_id"],
             "num_slots": 2,
             "max_total_power_kw": s["max_total_power_kw"],
+            **({"max_power_per_slot_kw": s["max_power_per_slot_kw"]} if "max_power_per_slot_kw" in s else {}),
         }
         for s in fleet_env["charging_stations_config"]
     ]
 
+    body = {
+        "mode": "battery_only",
+        "shift_ids": all_shift_ids,
+        "prediction_run_ids": all_pred_ids,
+        "charging_stations": stations_fixed,
+        "min_soc": 0.4,
+        "max_soc": 0.9,
+        "lock_entire_dwell": True,
+        "solver_name": "highs",
+        "max_solver_time_seconds": 600,
+    }
+    _save_post_body("battery_only", body)
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
-        json={
-            "mode": "battery_only",
-            "shift_ids": all_shift_ids,
-            "prediction_run_ids": all_pred_ids,
-            "charging_stations": stations_fixed,
-            "min_soc": 0.4,
-            "max_soc": 0.9,
-            "lock_entire_dwell": True,
-            "solver_name": "highs",
-            "max_solver_time_seconds": 600,
-        },
+        json=body,
         headers=auth_headers(token),
     )
     assert r.status_code == 200, f"battery_only submit failed: {r.text}"
@@ -609,22 +628,24 @@ def test_fleet_joint(client: TestClient, fleet_env, record):
     all_shift_ids, all_pred_ids = _collect_all_ids(fleet_env)
     stations = fleet_env["charging_stations_config"]
 
+    body = {
+        "mode": "joint",
+        "shift_ids": all_shift_ids,
+        "prediction_run_ids": all_pred_ids,
+        "charging_stations": stations,
+        "min_soc": 0.4,
+        "max_soc": 0.9,
+        "battery_cost_per_kwh": 300.0,
+        "max_battery_penalty_per_kwh": 1e6,
+        "battery_sizing_mode": "per_route",
+        "lock_entire_dwell": True,
+        "solver_name": "highs",
+        "max_solver_time_seconds": 600,
+    }
+    _save_post_body("joint", body)
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
-        json={
-            "mode": "joint",
-            "shift_ids": all_shift_ids,
-            "prediction_run_ids": all_pred_ids,
-            "charging_stations": stations,
-            "min_soc": 0.4,
-            "max_soc": 0.9,
-            "battery_cost_per_kwh": 300.0,
-            "max_battery_penalty_per_kwh": 1e6,
-            "battery_sizing_mode": "per_route",
-            "lock_entire_dwell": True,
-            "solver_name": "highs",
-            "max_solver_time_seconds": 600,
-        },
+        json=body,
         headers=auth_headers(token),
     )
     assert r.status_code == 200, f"joint submit failed: {r.text}"
@@ -666,6 +687,7 @@ def test_depot_charging_utilized(client: TestClient, fleet_env, record):
             "stop_id": s["stop_id"],
             "num_slots": max(len(s.get("slot_costs_chf", [1])), 2),
             "max_total_power_kw": s["max_total_power_kw"],
+            **({"max_power_per_slot_kw": s["max_power_per_slot_kw"]} if "max_power_per_slot_kw" in s else {}),
         }
         for s in stations
     ]

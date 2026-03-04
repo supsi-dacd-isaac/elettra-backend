@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
@@ -9,7 +9,7 @@ import pandas as pd
 from app.database import get_async_session
 from app.schemas.database import PredictionRunsRead, TripPredictionsRead, OptimizationRunsRead
 from app.schemas.responses import PredictionSubmitResponse, OptimizationSubmitResponse, CombinedTripStatisticsResponse
-from app.schemas.requests import TripStatisticsRequest, PredictionRequest, OptimizationRequest
+from app.schemas.requests import TripStatisticsRequest, PredictionRequest, OptimizationRequest, _OPTIMIZATION_EXAMPLES
 from app.schemas.external_apis import PvgisTmyResponse
 from app.models import (
     Users, WeatherMeasurements,
@@ -76,6 +76,19 @@ async def create_prediction_runs(
     return PredictionSubmitResponse(prediction_run_ids=run_ids)
 
 
+@router.get("/prediction-runs/", response_model=List[PredictionRunsRead])
+async def list_prediction_runs(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(PredictionRuns)
+        .where(PredictionRuns.user_id == current_user.id)
+        .order_by(PredictionRuns.created_at.desc())
+    )
+    return result.scalars().all()
+
+
 @router.get("/prediction-runs/{run_id}", response_model=PredictionRunsRead)
 async def get_prediction_run(
     run_id: UUID,
@@ -112,8 +125,8 @@ async def get_prediction_run_predictions(
 
 @router.post("/optimization-runs/", response_model=OptimizationSubmitResponse)
 async def create_optimization_run(
-    request: OptimizationRequest,
     background_tasks: BackgroundTasks,
+    request: OptimizationRequest = Body(openapi_examples=_OPTIMIZATION_EXAMPLES),
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):

@@ -455,11 +455,25 @@ def solve_optimization(
             m.cooldown = Constraint(m.CooldownIndex, rule=lambda mdl, t, s, k, b, d: cooldown_rule(mdl, t, s, k, b, d))
 
     # -----------------------------------------------------------------------
-    # Power bound
+    # Power bound (bus-level and per-slot)
     # -----------------------------------------------------------------------
     def p_bound_rule(mdl, t, b):
         return mdl.power[t, b] <= float(max_power[b]) * mdl.connect[t, b]
     m.p_bound = Constraint(m.T, m.B, rule=p_bound_rule)
+
+    slot_power_by_station = {
+        i: s.max_power_per_slot_kw
+        for i, s in enumerate(stations)
+        if s.max_power_per_slot_kw is not None
+    }
+
+    if slot_power_by_station:
+        def slot_power_rule(mdl, t, b):
+            s = int(station_at_minute[t, b])
+            if s < 0 or s not in slot_power_by_station:
+                return Constraint.Skip
+            return mdl.power[t, b] <= slot_power_by_station[s] * mdl.connect[t, b]
+        m.slot_power = Constraint(m.T, m.B, rule=slot_power_rule)
 
     # -----------------------------------------------------------------------
     # SOC dynamics with integer pack variables
