@@ -346,10 +346,13 @@ async def run_optimization(
             "objective_value": result.objective_value,
             "solver_status": result.solver_status,
             "solve_time_seconds": result.solve_time_seconds,
+            "electrification_feasible": result.electrification_feasible,
+            "electrification_summary": result.electrification_summary,
             "installed_chargers": result.installed_chargers,
             "total_installation_cost_chf": result.total_installation_cost_chf,
             "battery_results": result.battery_results,
             "total_battery_cost_chf": result.total_battery_cost_chf,
+            "total_infeasibility_penalty_chf": result.total_infeasibility_penalty_chf,
             "per_bus_summary": result.per_bus_summary,
             "station_utilization": result.station_utilization,
         }

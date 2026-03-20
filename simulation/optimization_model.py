@@ -116,12 +116,15 @@ class OptimizationResult:
     solver_status: str
     objective_value: float
     solve_time_seconds: float
+    electrification_feasible: bool
+    electrification_summary: Dict[str, object]
 
     installed_chargers: Dict[str, dict]  # stop_id -> {stop_name, num_slots, cost_chf}
     total_installation_cost_chf: float
 
     battery_results: Dict[str, dict]  # shift_id -> {base_kwh, optimized_packs, optimized_kwh, excess_packs}
     total_battery_cost_chf: float
+    total_infeasibility_penalty_chf: float
 
     per_bus_summary: List[dict]
     station_utilization: Dict[str, dict]
@@ -205,6 +208,26 @@ def _prepare_arrays(
     }
 
 
+def _estimate_excess_pack_upper_bounds(
+    buses: List[BusData],
+    config: OptimizationConfig,
+) -> np.ndarray:
+    """Estimate a conservative upper bound for excess-pack slack variables."""
+    usable_soc_window = max(1e-6, float(config.max_soc) - float(config.min_soc))
+    bounds: list[int] = []
+
+    for bus in buses:
+        total_base_discharge_kwh = float(sum(max(0.0, trip.base_energy_kwh) for trip in bus.trips))
+        positive_sensitivity = float(sum(max(0.0, trip.sensitivity) for trip in bus.trips))
+        max_physical_extra_cap_kwh = max(0, bus.max_packs - bus.reference_packs) * bus.pack_size_kwh
+        worst_case_discharge_kwh = total_base_discharge_kwh + positive_sensitivity * max_physical_extra_cap_kwh
+        usable_kwh_per_pack = max(1e-6, bus.pack_size_kwh * usable_soc_window)
+        required_total_packs = int(np.ceil(worst_case_discharge_kwh / usable_kwh_per_pack))
+        bounds.append(max(1, required_total_packs - bus.max_packs + 5))
+
+    return np.asarray(bounds, dtype=int)
+
+
 # ---------------------------------------------------------------------------
 # Main solver
 # ---------------------------------------------------------------------------
@@ -235,6 +258,7 @@ def solve_optimization(
     max_packs = np.array([b.max_packs for b in buses])
     ref_packs = np.array([b.reference_packs for b in buses])
     battery_offset = np.array([b.battery_offset_kwh for b in buses])
+    excess_pack_big_m = _estimate_excess_pack_upper_bounds(buses, config)
 
     # Station slot costs
     station_slot_costs: List[List[float]] = []
@@ -286,6 +310,8 @@ def solve_optimization(
     # Battery sizing variables (integer pack counts)
     m.n_packs = Var(m.B, domain=NonNegativeIntegers)
     m.n_excess_packs = Var(m.B, domain=NonNegativeIntegers)
+    if config.mode != "charging_only":
+        m.use_excess_packs = Var(m.B, domain=Binary)
 
     # Bounds and fixing for battery variables
     for b in m.B:
@@ -294,6 +320,19 @@ def solve_optimization(
         if config.mode == "charging_only":
             m.n_packs[b].fix(int(ref_packs[b]))
             # n_excess_packs stays free as a soft feasibility slack
+
+    if config.mode != "charging_only":
+        def excess_pack_activation_rule(mdl, b):
+            return mdl.n_excess_packs[b] <= int(excess_pack_big_m[b]) * mdl.use_excess_packs[b]
+
+        def max_out_physical_packs_before_excess_rule(mdl, b):
+            pack_span = int(max_packs[b] - min_packs[b])
+            return mdl.n_packs[b] >= int(max_packs[b]) - pack_span * (1 - mdl.use_excess_packs[b])
+
+        m.excess_pack_activation = Constraint(m.B, rule=excess_pack_activation_rule)
+        m.max_out_physical_packs_before_excess = Constraint(
+            m.B, rule=max_out_physical_packs_before_excess_rule
+        )
 
     # Per-route equality constraints for battery sizing
     if config.battery_sizing_mode == "per_route" and config.mode != "charging_only":
@@ -619,11 +658,13 @@ def solve_optimization(
                 obj += penalty_per_kwh * mdl.n_excess_packs[b] * ps
         elif config.mode == "battery_only":
             w = float(config.soc_increase_weight)
-            if w > 0:
-                for b in mdl.B:
-                    ps = float(pack_size[b])
-                    mp = float(min_packs[b])
-                    obj += w * (mdl.n_packs[b] - mp + mdl.n_excess_packs[b]) * ps
+            for b in mdl.B:
+                ps = float(pack_size[b])
+                mp = float(min_packs[b])
+                if w > 0:
+                    obj += w * (mdl.n_packs[b] - mp) * ps
+                # Excess packs are an infeasibility slack, not a normal sizing choice.
+                obj += penalty_per_kwh * mdl.n_excess_packs[b] * ps
         elif config.mode == "charging_only":
             for b in mdl.B:
                 ps = float(pack_size[b])
@@ -709,10 +750,17 @@ def solve_optimization(
             solver_status=f"error: {exc}",
             objective_value=-1.0,
             solve_time_seconds=round(solve_time, 2),
+            electrification_feasible=False,
+            electrification_summary={
+                "status": "solver_error",
+                "message": str(exc),
+                "infeasible_buses": [],
+            },
             installed_chargers={},
             total_installation_cost_chf=0.0,
             battery_results={},
             total_battery_cost_chf=0.0,
+            total_infeasibility_penalty_chf=0.0,
             per_bus_summary=[],
             station_utilization={},
         )
@@ -751,25 +799,53 @@ def solve_optimization(
     # Battery results
     battery_results: Dict[str, dict] = {}
     total_battery_cost = 0.0
+    total_infeasibility_penalty = 0.0
+    infeasible_buses: List[dict] = []
     for b_idx, bus in enumerate(buses):
         np_val = int(round(m.n_packs[b_idx].value or min_packs[b_idx]))
         ne_val = int(round(m.n_excess_packs[b_idx].value or 0))
+        total_required_packs = np_val + ne_val
         base_kwh = float(min_packs[b_idx]) * float(pack_size[b_idx])
-        optimized_kwh = float(np_val + ne_val) * float(pack_size[b_idx])
+        optimized_kwh = float(total_required_packs) * float(pack_size[b_idx])
+        physical_max_kwh = float(max_packs[b_idx]) * float(pack_size[b_idx])
+        physical_feasible = ne_val == 0
 
         if config.mode == "joint":
             extra_packs = np_val - int(min_packs[b_idx])
             total_battery_cost += extra_packs * float(pack_size[b_idx]) * config.battery_cost_per_kwh
-            total_battery_cost += ne_val * float(pack_size[b_idx]) * config.max_battery_penalty_per_kwh
+            total_infeasibility_penalty += ne_val * float(pack_size[b_idx]) * config.max_battery_penalty_per_kwh
+        elif config.mode in {"battery_only", "charging_only"}:
+            total_infeasibility_penalty += ne_val * float(pack_size[b_idx]) * config.max_battery_penalty_per_kwh
 
         battery_results[bus.shift_id] = {
             "shift_name": bus.shift_name,
             "base_packs": int(min_packs[b_idx]),
             "optimized_packs": np_val,
             "excess_packs": ne_val,
+            "required_total_packs": total_required_packs,
+            "max_physical_packs": int(max_packs[b_idx]),
             "base_kwh": base_kwh,
             "optimized_kwh": optimized_kwh,
+            "max_physical_kwh": physical_max_kwh,
+            "physical_feasible": physical_feasible,
+            "feasibility_status": "feasible" if physical_feasible else "infeasible_requires_excess_packs",
         }
+
+        if not physical_feasible:
+            infeasible_buses.append({
+                "shift_id": bus.shift_id,
+                "shift_name": bus.shift_name,
+                "required_total_packs": total_required_packs,
+                "max_physical_packs": int(max_packs[b_idx]),
+                "required_total_kwh": optimized_kwh,
+                "max_physical_kwh": physical_max_kwh,
+                "excess_packs": ne_val,
+                "message": (
+                    f"Shift requires {total_required_packs} packs ({optimized_kwh:.1f} kWh) "
+                    f"but the bus model allows at most {int(max_packs[b_idx])} packs "
+                    f"({physical_max_kwh:.1f} kWh)."
+                ),
+            })
 
     # Per-bus summary (SOC + charging sessions)
     power_val = np.zeros((num_steps, num_buses))
@@ -820,14 +896,33 @@ def solve_optimization(
             "total_energy_kwh": round(total_energy, 2),
         }
 
+    electrification_feasible = len(infeasible_buses) == 0
+    electrification_summary: Dict[str, object] = {
+        "status": "feasible" if electrification_feasible else "infeasible",
+        "message": (
+            "All buses satisfy the requested shift(s) within their physical battery limits."
+            if electrification_feasible
+            else (
+                f"{len(infeasible_buses)} of {len(buses)} bus(es) require battery slack "
+                "beyond the configured max_packs."
+            )
+        ),
+        "num_buses": len(buses),
+        "num_infeasible_buses": len(infeasible_buses),
+        "infeasible_buses": infeasible_buses,
+    }
+
     return OptimizationResult(
         solver_status=term_cond,
         objective_value=obj_val,
         solve_time_seconds=round(solve_time, 2),
+        electrification_feasible=electrification_feasible,
+        electrification_summary=electrification_summary,
         installed_chargers=installed_chargers,
         total_installation_cost_chf=total_install_cost,
         battery_results=battery_results,
         total_battery_cost_chf=total_battery_cost,
+        total_infeasibility_penalty_chf=total_infeasibility_penalty,
         per_bus_summary=per_bus_summary,
         station_utilization=station_util,
     )
