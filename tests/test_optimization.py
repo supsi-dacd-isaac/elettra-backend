@@ -196,6 +196,138 @@ def wait_for_optimization(
     pytest.fail(f"Optimization did not complete in {max_wait}s")
 
 
+def check_feasibility_reporting(results: dict, *, mode: str) -> tuple[bool, str]:
+    """Validate that API feasibility reporting matches excess-pack usage."""
+    electrification_feasible = results.get("electrification_feasible")
+    if electrification_feasible is None:
+        return False, "missing electrification_feasible"
+
+    summary = results.get("electrification_summary")
+    if not isinstance(summary, dict):
+        return False, "missing electrification_summary"
+
+    battery = results.get("battery_results")
+    if not isinstance(battery, dict) or not battery:
+        return False, "missing battery_results"
+
+    infeasibility_penalty = results.get("total_infeasibility_penalty_chf")
+    if infeasibility_penalty is None:
+        return False, "missing total_infeasibility_penalty_chf"
+
+    infeasible_shift_ids: list[str] = []
+    for shift_id, batt in battery.items():
+        required_fields = (
+            "optimized_packs",
+            "excess_packs",
+            "required_total_packs",
+            "max_physical_packs",
+            "physical_feasible",
+            "feasibility_status",
+        )
+        missing = [field for field in required_fields if field not in batt]
+        if missing:
+            return False, f"shift {shift_id} missing fields: {', '.join(missing)}"
+
+        optimized_packs = batt["optimized_packs"]
+        excess_packs = batt["excess_packs"]
+        required_total_packs = batt["required_total_packs"]
+        max_physical_packs = batt["max_physical_packs"]
+        physical_feasible = batt["physical_feasible"]
+        feasibility_status = batt["feasibility_status"]
+
+        if required_total_packs != optimized_packs + excess_packs:
+            return (
+                False,
+                f"shift {shift_id} required_total_packs={required_total_packs} "
+                f"!= optimized_packs + excess_packs ({optimized_packs + excess_packs})",
+            )
+        if optimized_packs > max_physical_packs:
+            return (
+                False,
+                f"shift {shift_id} optimized_packs={optimized_packs} > "
+                f"max_physical_packs={max_physical_packs}",
+            )
+
+        uses_excess_packs = excess_packs > 0
+        expected_physical_feasible = not uses_excess_packs
+        expected_status = "feasible" if expected_physical_feasible else "infeasible_requires_excess_packs"
+
+        if physical_feasible != expected_physical_feasible:
+            return (
+                False,
+                f"shift {shift_id} physical_feasible={physical_feasible} "
+                f"does not match excess_packs={excess_packs}",
+            )
+        if feasibility_status != expected_status:
+            return (
+                False,
+                f"shift {shift_id} feasibility_status={feasibility_status} "
+                f"!= {expected_status}",
+            )
+
+        if uses_excess_packs:
+            infeasible_shift_ids.append(shift_id)
+            if mode in ("battery_only", "joint") and optimized_packs != max_physical_packs:
+                return (
+                    False,
+                    f"{mode} shift {shift_id} used excess packs before maxing physical packs "
+                    f"({optimized_packs} < {max_physical_packs})",
+                )
+
+    expected_run_feasible = len(infeasible_shift_ids) == 0
+    expected_summary_status = "feasible" if expected_run_feasible else "infeasible"
+
+    if electrification_feasible != expected_run_feasible:
+        return (
+            False,
+            f"electrification_feasible={electrification_feasible} "
+            f"but expected {expected_run_feasible}",
+        )
+    if summary.get("status") != expected_summary_status:
+        return (
+            False,
+            f"electrification_summary.status={summary.get('status')} "
+            f"!= {expected_summary_status}",
+        )
+    if summary.get("num_buses") != len(battery):
+        return False, f"electrification_summary.num_buses={summary.get('num_buses')} != {len(battery)}"
+    if summary.get("num_infeasible_buses") != len(infeasible_shift_ids):
+        return (
+            False,
+            "electrification_summary.num_infeasible_buses="
+            f"{summary.get('num_infeasible_buses')} != {len(infeasible_shift_ids)}",
+        )
+
+    summary_infeasible_buses = summary.get("infeasible_buses")
+    if not isinstance(summary_infeasible_buses, list):
+        return False, "electrification_summary.infeasible_buses is missing"
+    summary_shift_ids = {bus.get("shift_id") for bus in summary_infeasible_buses}
+    if summary_shift_ids != set(infeasible_shift_ids):
+        return (
+            False,
+            f"electrification_summary.infeasible_buses={summary_shift_ids} "
+            f"!= expected {set(infeasible_shift_ids)}",
+        )
+
+    if expected_run_feasible and abs(float(infeasibility_penalty)) > 1e-6:
+        return (
+            False,
+            f"feasible run has non-zero infeasibility penalty {infeasibility_penalty}",
+        )
+    if not expected_run_feasible and float(infeasibility_penalty) <= 0.0:
+        return (
+            False,
+            f"infeasible run has non-positive infeasibility penalty {infeasibility_penalty}",
+        )
+
+    return (
+        True,
+        "electrification_feasible="
+        f"{electrification_feasible}, infeasible_buses={len(infeasible_shift_ids)}, "
+        f"infeasibility_penalty={infeasibility_penalty}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Skip condition
 # ---------------------------------------------------------------------------
@@ -465,8 +597,12 @@ def test_battery_only_mode(client: TestClient, opt_env, record):
     if passed:
         solver_status = results.get("solver_status", "")
         battery = results.get("battery_results", {})
-        details += f", solver={solver_status}, battery_results={json.dumps(battery, default=str)[:200]}"
-        passed = solver_status in ("optimal", "feasible") and len(battery) > 0
+        reporting_ok, reporting_details = check_feasibility_reporting(results, mode="battery_only")
+        details += (
+            f", solver={solver_status}, {reporting_details}, "
+            f"battery_results={json.dumps(battery, default=str)[:200]}"
+        )
+        passed = solver_status in ("optimal", "feasible") and len(battery) > 0 and reporting_ok
     record("battery_only_mode", passed, details)
 
 
@@ -511,8 +647,13 @@ def test_charging_only_mode(client: TestClient, opt_env, record):
         solver_status = results.get("solver_status", "")
         chargers = results.get("installed_chargers", {})
         cost = results.get("total_installation_cost_chf", 0)
-        details += f", solver={solver_status}, cost={cost}, stations_with_chargers={sum(1 for c in chargers.values() if c.get('num_slots', 0) > 0)}"
-        passed = solver_status in ("optimal", "feasible")
+        reporting_ok, reporting_details = check_feasibility_reporting(results, mode="charging_only")
+        details += (
+            f", solver={solver_status}, cost={cost}, "
+            f"stations_with_chargers={sum(1 for c in chargers.values() if c.get('num_slots', 0) > 0)}, "
+            f"{reporting_details}"
+        )
+        passed = solver_status in ("optimal", "feasible") and reporting_ok
     record("charging_only_mode", passed, details)
 
 
@@ -559,8 +700,12 @@ def test_joint_mode(client: TestClient, opt_env, record):
         solver_status = results.get("solver_status", "")
         batt_cost = results.get("total_battery_cost_chf", 0)
         inst_cost = results.get("total_installation_cost_chf", 0)
-        details += f", solver={solver_status}, battery_cost={batt_cost}, install_cost={inst_cost}"
-        passed = solver_status in ("optimal", "feasible")
+        reporting_ok, reporting_details = check_feasibility_reporting(results, mode="joint")
+        details += (
+            f", solver={solver_status}, battery_cost={batt_cost}, install_cost={inst_cost}, "
+            f"{reporting_details}"
+        )
+        passed = solver_status in ("optimal", "feasible") and reporting_ok
     record("joint_mode", passed, details)
 
 
@@ -726,9 +871,64 @@ def test_multi_shift_optimization(client: TestClient, opt_env, record):
     details = f"status={status}, num_buses={len(per_bus)}"
     if passed:
         solver_status = results.get("solver_status", "")
-        details += f", solver={solver_status}"
-        passed = solver_status in ("optimal", "feasible")
+        reporting_ok, reporting_details = check_feasibility_reporting(results, mode="charging_only")
+        details += f", solver={solver_status}, {reporting_details}"
+        passed = solver_status in ("optimal", "feasible") and reporting_ok
     record("multi_shift_optimization", passed, details)
+
+
+@pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
+@pytest.mark.parametrize("mode", ["battery_only", "charging_only", "joint"])
+def test_excess_packs_mark_run_infeasible(client: TestClient, opt_env, record, mode: str):
+    """Any API run that uses excess packs must be marked as physically infeasible."""
+    token = opt_env["token"]
+    payload = {
+        "mode": mode,
+        "shift_ids": [opt_env["shift_id"]],
+        "bus_model_id": opt_env["bus_model_id"],
+        "prediction_run_ids": opt_env["prediction_run_ids_a"],
+        "charging_stations": [],
+        "min_soc": 0.49,
+        "max_soc": 0.50,
+        "max_battery_penalty_per_kwh": 1e6,
+        "solver_name": "highs",
+        "max_solver_time_seconds": 120,
+    }
+    if mode == "joint":
+        payload["battery_cost_per_kwh"] = 300.0
+
+    r = client.post(
+        f"{SIM_BASE}/optimization-runs/",
+        json=payload,
+        headers=auth_headers(token),
+    )
+    assert r.status_code == 200, f"submit failed: {r.text}"
+    run_id = r.json()["optimization_run_id"]
+
+    data = wait_for_optimization(client, token, run_id)
+    status = data["status"]
+    results = data.get("results", {})
+
+    passed = status == "completed"
+    details = f"status={status}"
+    if passed:
+        solver_status = results.get("solver_status", "")
+        battery = results.get("battery_results", {})
+        reporting_ok, reporting_details = check_feasibility_reporting(results, mode=mode)
+        excess_shifts = [
+            shift_id for shift_id, batt in battery.items() if (batt.get("excess_packs", 0) or 0) > 0
+        ]
+        details += (
+            f", solver={solver_status}, excess_shifts={len(excess_shifts)}, "
+            f"{reporting_details}"
+        )
+        passed = (
+            solver_status in ("optimal", "feasible")
+            and reporting_ok
+            and results.get("electrification_feasible") is False
+            and len(excess_shifts) > 0
+        )
+    record(f"excess_packs_mark_{mode}_infeasible", passed, details)
 
 
 # ---------------------------------------------------------------------------

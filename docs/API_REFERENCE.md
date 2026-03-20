@@ -344,33 +344,100 @@ curl -X POST http://127.0.0.1:8002/api/v1/user/shifts/ \
 
 ---
 
-## 13. Simulation Runs (`/api/v1/simulation/simulation-runs`)
+## 13. Simulation (`/api/v1/simulation`)
 
-| Op  | Method | Path                                        |
-|-----|--------|---------------------------------------------|
-| LST | GET    | /api/v1/simulation/simulation-runs/         |
-| CRE | POST   | /api/v1/simulation/simulation-runs/         |
-| RD  | GET    | /api/v1/simulation/simulation-runs/{run_id} |
-| UPD | PUT    | /api/v1/simulation/simulation-runs/{run_id} |
-| RD  | GET    | /api/v1/simulation/simulation-runs/{run_id}/results |
+### 13.1 Prediction Runs
+
+| Op  | Method | Path                                                   |
+|-----|--------|--------------------------------------------------------|
+| CRE | POST   | /api/v1/simulation/prediction-runs/                    |
+| LST | GET    | /api/v1/simulation/prediction-runs/                    |
+| RD  | GET    | /api/v1/simulation/prediction-runs/{run_id}            |
+| RD  | GET    | /api/v1/simulation/prediction-runs/{run_id}/predictions |
 
 Create:
 ```bash
-curl -X POST http://127.0.0.1:8002/api/v1/simulation/simulation-runs/ \
+curl -X POST http://127.0.0.1:8002/api/v1/simulation/prediction-runs/ \
   -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' \
   -d '{
-    "user_id": "<user_uuid>",
-    "input_params": {"note": "initial run"},
-    "status": "pending",
-    "variant_id": "<variant_uuid>"
+    "shift_ids": ["<shift_uuid>"],
+    "bus_model_id": "<bus_model_uuid>",
+    "model_name": "greybox_qrf_production_crps_optimized_3",
+    "external_temp_celsius": 15.0,
+    "occupancy_percent": 50.0,
+    "quantiles": [0.05, 0.5, 0.95]
   }'
 ```
 
-Update:
+### 13.2 Optimization Runs
+
+| Op  | Method | Path                                                |
+|-----|--------|-----------------------------------------------------|
+| CRE | POST   | /api/v1/simulation/optimization-runs/               |
+| LST | GET    | /api/v1/simulation/optimization-runs/               |
+| RD  | GET    | /api/v1/simulation/optimization-runs/{run_id}       |
+
+Create:
 ```bash
-curl -X PUT http://127.0.0.1:8002/api/v1/simulation/simulation-runs/<run_id> \
+curl -X POST http://127.0.0.1:8002/api/v1/simulation/optimization-runs/ \
   -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' \
-  -d '{"status": "running"}'
+  -d '{
+    "mode": "battery_only",
+    "shift_ids": ["<shift_uuid>"],
+    "prediction_run_ids": ["<prediction_run_uuid>"],
+    "charging_stations": [
+      {
+        "stop_id": "<stop_uuid>",
+        "num_slots": 2,
+        "max_total_power_kw": 450.0
+      }
+    ],
+    "min_soc": 0.4,
+    "max_soc": 0.9,
+    "solver_name": "highs"
+  }'
+```
+
+Optimization result semantics:
+- `solver_status` is the solver termination/result only. It does not by itself mean the requested electrification is physically feasible.
+- `electrification_feasible` is `false` whenever any bus requires `excess_packs`.
+- `electrification_summary` reports whether the run is physically feasible and lists the buses/shifts that exceeded their configured `max_packs`.
+- `battery_results[shift_id].optimized_packs` is the number of physical packs within the bus model bounds.
+- In `battery_only` and `joint`, `optimized_packs` will be maxed out to `max_physical_packs` before any `excess_packs` are used.
+- `battery_results[shift_id].excess_packs` is infeasibility slack, not a real installable pack count.
+- `battery_results[shift_id].required_total_packs` equals `optimized_packs + excess_packs`.
+- `total_infeasibility_penalty_chf` is the slack penalty term used to keep the MILP solvable; it is not a real battery capex figure.
+
+Example optimization result fragment:
+```json
+{
+  "solver_status": "optimal",
+  "electrification_feasible": false,
+  "electrification_summary": {
+    "status": "infeasible",
+    "num_buses": 1,
+    "num_infeasible_buses": 1,
+    "infeasible_buses": [
+      {
+        "shift_id": "<shift_uuid>",
+        "required_total_packs": 32,
+        "max_physical_packs": 10,
+        "excess_packs": 22
+      }
+    ]
+  },
+  "battery_results": {
+    "<shift_uuid>": {
+      "optimized_packs": 10,
+      "excess_packs": 22,
+      "required_total_packs": 32,
+      "physical_feasible": false,
+      "feasibility_status": "infeasible_requires_excess_packs"
+    }
+  },
+  "total_battery_cost_chf": 0.0,
+  "total_infeasibility_penalty_chf": 880000000.0
+}
 ```
 
 ---
@@ -483,4 +550,4 @@ Planned future additions (not yet present here):
 
 ---
 
-**Last Updated:** 2024-01-15
+**Last Updated:** 2026-03-20

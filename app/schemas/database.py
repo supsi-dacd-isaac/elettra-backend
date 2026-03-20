@@ -170,7 +170,29 @@ class OptimizationRunsRead(BaseModel):
         "objective_value": 700000.0,
         "solver_status": "optimal",
         "solve_time_seconds": 12.5,
+        "electrification_feasible": True,
+        "electrification_summary": {
+            "status": "feasible",
+            "message": "All buses satisfy the requested shift(s) within their physical battery limits.",
+            "num_buses": 1,
+            "num_infeasible_buses": 0,
+            "infeasible_buses": [],
+        },
+        "battery_results": {
+            "3fa85f64-5717-4562-b3fc-2c963f66afa6": {
+                "shift_name": "example_shift",
+                "base_packs": 6,
+                "optimized_packs": 8,
+                "excess_packs": 0,
+                "required_total_packs": 8,
+                "max_physical_packs": 10,
+                "physical_feasible": True,
+                "feasibility_status": "feasible",
+            },
+        },
         "total_installation_cost_chf": 700000.0,
+        "total_battery_cost_chf": 0.0,
+        "total_infeasibility_penalty_chf": 0.0,
     }])
     created_at: datetime
     completed_at: Optional[datetime]
