@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -530,21 +530,38 @@ async def get_full_comparison(
     # --- Shift-based distance ---
     shift_id: UUID = Query(..., description="Shift UUID (required)."),
     recurrence: RecurrenceType = Query(..., description="How often the shift repeats."),
-    # --- Mandatory physical inputs ---
+    # --- Physical inputs ---
     bus_length_m: float = Query(
         ..., gt=0, description="Bus length [m] (required)."
     ),
-    battery_capacity_kwh: float = Query(
-        ..., gt=0, description="Battery capacity [kWh] (required)."
+    battery_capacity_kwh: Optional[float] = Query(
+        None, gt=0,
+        description=(
+            "Battery capacity [kWh]. Required when include_capex=true "
+            "(default); ignored when include_capex=false."
+        ),
     ),
-    charger_power_kw: float = Query(
-        ..., gt=0, description="Charger rated power [kW] (required)."
+    charger_power_kw: Optional[float] = Query(
+        None, gt=0,
+        description=(
+            "Charger rated power [kW]. Required when include_capex=true "
+            "(default); ignored when include_capex=false."
+        ),
     ),
     annual_consumption_kwh: float = Query(
         ..., gt=0, description="Annual electricity consumption [kWh/year] (required)."
     ),
     custom_days: Optional[int] = Query(
         None, ge=1, le=366, description="Operating days/year (required when recurrence=custom)."
+    ),
+    # --- CAPEX toggle ---
+    include_capex: bool = Query(
+        True,
+        description=(
+            "When true (default) the response includes full CAPEX + OPEX "
+            "breakdown. When false, CAPEX items are omitted and "
+            "battery_capacity_kwh / charger_power_kw become optional."
+        ),
     ),
     # --- Optional configuration parameters ---
     interest_rate: Optional[float] = Query(
@@ -634,32 +651,25 @@ async def get_full_comparison(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    # Compute yearly distance from shift
+    if include_capex:
+        if battery_capacity_kwh is None:
+            raise HTTPException(
+                status_code=422,
+                detail="battery_capacity_kwh is required when include_capex=true.",
+            )
+        if charger_power_kw is None:
+            raise HTTPException(
+                status_code=422,
+                detail="charger_power_kw is required when include_capex=true.",
+            )
+
     dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
     annual_km = dist.yearly_distance_km
 
-    # Resolve optional params to defaults
     ir = _or(interest_rate, "interest_rate")
     epk = _or(energy_price_per_kwh, "energy_price_per_kwh")
     fpl = _or(fuel_cost_per_l, "fuel_cost_per_l")
 
-    lt_bus = _or_int(lifetime_bus, "lifetime_bus")
-    lt_batt = _or_int(lifetime_battery, "lifetime_battery")
-    lt_chg = _or_int(lifetime_charger, "lifetime_charger")
-    lt_conn = _or_int(lifetime_connection, "lifetime_connection")
-    lt_diesel = _or_int(lifetime_diesel_bus, "lifetime_diesel_bus")
-
-    batt_cpk = _or(battery_cost_per_kwh, "battery_cost_per_kwh")
-    eb_a = _or(bus_no_batt_quad_coeff, "bus_no_batt_quad_coeff")
-    eb_b = _or(bus_no_batt_lin_coeff, "bus_no_batt_lin_coeff")
-    eb_c = _or(bus_no_batt_const, "bus_no_batt_const")
-    ch_a = _or(charger_cost_per_kw, "charger_cost_per_kw")
-    ch_b = _or(charger_cost_const, "charger_cost_const")
-    gc_a = _or(grid_connection_fee_per_kw, "grid_connection_fee_per_kw")
-    gc_b = _or(grid_connection_fee_const, "grid_connection_fee_const")
-    db_a = _or(diesel_bus_quad_coeff, "diesel_bus_quad_coeff")
-    db_b = _or(diesel_bus_lin_coeff, "diesel_bus_lin_coeff")
-    db_c = _or(diesel_bus_const, "diesel_bus_const")
     em_a = _or(electric_maint_cost_per_m, "electric_maint_cost_per_m")
     em_b = _or(electric_maint_cost_const, "electric_maint_cost_const")
     dm_a = _or(diesel_maint_cost_per_m, "diesel_maint_cost_per_m")
@@ -667,41 +677,7 @@ async def get_full_comparison(
     dc_a = _or(diesel_consumption_per_m, "diesel_consumption_per_m")
     dc_b = _or(diesel_consumption_const, "diesel_consumption_const")
 
-    # --- Electric CAPEX ---
-    inv_battery = _battery_cost(battery_capacity_kwh, batt_cpk)
-    inv_bus_body = _bus_no_batt_cost(bus_length_m, eb_a, eb_b, eb_c)
-    inv_charger = _charger_cost(charger_power_kw, ch_a, ch_b)
-    inv_grid = _fee_connection(charger_power_kw, gc_a, gc_b)
-
-    e_capex = [
-        CapexLineItem(
-            name="Battery",
-            investment_chf=round(inv_battery, 2),
-            lifetime_years=lt_batt,
-            annualized_chf_per_year=round(_annualize(inv_battery, lt_batt, ir), 2),
-        ),
-        CapexLineItem(
-            name="Bus body (w/o battery)",
-            investment_chf=round(inv_bus_body, 2),
-            lifetime_years=lt_bus,
-            annualized_chf_per_year=round(_annualize(inv_bus_body, lt_bus, ir), 2),
-        ),
-        CapexLineItem(
-            name="Charger",
-            investment_chf=round(inv_charger, 2),
-            lifetime_years=lt_chg,
-            annualized_chf_per_year=round(_annualize(inv_charger, lt_chg, ir), 2),
-        ),
-        CapexLineItem(
-            name="Grid connection",
-            investment_chf=round(inv_grid, 2),
-            lifetime_years=lt_conn,
-            annualized_chf_per_year=round(_annualize(inv_grid, lt_conn, ir), 2),
-        ),
-    ]
-    e_total_capex = sum(item.annualized_chf_per_year for item in e_capex)
-
-    # --- Electric OPEX ---
+    # --- Electric OPEX (always computed) ---
     e_maint_per_km = _electric_maint_cost_per_km(bus_length_m, em_a, em_b)
     e_maint_year = e_maint_per_km * annual_km
     e_energy_year = epk * annual_consumption_kwh
@@ -712,28 +688,7 @@ async def get_full_comparison(
     ]
     e_total_opex = sum(item.cost_chf_per_year for item in e_opex)
 
-    electric = CostSummary(
-        capex_items=e_capex,
-        total_annualized_capex_chf_per_year=round(e_total_capex, 2),
-        opex_items=e_opex,
-        total_opex_chf_per_year=round(e_total_opex, 2),
-        total_annual_cost_chf_per_year=round(e_total_capex + e_total_opex, 2),
-    )
-
-    # --- Diesel CAPEX ---
-    inv_diesel = _diesel_bus_cost(bus_length_m, db_a, db_b, db_c)
-
-    d_capex = [
-        CapexLineItem(
-            name="Diesel bus",
-            investment_chf=round(inv_diesel, 2),
-            lifetime_years=lt_diesel,
-            annualized_chf_per_year=round(_annualize(inv_diesel, lt_diesel, ir), 2),
-        ),
-    ]
-    d_total_capex = sum(item.annualized_chf_per_year for item in d_capex)
-
-    # --- Diesel OPEX ---
+    # --- Diesel OPEX (always computed) ---
     d_maint_per_km = _diesel_maint_cost_per_km(bus_length_m, dm_a, dm_b)
     d_maint_year = d_maint_per_km * annual_km
     d_cons = _diesel_consumption_l_per_km(bus_length_m, dc_a, dc_b)
@@ -745,13 +700,97 @@ async def get_full_comparison(
     ]
     d_total_opex = sum(item.cost_chf_per_year for item in d_opex)
 
-    diesel = CostSummary(
-        capex_items=d_capex,
-        total_annualized_capex_chf_per_year=round(d_total_capex, 2),
-        opex_items=d_opex,
-        total_opex_chf_per_year=round(d_total_opex, 2),
-        total_annual_cost_chf_per_year=round(d_total_capex + d_total_opex, 2),
-    )
+    if include_capex:
+        lt_bus = _or_int(lifetime_bus, "lifetime_bus")
+        lt_batt = _or_int(lifetime_battery, "lifetime_battery")
+        lt_chg = _or_int(lifetime_charger, "lifetime_charger")
+        lt_conn = _or_int(lifetime_connection, "lifetime_connection")
+        lt_diesel = _or_int(lifetime_diesel_bus, "lifetime_diesel_bus")
+
+        batt_cpk = _or(battery_cost_per_kwh, "battery_cost_per_kwh")
+        eb_a = _or(bus_no_batt_quad_coeff, "bus_no_batt_quad_coeff")
+        eb_b = _or(bus_no_batt_lin_coeff, "bus_no_batt_lin_coeff")
+        eb_c = _or(bus_no_batt_const, "bus_no_batt_const")
+        ch_a = _or(charger_cost_per_kw, "charger_cost_per_kw")
+        ch_b = _or(charger_cost_const, "charger_cost_const")
+        gc_a = _or(grid_connection_fee_per_kw, "grid_connection_fee_per_kw")
+        gc_b = _or(grid_connection_fee_const, "grid_connection_fee_const")
+        db_a = _or(diesel_bus_quad_coeff, "diesel_bus_quad_coeff")
+        db_b = _or(diesel_bus_lin_coeff, "diesel_bus_lin_coeff")
+        db_c = _or(diesel_bus_const, "diesel_bus_const")
+
+        # --- Electric CAPEX ---
+        inv_battery = _battery_cost(battery_capacity_kwh, batt_cpk)
+        inv_bus_body = _bus_no_batt_cost(bus_length_m, eb_a, eb_b, eb_c)
+        inv_charger = _charger_cost(charger_power_kw, ch_a, ch_b)
+        inv_grid = _fee_connection(charger_power_kw, gc_a, gc_b)
+
+        e_capex = [
+            CapexLineItem(
+                name="Battery",
+                investment_chf=round(inv_battery, 2),
+                lifetime_years=lt_batt,
+                annualized_chf_per_year=round(_annualize(inv_battery, lt_batt, ir), 2),
+            ),
+            CapexLineItem(
+                name="Bus body (w/o battery)",
+                investment_chf=round(inv_bus_body, 2),
+                lifetime_years=lt_bus,
+                annualized_chf_per_year=round(_annualize(inv_bus_body, lt_bus, ir), 2),
+            ),
+            CapexLineItem(
+                name="Charger",
+                investment_chf=round(inv_charger, 2),
+                lifetime_years=lt_chg,
+                annualized_chf_per_year=round(_annualize(inv_charger, lt_chg, ir), 2),
+            ),
+            CapexLineItem(
+                name="Grid connection",
+                investment_chf=round(inv_grid, 2),
+                lifetime_years=lt_conn,
+                annualized_chf_per_year=round(_annualize(inv_grid, lt_conn, ir), 2),
+            ),
+        ]
+        e_total_capex = sum(item.annualized_chf_per_year for item in e_capex)
+
+        # --- Diesel CAPEX ---
+        inv_diesel = _diesel_bus_cost(bus_length_m, db_a, db_b, db_c)
+
+        d_capex = [
+            CapexLineItem(
+                name="Diesel bus",
+                investment_chf=round(inv_diesel, 2),
+                lifetime_years=lt_diesel,
+                annualized_chf_per_year=round(_annualize(inv_diesel, lt_diesel, ir), 2),
+            ),
+        ]
+        d_total_capex = sum(item.annualized_chf_per_year for item in d_capex)
+
+        electric = CostSummary(
+            capex_items=e_capex,
+            total_annualized_capex_chf_per_year=round(e_total_capex, 2),
+            opex_items=e_opex,
+            total_opex_chf_per_year=round(e_total_opex, 2),
+            total_annual_cost_chf_per_year=round(e_total_capex + e_total_opex, 2),
+        )
+        diesel = CostSummary(
+            capex_items=d_capex,
+            total_annualized_capex_chf_per_year=round(d_total_capex, 2),
+            opex_items=d_opex,
+            total_opex_chf_per_year=round(d_total_opex, 2),
+            total_annual_cost_chf_per_year=round(d_total_capex + d_total_opex, 2),
+        )
+    else:
+        electric = CostSummary(
+            opex_items=e_opex,
+            total_opex_chf_per_year=round(e_total_opex, 2),
+            total_annual_cost_chf_per_year=round(e_total_opex, 2),
+        )
+        diesel = CostSummary(
+            opex_items=d_opex,
+            total_opex_chf_per_year=round(d_total_opex, 2),
+            total_annual_cost_chf_per_year=round(d_total_opex, 2),
+        )
 
     return FullComparisonResponse(
         shift_id=shift_id,

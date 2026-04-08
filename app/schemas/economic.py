@@ -7,6 +7,7 @@ and a full electric-vs-diesel comparison for public transport buses.
 
 from __future__ import annotations
 
+from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -215,24 +216,46 @@ class OpexLineItem(BaseModel):
 
 
 class CostSummary(BaseModel):
-    """Aggregated cost breakdown for one powertrain type."""
-    capex_items: list[CapexLineItem]
-    total_annualized_capex_chf_per_year: float
+    """Aggregated cost breakdown for one powertrain type.
+
+    When CAPEX is excluded (``include_capex=false``), ``capex_items`` and
+    ``total_annualized_capex_chf_per_year`` are ``null`` and
+    ``total_annual_cost_chf_per_year`` reflects OPEX only.
+    """
+
+    capex_items: Optional[list[CapexLineItem]] = Field(
+        default=None,
+        description="CAPEX line items. Null when CAPEX is excluded.",
+    )
+    total_annualized_capex_chf_per_year: Optional[float] = Field(
+        default=None,
+        description="Sum of annualised CAPEX. Null when CAPEX is excluded.",
+    )
     opex_items: list[OpexLineItem]
     total_opex_chf_per_year: float
     total_annual_cost_chf_per_year: float
 
 
 class FullComparisonResponse(BaseModel):
-    """Side-by-side annual cost comparison: electric vs diesel bus."""
+    """Side-by-side annual cost comparison: electric vs diesel bus.
 
-    # Shift-derived distance
+    When ``include_capex=false``, ``battery_capacity_kwh`` and
+    ``charger_power_kw`` are ``null`` (they are only needed for CAPEX
+    regressions) and ``annual_saving_chf`` reflects OPEX only.
+    """
+
     shift_id: UUID = Field(..., description="Shift used to derive annual distance.")
     annual_km: float = Field(..., description="Yearly distance derived from shift [km/year].")
     interest_rate: float
     bus_length_m: float
-    battery_capacity_kwh: float
-    charger_power_kw: float
+    battery_capacity_kwh: Optional[float] = Field(
+        default=None,
+        description="Battery capacity [kWh]. Null when CAPEX is excluded.",
+    )
+    charger_power_kw: Optional[float] = Field(
+        default=None,
+        description="Charger rated power [kW]. Null when CAPEX is excluded.",
+    )
     annual_consumption_kwh: float
     energy_price_per_kwh: float
     fuel_cost_per_l: float
@@ -244,6 +267,7 @@ class FullComparisonResponse(BaseModel):
         ...,
         description=(
             "diesel total − electric total [CHF/year]. "
-            "Positive means the electric option is cheaper."
+            "Positive means the electric option is cheaper. "
+            "Reflects OPEX only when CAPEX is excluded."
         ),
     )
