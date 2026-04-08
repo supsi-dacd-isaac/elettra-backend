@@ -32,6 +32,7 @@ from app.services.weather import (
     run_kmeans_clustering,
     save_clustering,
     get_saved_clustering,
+    sanitize_weather_values,
 )
 from app.utils.trip_statistics import (
     compute_global_trip_statistics_combined,
@@ -280,20 +281,33 @@ async def generate_pvgis_tmy(
                 dt_val = dt_mod.datetime(base_year, 1, 1) + dt_mod.timedelta(days=day_of_year - 1, hours=hour_of_day)
                 dt_utc = dt_val.replace(tzinfo=dt_mod.timezone.utc)
 
+                raw_rh = float(row['relative_humidity']) if pd.notna(row['relative_humidity']) else None
+                raw_ws = float(row['wind_speed']) if pd.notna(row['wind_speed']) else None
+                raw_wd = float(row['wind_direction']) if pd.notna(row['wind_direction']) else None
+                raw_pr = int(row['pressure']) if pd.notna(row['pressure']) else None
+
+                # Sanitize values that are subject to DB CHECK constraints
+                clean = sanitize_weather_values(
+                    pressure=raw_pr,
+                    relative_humidity=raw_rh,
+                    wind_direction=raw_wd,
+                    wind_speed=raw_ws,
+                )
+
                 weather_measurements.append(
                     WeatherMeasurements(
                         time_utc=dt_utc,
                         latitude=lat_dec,
                         longitude=lon_dec,
                         temp_air=float(row['temp_air']) if pd.notna(row['temp_air']) else None,
-                        relative_humidity=float(row['relative_humidity']) if pd.notna(row['relative_humidity']) else None,
+                        relative_humidity=clean["relative_humidity"],
                         ghi=float(row['ghi']) if pd.notna(row['ghi']) else None,
                         dni=float(row['dni']) if pd.notna(row['dni']) else None,
                         dhi=float(row['dhi']) if pd.notna(row['dhi']) else None,
                         ir_h=float(row['IR(h)']) if pd.notna(row['IR(h)']) else None,
-                        wind_speed=float(row['wind_speed']) if pd.notna(row['wind_speed']) else None,
-                        wind_direction=float(row['wind_direction']) % 360.0 if pd.notna(row['wind_direction']) else None,
-                        pressure=int(row['pressure']) if pd.notna(row['pressure']) else None,
+                        wind_speed=clean["wind_speed"],
+                        wind_direction=clean["wind_direction"],
+                        pressure=clean["pressure"],
                     )
                 )
 

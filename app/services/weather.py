@@ -51,6 +51,48 @@ async def fetch_weather_records(
 
 
 # ---------------------------------------------------------------------------
+# PVGIS value sanitization
+# ---------------------------------------------------------------------------
+# External PVGIS data occasionally contains values that slightly violate our
+# DB check constraints (e.g. wind_speed = -0.03).  Rather than loosening the
+# constraints we clamp/normalize values before insertion.
+
+def sanitize_weather_values(
+    *,
+    pressure: float | int | None,
+    relative_humidity: float | None,
+    wind_direction: float | None,
+    wind_speed: float | None,
+) -> dict:
+    """Return a dict with sanitized copies of the four constrained fields.
+
+    Rules (mirror the CHECK constraints on ``weather_measurements``):
+      pressure           – must be > 0; non-positive → None
+      relative_humidity  – clamped to [0, 100]
+      wind_direction     – normalized to [0, 360) via modulo
+      wind_speed         – must be >= 0; negative → 0
+    """
+    if pressure is not None and pressure <= 0:
+        pressure = None
+
+    if relative_humidity is not None:
+        relative_humidity = max(0.0, min(100.0, float(relative_humidity)))
+
+    if wind_direction is not None:
+        wind_direction = float(wind_direction) % 360.0
+
+    if wind_speed is not None and wind_speed < 0:
+        wind_speed = 0.0
+
+    return {
+        "pressure": pressure,
+        "relative_humidity": relative_humidity,
+        "wind_direction": wind_direction,
+        "wind_speed": wind_speed,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Clustering helpers
 # ---------------------------------------------------------------------------
 
