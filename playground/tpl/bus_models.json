@@ -13,7 +13,7 @@
     "AU_NF": {
       "bus_length_m": 12,
       "battery_capacity_kwh": 350,
-      "max_charging_power_kw": 350,
+      "max_charging_power_kw": 450,
       "description": "12m standard bus",
       "auxiliary_consumption_kw": {
         "temperature_celsius": [-5, 0, 5, 10, 15, 20, 25],
@@ -23,7 +23,7 @@
     "AL_NF": {
       "bus_length_m": 10,
       "battery_capacity_kwh": 330,
-      "max_charging_power_kw": 330,
+      "max_charging_power_kw": 450,
       "description": "10m midi bus",
       "auxiliary_consumption_kw": {
         "temperature_celsius": [-5, 0, 5, 10, 15, 20, 25],
