@@ -51,10 +51,22 @@ def _time_str_to_minutes(time_str: str | None) -> int | None:
 # Auto-prediction: find or create prediction runs
 # ---------------------------------------------------------------------------
 
+async def _resolve_bus_model_id(db: AsyncSession, shift_id: UUID) -> UUID | None:
+    """Resolve bus_model_id from shift -> bus -> bus_model chain."""
+    shift = await db.get(Shifts, shift_id)
+    if shift is None or shift.bus_id is None:
+        return None
+    bus = await db.get(Buses, shift.bus_id)
+    if bus is None:
+        return None
+    return bus.bus_model_id
+
+
 async def ensure_predictions(
     db: AsyncSession,
+    user_id: UUID,
     shift_ids: list[UUID],
-    bus_model_id: UUID,
+    bus_model_id: UUID | None,
     prediction_params: dict,
 ) -> list[UUID]:
     """
@@ -65,11 +77,20 @@ async def ensure_predictions(
 
     run_ids: list[UUID] = []
     for shift_id in shift_ids:
+        resolved_model_id = bus_model_id
+        if resolved_model_id is None:
+            resolved_model_id = await _resolve_bus_model_id(db, shift_id)
+        if resolved_model_id is None:
+            raise ValueError(
+                f"Cannot determine bus_model_id for shift {shift_id}. "
+                "Provide bus_model_id in the request or assign a bus with a model to the shift."
+            )
+
         result = await db.execute(
             select(PredictionRuns).where(
                 and_(
                     PredictionRuns.shift_id == shift_id,
-                    PredictionRuns.bus_model_id == bus_model_id,
+                    PredictionRuns.bus_model_id == resolved_model_id,
                     PredictionRuns.model_name == prediction_params["model_name"],
                     PredictionRuns.external_temp_celsius == prediction_params["external_temp_celsius"],
                     PredictionRuns.occupancy_percent == prediction_params["occupancy_percent"],
@@ -86,9 +107,9 @@ async def ensure_predictions(
 
         logger.info("Creating new prediction for shift %s", shift_id)
         run = PredictionRuns(
-            user_id=(await db.execute(select(OptimizationRuns.user_id).limit(1))).scalar(),
+            user_id=user_id,
             shift_id=shift_id,
-            bus_model_id=bus_model_id,
+            bus_model_id=resolved_model_id,
             model_name=prediction_params["model_name"],
             external_temp_celsius=prediction_params["external_temp_celsius"],
             auxiliary_heating_type=prediction_params["auxiliary_heating_type"],
@@ -324,6 +345,7 @@ async def run_optimization(
             pred_params = params.get("prediction_params", {})
             prediction_run_ids = await ensure_predictions(
                 db=db,
+                user_id=run.user_id,
                 shift_ids=[UUID(sid) for sid in params["shift_ids"]],
                 bus_model_id=run.bus_model_id,
                 prediction_params=pred_params,
@@ -365,10 +387,15 @@ async def run_optimization(
 
     except Exception as e:
         logger.exception("Optimization failed for run %s: %s", optimization_run_id, e)
-        run.status = "failed"
-        run.results = {"error": str(e)}
-        await db.commit()
-        raise
+        try:
+            await db.rollback()
+            run = await db.get(OptimizationRuns, optimization_run_id)
+            if run is not None:
+                run.status = "failed"
+                run.results = {"error": str(e)}
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to update optimization run %s status to 'failed'", optimization_run_id)
 
 
 # ---------------------------------------------------------------------------
