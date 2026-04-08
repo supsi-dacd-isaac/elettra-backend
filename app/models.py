@@ -81,6 +81,27 @@ class GtfsStops(Base):
     gtfs_stops_times: Mapped[list['GtfsStopsTimes']] = relationship('GtfsStopsTimes', back_populates='stop')
 
 
+class WeatherTemperatureClusters(Base):
+    __tablename__ = 'weather_temperature_clusters'
+    __table_args__ = (
+        PrimaryKeyConstraint('id', name='weather_temperature_clusters_pkey'),
+        UniqueConstraint('latitude', 'longitude', 'k', 'start_time', 'end_time', 'cluster_id',
+                         name='uq_weather_temp_clusters_config_cluster'),
+        Index('ix_weather_temp_clusters_config', 'latitude', 'longitude', 'k', 'start_time', 'end_time'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    latitude: Mapped[decimal.Decimal] = mapped_column(Numeric(8, 5), nullable=False)
+    longitude: Mapped[decimal.Decimal] = mapped_column(Numeric(9, 5), nullable=False)
+    k: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    end_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    cluster_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    centroid_daily_avg_temp: Mapped[float] = mapped_column(REAL, nullable=False)
+    occurrences: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+
+
 class WeatherMeasurements(Base):
     __tablename__ = 'weather_measurements'
     __table_args__ = (

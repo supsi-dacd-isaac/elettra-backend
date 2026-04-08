@@ -4,6 +4,7 @@ Prediction service: runs ConsumptionPredictor for shifts stored in the DB.
 
 import io
 import logging
+import math
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -264,16 +265,26 @@ async def predict_shift_consumption(
             battery_pack_density_override=actual_pack_density,
         )
 
+        def _sanitize_json(obj):
+            """Recursively replace NaN/Inf floats with None for JSONB storage."""
+            if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+                return None
+            if isinstance(obj, dict):
+                return {k: _sanitize_json(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_sanitize_json(v) for v in obj]
+            return obj
+
         # Store contextual parameters
-        run.contextual_parameters = {
+        run.contextual_parameters = _sanitize_json({
             "battery_capacity_kwh": battery_capacity_kwh,
             "bus_length_m": bus_length_m,
             "num_battery_packs": packs,
             "total_weight_kg": total_weight_kg,
             "quantiles": quantiles,
             "greybox_params": results.get("greybox_params"),
-        }
-        run.summary = results.get("summary")
+        })
+        run.summary = _sanitize_json(results.get("summary"))
 
         # Store per-trip predictions
         predictions_list = results.get("predictions", [])
@@ -285,17 +296,26 @@ async def predict_shift_consumption(
             for q in quantiles:
                 key = f"quantile_{q:.2f}"
                 if key in pred:
-                    q_dict[f"{q:.2f}"] = pred[key]
+                    val = pred[key]
+                    q_dict[f"{q:.2f}"] = None if (isinstance(val, float) and math.isnan(val)) else val
+
+            def _clean(v):
+                """Replace NaN/Inf floats with None for DB storage."""
+                if v is None:
+                    return None
+                if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                    return None
+                return v
 
             tp = TripPredictions(
                 prediction_run_id=prediction_run_id,
                 trip_id=UUID(trip_id_str),
                 sequence_number=seq,
-                prediction_kwh=pred.get("prediction_kwh", 0),
-                prediction_median_kwh=pred.get("prediction_median_kwh"),
-                drivetrain_kwh=pred.get("drivetrain_kwh"),
-                auxiliary_kwh=pred.get("auxiliary_kwh"),
-                mass_sensitivity_kwh_per_kwh_batt=pred.get("mass_sensitivity_kwh_per_kwh_batt"),
+                prediction_kwh=_clean(pred.get("prediction_kwh", 0)) or 0,
+                prediction_median_kwh=_clean(pred.get("prediction_median_kwh")),
+                drivetrain_kwh=_clean(pred.get("drivetrain_kwh")),
+                auxiliary_kwh=_clean(pred.get("auxiliary_kwh")),
+                mass_sensitivity_kwh_per_kwh_batt=_clean(pred.get("mass_sensitivity_kwh_per_kwh_batt")),
                 quantiles=q_dict if q_dict else None,
             )
             db.add(tp)
@@ -306,9 +326,15 @@ async def predict_shift_consumption(
 
     except Exception as e:
         logger.exception(f"Prediction failed for run {prediction_run_id}: {e}")
-        run.status = "failed"
-        run.summary = {"error": str(e)}
-        await db.commit()
+        try:
+            await db.rollback()
+            run = await db.get(PredictionRuns, prediction_run_id)
+            if run is not None:
+                run.status = "failed"
+                run.summary = {"error": str(e)}
+                await db.commit()
+        except Exception:
+            logger.exception(f"Failed to update prediction run {prediction_run_id} status to 'failed'")
         raise
 
 

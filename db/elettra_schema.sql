@@ -392,6 +392,28 @@ CREATE TABLE public.variants (
 ALTER TABLE public.variants OWNER TO admin;
 
 --
+-- Name: weather_temperature_clusters; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.weather_temperature_clusters (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    latitude numeric(8,5) NOT NULL,
+    longitude numeric(9,5) NOT NULL,
+    k integer NOT NULL,
+    start_time character varying(5) NOT NULL,
+    end_time character varying(5) NOT NULL,
+    cluster_id integer NOT NULL,
+    centroid_daily_avg_temp real NOT NULL,
+    occurrences integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ck_wtc_lat_range CHECK (((latitude >= ('-90'::integer)::numeric) AND (latitude <= (90)::numeric))),
+    CONSTRAINT ck_wtc_lon_range CHECK (((longitude >= ('-180'::integer)::numeric) AND (longitude <= (180)::numeric)))
+);
+
+
+ALTER TABLE public.weather_temperature_clusters OWNER TO admin;
+
+--
 -- Name: weather_measurements; Type: TABLE; Schema: public; Owner: admin
 --
 
@@ -605,6 +627,22 @@ ALTER TABLE ONLY public.variants
 
 
 --
+-- Name: weather_temperature_clusters weather_temperature_clusters_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.weather_temperature_clusters
+    ADD CONSTRAINT weather_temperature_clusters_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: weather_temperature_clusters uq_weather_temp_clusters_config_cluster; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.weather_temperature_clusters
+    ADD CONSTRAINT uq_weather_temp_clusters_config_cluster UNIQUE (latitude, longitude, k, start_time, end_time, cluster_id);
+
+
+--
 -- Name: weather_measurements weather_measurements_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
 --
 
@@ -645,6 +683,13 @@ CREATE INDEX idx_buses_bus_model_id ON public.buses USING btree (bus_model_id);
 --
 
 CREATE INDEX idx_shifts_bus_id ON public.shifts USING btree (bus_id);
+
+
+--
+-- Name: ix_weather_temp_clusters_config; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX ix_weather_temp_clusters_config ON public.weather_temperature_clusters USING btree (latitude, longitude, k, start_time, end_time);
 
 
 --

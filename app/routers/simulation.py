@@ -1,16 +1,23 @@
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List
+from typing import List, Union
 from uuid import UUID
+
 import numpy as np
 import pandas as pd
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.database import get_async_session
 from app.schemas.database import PredictionRunsRead, TripPredictionsRead, OptimizationRunsRead
 from app.schemas.responses import PredictionSubmitResponse, OptimizationSubmitResponse, CombinedTripStatisticsResponse
 from app.schemas.requests import TripStatisticsRequest, PredictionRequest, OptimizationRequest, _OPTIMIZATION_EXAMPLES
-from app.schemas.external_apis import PvgisTmyResponse
+from app.schemas.external_apis import (
+    PvgisTmyResponse,
+    PvgisTmyMetadataResponse,
+    WeatherClusteringRequest,
+    WeatherClusteringResponse,
+    ClusterItem,
+)
 from app.models import (
     Users, WeatherMeasurements,
     GtfsTrips, GtfsStops, GtfsStopsTimes,
@@ -18,6 +25,14 @@ from app.models import (
     OptimizationRuns,
 )
 from app.core.auth import get_current_user
+from app.services.weather import (
+    count_weather_records,
+    fetch_weather_records,
+    compute_daily_avg_temps,
+    run_kmeans_clustering,
+    save_clustering,
+    get_saved_clustering,
+)
 from app.utils.trip_statistics import (
     compute_global_trip_statistics_combined,
     extract_stop_to_stop_statistics_for_schedule,
@@ -173,6 +188,20 @@ async def create_optimization_run(
     return OptimizationSubmitResponse(optimization_run_id=run_id)
 
 
+@router.get("/optimization-runs/", response_model=List[OptimizationRunsRead])
+async def list_optimization_runs(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    """List all optimization runs for the current user."""
+    result = await db.execute(
+        select(OptimizationRuns)
+        .where(OptimizationRuns.user_id == current_user.id)
+        .order_by(OptimizationRuns.created_at.desc())
+    )
+    return result.scalars().all()
+
+
 @router.get("/optimization-runs/{run_id}", response_model=OptimizationRunsRead)
 async def get_optimization_run(
     run_id: UUID,
@@ -186,163 +215,278 @@ async def get_optimization_run(
     return run
 
 
+# ---------------------------------------------------------------------------
 # PVGIS TMY endpoint (authenticated users only)
-@router.get("/pvgis-tmy/", response_model=PvgisTmyResponse)
-async def generate_pvgis_tmy(latitude: float, longitude: float, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    """Generate TMY (Typical Meteorological Year) dataset from PVGIS using latitude and longitude.
-    First checks if data exists in database, otherwise downloads from PVGIS and stores it.
-    The coerce_year is configured via config files (pvgis_coerce_year setting)."""
-    import datetime
-    import pvlib
-    import pandas as pd
-    from sqlalchemy import func, and_
+# ---------------------------------------------------------------------------
+@router.get(
+    "/pvgis-tmy/",
+    response_model=Union[PvgisTmyResponse, PvgisTmyMetadataResponse],
+    summary="PVGIS TMY data — download or check availability",
+    description=(
+        "Ensures TMY data for the requested lat/lon is available in the "
+        "database. If it is missing, the data is always fetched from PVGIS "
+        "and stored — regardless of the `download` flag.\n\n"
+        "The **download** flag controls only what is returned to the client:\n\n"
+        "- **download=false** (default): return lightweight metadata "
+        "(availability, record count, source).\n"
+        "- **download=true**: return the full TMY time-series payload."
+    ),
+)
+async def generate_pvgis_tmy(
+    latitude: float,
+    longitude: float,
+    download: bool = Query(
+        False,
+        description="If true, return full TMY data to the client. "
+                    "If false, only return availability metadata. "
+                    "In both cases, missing data is fetched from PVGIS and stored.",
+    ),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    import datetime as dt_mod
     from decimal import Decimal
     from app.core.config import get_cached_settings
 
     try:
-        # Get configuration settings
         settings = get_cached_settings()
         coerce_year = settings.pvgis_coerce_year
 
-        # Round latitude and longitude to 3 decimal places to minimize PVGIS requests
-        # This groups nearby locations together (~111m precision at equator)
         lat_rounded = round(float(latitude), 3)
         lon_rounded = round(float(longitude), 3)
+        lat_dec = Decimal(str(lat_rounded))
+        lon_dec = Decimal(str(lon_rounded))
 
-        # Check if we already have a complete dataset (8760 entries) for this location
-        count_result = await db.execute(
-            select(func.count(WeatherMeasurements.id))
-            .filter(
-                and_(
-                    WeatherMeasurements.latitude == Decimal(str(lat_rounded)),
-                    WeatherMeasurements.longitude == Decimal(str(lon_rounded))
-                )
-            )
-        )
-        existing_count = count_result.scalar()
+        existing_count = await count_weather_records(db, lat_dec, lon_dec)
 
-        if existing_count >= 8760:
-            # We have a complete dataset, retrieve it from database
-            result = await db.execute(
-                select(WeatherMeasurements)
-                .filter(
-                    and_(
-                        WeatherMeasurements.latitude == Decimal(str(lat_rounded)),
-                        WeatherMeasurements.longitude == Decimal(str(lon_rounded))
-                    )
-                )
-                .order_by(WeatherMeasurements.time_utc)
-            )
-            weather_records = result.scalars().all()
+        # ---- Always ensure data is in the DB ----
+        source = "db"
+        if existing_count < 8760:
+            import pvlib
 
-            # Convert database records to pandas DataFrame format similar to PVGIS
-            data_records = []
-            for record in weather_records:
-                data_records.append({
-                    'temp_air': float(record.temp_air) if record.temp_air is not None else None,
-                    'relative_humidity': float(record.relative_humidity) if record.relative_humidity is not None else None,
-                    'ghi': float(record.ghi) if record.ghi is not None else None,
-                    'dni': float(record.dni) if record.dni is not None else None,
-                    'dhi': float(record.dhi) if record.dhi is not None else None,
-                    'IR(h)': float(record.ir_h) if record.ir_h is not None else None,
-                    'wind_speed': float(record.wind_speed) if record.wind_speed is not None else None,
-                    'wind_direction': float(record.wind_direction) if record.wind_direction is not None else None,
-                    'pressure': int(record.pressure) if record.pressure is not None else None
-                })
-
-            # Create basic metadata similar to PVGIS format
-            metadata_dict = {
-                'inputs': {
-                    'latitude': lat_rounded,
-                    'longitude': lon_rounded,
-                    'radiation_database': 'PVGIS-SARAH2',
-                    'meteo_database': 'ERA5',
-                    'year_min': coerce_year,
-                    'year_max': coerce_year
-                },
-                'outputs': {
-                    'tmy_hourly': {
-                        'variables': {
-                            'temp_air': 'Air temperature (°C)',
-                            'relative_humidity': 'Relative humidity (%)',
-                            'ghi': 'Global horizontal irradiance (W/m²)',
-                            'dni': 'Direct normal irradiance (W/m²)',
-                            'dhi': 'Diffuse horizontal irradiance (W/m²)',
-                            'IR(h)': 'Infrared radiation from sky (W/m²)',
-                            'wind_speed': 'Wind speed (m/s)',
-                            'wind_direction': 'Wind direction (°)',
-                            'pressure': 'Air pressure (Pa)'
-                        }
-                    }
-                },
-                'months_selected': list(range(1, 13))
-            }
-
-        else:
-            # No complete dataset exists, download from PVGIS
             data, metadata = pvlib.iotools.get_pvgis_tmy(
                 latitude=lat_rounded,
                 longitude=lon_rounded,
-                coerce_year=coerce_year
+                coerce_year=coerce_year,
             )
 
-            # Store the downloaded data in the database
-            weather_measurements = []
-
-            # Create base datetime for the year - TMY data represents a typical year
             base_year = coerce_year
-
-            for i, (timestamp, row) in enumerate(data.iterrows()):
-                # Create a datetime for each hour of the year
-                hour_of_year = i  # 0-8759
+            weather_measurements = []
+            for i, (_timestamp, row) in enumerate(data.iterrows()):
+                hour_of_year = i
                 day_of_year = (hour_of_year // 24) + 1
                 hour_of_day = hour_of_year % 24
 
-                # Create datetime using the specified year
-                dt = datetime.datetime(base_year, 1, 1) + datetime.timedelta(days=day_of_year-1, hours=hour_of_day)
-                dt_utc = dt.replace(tzinfo=datetime.timezone.utc)
+                dt_val = dt_mod.datetime(base_year, 1, 1) + dt_mod.timedelta(days=day_of_year - 1, hours=hour_of_day)
+                dt_utc = dt_val.replace(tzinfo=dt_mod.timezone.utc)
 
-                weather_measurement = WeatherMeasurements(
-                    time_utc=dt_utc,
-                    latitude=Decimal(str(lat_rounded)),
-                    longitude=Decimal(str(lon_rounded)),
-                    temp_air=float(row['temp_air']) if pd.notna(row['temp_air']) else None,
-                    relative_humidity=float(row['relative_humidity']) if pd.notna(row['relative_humidity']) else None,
-                    ghi=float(row['ghi']) if pd.notna(row['ghi']) else None,
-                    dni=float(row['dni']) if pd.notna(row['dni']) else None,
-                    dhi=float(row['dhi']) if pd.notna(row['dhi']) else None,
-                    ir_h=float(row['IR(h)']) if pd.notna(row['IR(h)']) else None,
-                    wind_speed=float(row['wind_speed']) if pd.notna(row['wind_speed']) else None,
-                    wind_direction=float(row['wind_direction']) % 360.0 if pd.notna(row['wind_direction']) else None,  # Normalize 360 to 0
-                    pressure=int(row['pressure']) if pd.notna(row['pressure']) else None
+                weather_measurements.append(
+                    WeatherMeasurements(
+                        time_utc=dt_utc,
+                        latitude=lat_dec,
+                        longitude=lon_dec,
+                        temp_air=float(row['temp_air']) if pd.notna(row['temp_air']) else None,
+                        relative_humidity=float(row['relative_humidity']) if pd.notna(row['relative_humidity']) else None,
+                        ghi=float(row['ghi']) if pd.notna(row['ghi']) else None,
+                        dni=float(row['dni']) if pd.notna(row['dni']) else None,
+                        dhi=float(row['dhi']) if pd.notna(row['dhi']) else None,
+                        ir_h=float(row['IR(h)']) if pd.notna(row['IR(h)']) else None,
+                        wind_speed=float(row['wind_speed']) if pd.notna(row['wind_speed']) else None,
+                        wind_direction=float(row['wind_direction']) % 360.0 if pd.notna(row['wind_direction']) else None,
+                        pressure=int(row['pressure']) if pd.notna(row['pressure']) else None,
+                    )
                 )
-                weather_measurements.append(weather_measurement)
 
-            # Bulk insert the weather measurements
             db.add_all(weather_measurements)
             await db.commit()
+            source = "pvgis"
+            existing_count = len(weather_measurements)
 
-            # Convert pandas DataFrame to dict for JSON serialization
-            data_records = data.to_dict(orient='records')
+        # ---- download=false: return metadata only ----
+        if not download:
+            return PvgisTmyMetadataResponse(
+                latitude=lat_rounded,
+                longitude=lon_rounded,
+                available_in_db=True,
+                records_count=existing_count,
+                source=source,
+            )
 
-            # Convert metadata to dict if it's not already
-            metadata_dict = dict(metadata) if metadata else {}
+        # ---- download=true: return full TMY payload ----
+        weather_records = await fetch_weather_records(db, lat_dec, lon_dec)
+        data_records = [
+            {
+                'temp_air': float(r.temp_air) if r.temp_air is not None else None,
+                'relative_humidity': float(r.relative_humidity) if r.relative_humidity is not None else None,
+                'ghi': float(r.ghi) if r.ghi is not None else None,
+                'dni': float(r.dni) if r.dni is not None else None,
+                'dhi': float(r.dhi) if r.dhi is not None else None,
+                'IR(h)': float(r.ir_h) if r.ir_h is not None else None,
+                'wind_speed': float(r.wind_speed) if r.wind_speed is not None else None,
+                'wind_direction': float(r.wind_direction) if r.wind_direction is not None else None,
+                'pressure': int(r.pressure) if r.pressure is not None else None,
+            }
+            for r in weather_records
+        ]
 
-        # Create response
-        response = PvgisTmyResponse(
+        metadata_dict = {
+            'inputs': {
+                'latitude': lat_rounded,
+                'longitude': lon_rounded,
+                'radiation_database': 'PVGIS-SARAH2',
+                'meteo_database': 'ERA5',
+                'year_min': coerce_year,
+                'year_max': coerce_year,
+            },
+            'outputs': {
+                'tmy_hourly': {
+                    'variables': {
+                        'temp_air': 'Air temperature (°C)',
+                        'relative_humidity': 'Relative humidity (%)',
+                        'ghi': 'Global horizontal irradiance (W/m²)',
+                        'dni': 'Direct normal irradiance (W/m²)',
+                        'dhi': 'Diffuse horizontal irradiance (W/m²)',
+                        'IR(h)': 'Infrared radiation from sky (W/m²)',
+                        'wind_speed': 'Wind speed (m/s)',
+                        'wind_direction': 'Wind direction (°)',
+                        'pressure': 'Air pressure (Pa)',
+                    }
+                }
+            },
+            'months_selected': list(range(1, 13)),
+        }
+
+        return PvgisTmyResponse(
             data={"records": data_records},
             metadata=metadata_dict,
             latitude=lat_rounded,
             longitude=lon_rounded,
             coerce_year=coerce_year,
-            generated_at=datetime.datetime.now()
+            generated_at=dt_mod.datetime.now(),
         )
-
-        return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating PVGIS TMY data: {str(e)}")
 
+
+# ---------------------------------------------------------------------------
+# Weather temperature clustering endpoints
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/weather-temperature-clusters/",
+    response_model=WeatherClusteringResponse,
+    summary="Compute K-means clustering on daily average temperature",
+    description=(
+        "Compute K-means clustering on **daily average** `temp_air` from "
+        "`weather_measurements` for the given lat/lon.\n\n"
+        "Only measurements whose time-of-day falls within "
+        "`[start_time, end_time)` are used. Defaults: k=8, start_time=05:00, "
+        "end_time=24:00 (end-of-day inclusive). '24:00' is accepted.\n\n"
+        "The result is persisted in `weather_temperature_clusters` (replacing "
+        "any previous clustering for the same configuration)."
+    ),
+)
+async def create_weather_temperature_clusters(
+    request: WeatherClusteringRequest,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    from decimal import Decimal
+    from app.services.weather import _parse_time_str
+
+    try:
+        _parse_time_str(request.start_time)
+        _parse_time_str(request.end_time)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    lat_rounded = round(float(request.latitude), 3)
+    lon_rounded = round(float(request.longitude), 3)
+    lat_dec = Decimal(str(lat_rounded))
+    lon_dec = Decimal(str(lon_rounded))
+
+    records = await fetch_weather_records(db, lat_dec, lon_dec)
+    if not records:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No weather measurements found for lat={lat_rounded}, lon={lon_rounded}. "
+                   "Download TMY data first using GET /pvgis-tmy/?download=true.",
+        )
+
+    daily_avgs = compute_daily_avg_temps(records, request.start_time, request.end_time)
+    n_days = len(daily_avgs)
+    if n_days < request.k:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough daily data points ({n_days}) for k={request.k} clusters. "
+                   f"Need at least k={request.k} days with valid temp_air in the time window.",
+        )
+
+    clusters = run_kmeans_clustering(daily_avgs, request.k)
+
+    await save_clustering(db, lat_dec, lon_dec, request.k, request.start_time, request.end_time, clusters)
+
+    return WeatherClusteringResponse(
+        latitude=lat_rounded,
+        longitude=lon_rounded,
+        k=request.k,
+        start_time=request.start_time,
+        end_time=request.end_time,
+        n_days_used=n_days,
+        clusters=[ClusterItem(**c) for c in clusters],
+    )
+
+
+@router.get(
+    "/weather-temperature-clusters/",
+    response_model=WeatherClusteringResponse,
+    summary="Retrieve saved temperature clustering",
+    description=(
+        "Return previously computed K-means clustering from "
+        "`weather_temperature_clusters` for the exact configuration "
+        "(lat, lon, k, start_time, end_time). Returns 404 if no saved "
+        "clustering matches."
+    ),
+)
+async def get_weather_temperature_clusters(
+    latitude: float,
+    longitude: float,
+    k: int = Query(8, ge=1, description="Number of clusters"),
+    start_time: str = Query("05:00", description="Daily window start (HH:MM)"),
+    end_time: str = Query("24:00", description="Daily window end (HH:MM). '24:00' accepted."),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    from decimal import Decimal
+
+    lat_rounded = round(float(latitude), 3)
+    lon_rounded = round(float(longitude), 3)
+    lat_dec = Decimal(str(lat_rounded))
+    lon_dec = Decimal(str(lon_rounded))
+
+    clusters = await get_saved_clustering(db, lat_dec, lon_dec, k, start_time, end_time)
+    if clusters is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No saved clustering found for lat={lat_rounded}, lon={lon_rounded}, "
+                   f"k={k}, start_time={start_time}, end_time={end_time}. "
+                   "Run POST /weather-temperature-clusters/ first.",
+        )
+
+    return WeatherClusteringResponse(
+        latitude=lat_rounded,
+        longitude=lon_rounded,
+        k=k,
+        start_time=start_time,
+        end_time=end_time,
+        clusters=[ClusterItem(**c) for c in clusters],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trip statistics endpoint
+# ---------------------------------------------------------------------------
 
 @router.post("/trip-statistics/", response_model=CombinedTripStatisticsResponse)
 async def compute_trip_statistics(

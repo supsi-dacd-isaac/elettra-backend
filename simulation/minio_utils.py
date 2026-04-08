@@ -21,7 +21,7 @@ def get_minio_client() -> Minio:
     Returns:
         Minio: Configured MinIO client
     """
-    endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9002")
+    endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
     access_key = os.getenv("AWS_ACCESS_KEY_ID", "minio_user")
     secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "minio_password")
     secure = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes", "on")
