@@ -9,6 +9,10 @@ from app.schemas.trip_status import TripStatus
 class PredictionRequest(BaseModel):
     shift_ids: list[UUID]
     bus_model_id: UUID
+    yearly_analysis_id: Optional[UUID] = Field(
+        default=None,
+        description="Optional reference to a yearly analysis record.",
+    )
     model_name: str = Field(examples=["greybox_qrf_production_crps_optimized_3"])
     external_temp_celsius: float = Field(examples=[15.0])
     occupancy_percent: float = Field(default=50.0, examples=[50.0])

@@ -305,6 +305,7 @@ CREATE TABLE public.prediction_runs (
     user_id uuid NOT NULL,
     shift_id uuid NOT NULL,
     bus_model_id uuid NOT NULL,
+    yearly_analysis_id uuid,
     model_name text NOT NULL,
     external_temp_celsius numeric NOT NULL,
     auxiliary_heating_type text DEFAULT 'default' NOT NULL,
@@ -441,6 +442,69 @@ CREATE TABLE public.weather_measurements (
 
 
 ALTER TABLE public.weather_measurements OWNER TO admin;
+
+--
+-- Name: yearly_analysis; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.yearly_analysis (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    optimization_run_id uuid,
+    name text NOT NULL,
+    features jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.yearly_analysis OWNER TO admin;
+
+--
+-- Name: buses_manufacturers; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.buses_manufacturers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL
+);
+
+
+ALTER TABLE public.buses_manufacturers OWNER TO admin;
+
+--
+-- Name: buses_models_refs; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.buses_models_refs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    buses_manufacturer_id uuid NOT NULL
+);
+
+
+ALTER TABLE public.buses_models_refs OWNER TO admin;
+
+--
+-- Name: buses_lca_data; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.buses_lca_data (
+    id uuid NOT NULL,
+    source_id integer NOT NULL,
+    name text NOT NULL,
+    description text,
+    traffic_characteristics text,
+    functional_unit character varying NOT NULL,
+    size character varying,
+    year integer NOT NULL,
+    vehicle_subtype character varying,
+    powertrain character varying,
+    geography character varying,
+    passenger_capacity numeric,
+    active boolean NOT NULL
+);
+
+
+ALTER TABLE public.buses_lca_data OWNER TO admin;
 
 --
 -- Name: buses bus_name_user_id_unique; Type: CONSTRAINT; Schema: public; Owner: admin
@@ -651,6 +715,38 @@ ALTER TABLE ONLY public.weather_measurements
 
 
 --
+-- Name: yearly_analysis yearly_analysis_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.yearly_analysis
+    ADD CONSTRAINT yearly_analysis_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: buses_manufacturers buses_manufacturers_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.buses_manufacturers
+    ADD CONSTRAINT buses_manufacturers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: buses_models_refs buses_models_refs_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.buses_models_refs
+    ADD CONSTRAINT buses_models_refs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: buses_lca_data buses_lca_data_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.buses_lca_data
+    ADD CONSTRAINT buses_lca_data_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: depots_agency_id_idx; Type: INDEX; Schema: public; Owner: admin
 --
 
@@ -749,6 +845,13 @@ CREATE INDEX prediction_runs_bus_model_id_idx ON public.prediction_runs USING bt
 
 
 --
+-- Name: prediction_runs_yearly_analysis_id_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX prediction_runs_yearly_analysis_id_idx ON public.prediction_runs USING btree (yearly_analysis_id);
+
+
+--
 -- Name: optimization_runs_user_id_idx; Type: INDEX; Schema: public; Owner: admin
 --
 
@@ -774,6 +877,13 @@ CREATE INDEX trip_predictions_run_id_idx ON public.trip_predictions USING btree 
 --
 
 CREATE INDEX variants_route_id_idx ON public.variants USING btree (route_id);
+
+
+--
+-- Name: yearly_analysis_optimization_run_id_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX yearly_analysis_optimization_run_id_idx ON public.yearly_analysis USING btree (optimization_run_id);
 
 
 --
@@ -905,6 +1015,14 @@ ALTER TABLE ONLY public.prediction_runs
 
 
 --
+-- Name: prediction_runs prediction_runs_yearly_analysis_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.prediction_runs
+    ADD CONSTRAINT prediction_runs_yearly_analysis_id_fkey FOREIGN KEY (yearly_analysis_id) REFERENCES public.yearly_analysis(id) ON DELETE SET NULL;
+
+
+--
 -- Name: optimization_runs optimization_runs_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
 --
 
@@ -950,6 +1068,22 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.variants
     ADD CONSTRAINT variants_gtfs_routes_id_fkey FOREIGN KEY (route_id) REFERENCES public.gtfs_routes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: yearly_analysis yearly_analysis_optimization_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.yearly_analysis
+    ADD CONSTRAINT yearly_analysis_optimization_run_id_fkey FOREIGN KEY (optimization_run_id) REFERENCES public.optimization_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: buses_models_refs buses_models_refs_manufacturer_fk; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.buses_models_refs
+    ADD CONSTRAINT buses_models_refs_manufacturer_fk FOREIGN KEY (buses_manufacturer_id) REFERENCES public.buses_manufacturers(id);
 
 
 --

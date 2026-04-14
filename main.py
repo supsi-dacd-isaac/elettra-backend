@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import textwrap
-from app.routers import agency, auth, economic, environmental, gtfs, simulation, user as user_router
+from app.routers import agency, auth, economic, environmental, gtfs, simulation, user as user_router, yearly_analysis
 from app.core.config import get_cached_settings
 from app.schemas.health import HealthCheckResponse, ServiceStatus
 from app.database import get_async_session
@@ -80,6 +80,7 @@ app = FastAPI(
         ### Simulation & Analysis
         - Simulation Runs: Electrification simulation execution
         - Results Analysis: Simulation outcome analysis
+        - Yearly Analysis: Annual analysis records, optionally linked to optimization runs
         - Weather Integration: PVGIS TMY weather data
         - Elevation Profiles: SwissTopo elevation data integration
         
@@ -137,6 +138,7 @@ app.include_router(gtfs.router, prefix="/api/v1/gtfs", tags=["GTFS"])
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])
 app.include_router(environmental.router, prefix="/api/v1/environmental", tags=["Environmental Calculations"])
 app.include_router(economic.router, prefix="/api/v1/economic", tags=["Economic Evaluations"])
+app.include_router(yearly_analysis.router, prefix="/api/v1/yearly-analysis", tags=["Yearly Analysis"])
 
 # ----------------------------------------------------------------------------
 # Global error handlers

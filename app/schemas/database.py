@@ -100,6 +100,7 @@ class PredictionRunsCreate(BaseModel):
     user_id: UUID
     shift_id: UUID
     bus_model_id: UUID
+    yearly_analysis_id: Optional[UUID] = None
     model_name: str
     external_temp_celsius: Decimal = Field(examples=[15.0])
     auxiliary_heating_type: str = "default"
@@ -114,6 +115,7 @@ class PredictionRunsRead(BaseModel):
     user_id: UUID
     shift_id: UUID
     bus_model_id: UUID
+    yearly_analysis_id: Optional[UUID] = None
     model_name: str = Field(examples=["greybox_qrf_production_crps_optimized_3"])
     external_temp_celsius: Decimal = Field(examples=[15.0])
     auxiliary_heating_type: str = Field(examples=["default"])
@@ -196,6 +198,24 @@ class OptimizationRunsRead(BaseModel):
     }])
     created_at: datetime
     completed_at: Optional[datetime]
+    model_config = ConfigDict(from_attributes=True)
+
+class YearlyAnalysisCreate(BaseModel):
+    optimization_run_id: Optional[UUID] = None
+    name: str
+    features: dict = {}
+
+class YearlyAnalysisUpdate(BaseModel):
+    optimization_run_id: Optional[UUID] = None
+    name: Optional[str] = None
+    features: Optional[dict] = None
+
+class YearlyAnalysisRead(BaseModel):
+    id: UUID
+    optimization_run_id: Optional[UUID]
+    name: str
+    features: dict
+    created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
 class GtfsTripsCreate(BaseModel):

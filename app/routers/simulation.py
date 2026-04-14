@@ -22,7 +22,7 @@ from app.models import (
     Users, WeatherMeasurements,
     GtfsTrips, GtfsStops, GtfsStopsTimes,
     PredictionRuns, TripPredictions, Shifts, BusesModels,
-    OptimizationRuns,
+    OptimizationRuns, YearlyAnalysis,
 )
 from app.core.auth import get_current_user
 from app.services.weather import (
@@ -58,6 +58,11 @@ async def create_prediction_runs(
     if bus_model is None:
         raise HTTPException(status_code=404, detail="Bus model not found")
 
+    if request.yearly_analysis_id is not None:
+        ya = await db.get(YearlyAnalysis, request.yearly_analysis_id)
+        if ya is None:
+            raise HTTPException(status_code=404, detail="Yearly analysis not found")
+
     run_ids: list[UUID] = []
     for shift_id in request.shift_ids:
         shift = await db.get(Shifts, shift_id)
@@ -68,6 +73,7 @@ async def create_prediction_runs(
             user_id=current_user.id,
             shift_id=shift_id,
             bus_model_id=request.bus_model_id,
+            yearly_analysis_id=request.yearly_analysis_id,
             model_name=request.model_name,
             external_temp_celsius=request.external_temp_celsius,
             auxiliary_heating_type=request.auxiliary_heating_type,
@@ -253,8 +259,8 @@ async def generate_pvgis_tmy(
         settings = get_cached_settings()
         coerce_year = settings.pvgis_coerce_year
 
-        lat_rounded = round(float(latitude), 3)
-        lon_rounded = round(float(longitude), 3)
+        lat_rounded = round(float(latitude), 2)
+        lon_rounded = round(float(longitude), 2)
         lat_dec = Decimal(str(lat_rounded))
         lon_dec = Decimal(str(lon_rounded))
 
@@ -330,6 +336,7 @@ async def generate_pvgis_tmy(
         weather_records = await fetch_weather_records(db, lat_dec, lon_dec)
         data_records = [
             {
+                'time_utc': r.time_utc.isoformat() if r.time_utc is not None else None,
                 'temp_air': float(r.temp_air) if r.temp_air is not None else None,
                 'relative_humidity': float(r.relative_humidity) if r.relative_humidity is not None else None,
                 'ghi': float(r.ghi) if r.ghi is not None else None,
@@ -355,6 +362,7 @@ async def generate_pvgis_tmy(
             'outputs': {
                 'tmy_hourly': {
                     'variables': {
+                        'time_utc': 'Timestamp in UTC (ISO 8601)',
                         'temp_air': 'Air temperature (°C)',
                         'relative_humidity': 'Relative humidity (%)',
                         'ghi': 'Global horizontal irradiance (W/m²)',
@@ -415,8 +423,8 @@ async def create_weather_temperature_clusters(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    lat_rounded = round(float(request.latitude), 3)
-    lon_rounded = round(float(request.longitude), 3)
+    lat_rounded = round(float(request.latitude), 2)
+    lon_rounded = round(float(request.longitude), 2)
     lat_dec = Decimal(str(lat_rounded))
     lon_dec = Decimal(str(lon_rounded))
 
@@ -474,8 +482,8 @@ async def get_weather_temperature_clusters(
 ):
     from decimal import Decimal
 
-    lat_rounded = round(float(latitude), 3)
-    lon_rounded = round(float(longitude), 3)
+    lat_rounded = round(float(latitude), 2)
+    lon_rounded = round(float(longitude), 2)
     lat_dec = Decimal(str(lat_rounded))
     lon_dec = Decimal(str(lon_rounded))
 
