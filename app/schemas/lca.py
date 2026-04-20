@@ -299,3 +299,88 @@ class YearlyImpactResponse(BaseModel):
             "Computed as impact_per_pkm × yearly_distance_km × passengers."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Yearly-analysis emissions (mixed e-bus vs full-diesel comparator)
+# ---------------------------------------------------------------------------
+
+class YearlyEmissionsIndicator(BaseModel):
+    """Breakdown of one indicator for the mixed e-bus branch."""
+
+    unit: str
+    electric: float = Field(
+        description="Contribution from battery-side electricity consumption.",
+    )
+    diesel_heating: float = Field(
+        description="Contribution from diesel-heating fuel (zero for default mode).",
+    )
+    total: float
+
+
+class YearlyEmissionsComparatorIndicator(BaseModel):
+    """Single indicator for the full-diesel comparator."""
+
+    unit: str
+    total: float
+
+
+class YearlyEmissionsScenario(BaseModel):
+    """Per-scenario emissions for a yearly analysis."""
+
+    temperature_celsius: float
+    occurrences: int
+    annual_electric_kwh: float
+    annual_diesel_heating_liters: float
+    gwp100a_electric_kg: float = Field(
+        description="CO₂-eq from electricity [kg/year].",
+    )
+    gwp100a_diesel_heating_kg: float = Field(
+        description="CO₂-eq from diesel-heating fuel [kg/year].",
+    )
+    gwp100a_total_kg: float = Field(
+        description="Total CO₂-eq for this scenario [kg/year].",
+    )
+
+
+class YearlyEmissionsAssumptions(BaseModel):
+    """Emission factor assumptions used for a yearly emissions calculation."""
+
+    auxiliary_heating_type: str
+    yearly_electric_kwh: float
+    yearly_diesel_heating_liters: float
+    yearly_diesel_heating_fuel_kwh: float
+    yearly_distance_km: float
+    electricity_gwp100a_g_per_kwh: float
+    diesel_heating_gwp100a_g_per_liter: float
+    diesel_bus_gwp100a_g_per_liter: float
+    diesel_comparator_consumption_l_per_km: float
+
+
+class YearlyEmissionsResponse(BaseModel):
+    """Yearly emissions comparison: mixed e-bus vs full-diesel comparator.
+
+    For ``auxiliary_heating_type = "diesel"`` the ``ebus`` indicators
+    include both an electric contribution (from battery-side kWh) and a
+    diesel-heating contribution (from heater fuel liters).  For
+    ``"default"`` the diesel-heating contribution is zero.
+
+    The ``diesel_comparator`` uses legacy distance-based diesel-bus
+    factors and is always separate from the mixed e-bus branch.
+    """
+
+    yearly_analysis_id: UUID
+    auxiliary_heating_type: str
+    annual_km: float
+
+    ebus: Dict[str, YearlyEmissionsIndicator]
+    diesel_comparator: Dict[str, YearlyEmissionsComparatorIndicator]
+
+    annual_saving: Dict[str, float] = Field(
+        description=(
+            "Per-indicator saving: diesel_comparator.total − ebus.total. "
+            "Positive means the e-bus emits less."
+        ),
+    )
+    assumptions: YearlyEmissionsAssumptions
+    scenarios: List[YearlyEmissionsScenario]

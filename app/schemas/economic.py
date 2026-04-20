@@ -70,6 +70,15 @@ class EconomicDefaultsResponse(BaseModel):
     diesel_consumption_per_m: float = Field(..., description="Diesel consumption slope [l/km per m].")
     diesel_consumption_const: float = Field(..., description="Diesel consumption intercept [l/km].")
 
+    # Diesel-heating maintenance surcharge (fraction of electric maintenance OPEX)
+    diesel_heating_maintenance_factor: float = Field(
+        ...,
+        description=(
+            "Fraction of electric maintenance OPEX applied as diesel-heating "
+            "maintenance surcharge (e.g. 0.10 = 10 %%)."
+        ),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Investment cost responses
@@ -271,3 +280,75 @@ class FullComparisonResponse(BaseModel):
             "Reflects OPEX only when CAPEX is excluded."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Yearly-analysis cost breakdown (mixed e-bus vs full-diesel comparator)
+# ---------------------------------------------------------------------------
+
+class YearlyCostScenario(BaseModel):
+    """Per-scenario cost breakdown within a yearly analysis."""
+
+    temperature_celsius: float
+    occurrences: int
+    daily_electric_kwh: float
+    daily_distance_km: float
+    daily_diesel_heating_liters: float
+    annual_electric_kwh: float
+    annual_distance_km: float
+    annual_diesel_heating_liters: float
+    annual_electric_energy_cost_chf: float
+    annual_electric_maint_cost_chf: float
+    annual_diesel_heating_fuel_cost_chf: float
+    annual_diesel_heating_maint_cost_chf: float
+
+
+class YearlyCostAssumptions(BaseModel):
+    """Economic assumptions used for a yearly cost calculation."""
+
+    energy_price_per_kwh: float
+    fuel_cost_per_l: float
+    interest_rate: float
+    bus_length_m: float
+    yearly_electric_kwh: float
+    yearly_distance_km: float
+    yearly_diesel_heating_liters: float
+    yearly_diesel_heating_fuel_kwh: float
+    diesel_heating_maintenance_factor: float = Field(
+        description=(
+            "Fraction of electric maintenance OPEX applied as diesel-heating "
+            "maintenance surcharge (e.g. 0.10 = 10 %%)."
+        ),
+    )
+    electric_maint_cost_per_km_chf: float
+    diesel_comparator_maint_cost_per_km_chf: float
+    diesel_comparator_consumption_l_per_km: float
+
+
+class YearlyCostResponse(BaseModel):
+    """Yearly cost comparison: mixed e-bus vs full-diesel comparator.
+
+    The ``ebus`` branch represents the real vehicle under analysis.
+    For ``auxiliary_heating_type = "diesel"`` it includes both battery-side
+    electric costs and diesel-heating costs.  For ``"default"`` the diesel-
+    heating items are zero.
+
+    The ``diesel_comparator`` branch is a legacy full-diesel-bus reference
+    and is always computed from distance-based regression formulas.
+    """
+
+    yearly_analysis_id: UUID
+    auxiliary_heating_type: str
+    annual_km: float
+
+    ebus: CostSummary
+    diesel_comparator: CostSummary
+
+    annual_saving_chf: float = Field(
+        description=(
+            "diesel_comparator.total − ebus.total [CHF/year]. "
+            "Positive means the e-bus is cheaper."
+        ),
+    )
+    assumptions: YearlyCostAssumptions
+    scenarios: list[YearlyCostScenario]

@@ -157,3 +157,48 @@ class ShiftInfoResponse(BaseModel):
     days_of_week: list[str]  # e.g., ["monday", "tuesday", ...]
     trips: list[TripInfoBrief]
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Yearly analysis energy summary
+# ---------------------------------------------------------------------------
+
+class ScenarioDieselHeating(BaseModel):
+    """Diesel-heating quantities for a single temperature scenario."""
+    diesel_fuel_kwh: float
+    diesel_liters: float
+    diesel_heater_efficiency: float
+
+
+class ScenarioEnergySummary(BaseModel):
+    """Per-scenario energy data (one prediction run = one scenario)."""
+    prediction_run_id: UUID
+    temperature_celsius: float
+    occurrences: int
+    auxiliary_heating_type: str
+    daily_electric_kwh: float
+    daily_distance_km: float
+    daily_auxiliary_kwh: float
+    daily_drivetrain_kwh: float
+    diesel_heating: Optional[ScenarioDieselHeating] = None
+    annual_electric_kwh: float
+    annual_distance_km: float
+    annual_auxiliary_kwh: float
+    annual_drivetrain_kwh: float
+    annual_diesel_fuel_kwh: float
+    annual_diesel_liters: float
+
+
+class YearlyDieselHeatingTotals(BaseModel):
+    """Aggregated yearly diesel-heating quantities across all scenarios."""
+    diesel_fuel_kwh: float
+    diesel_liters: float
+
+
+class YearlyEnergySummaryResponse(BaseModel):
+    """Full yearly energy summary, with per-scenario breakdown and totals."""
+    yearly_analysis_id: UUID
+    auxiliary_heating_type: str
+    scenarios: list[ScenarioEnergySummary]
+    yearly_totals: dict
+    yearly_diesel_heating: Optional[YearlyDieselHeatingTotals] = None

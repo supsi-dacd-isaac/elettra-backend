@@ -28,5 +28,6 @@
   "diesel_maint_cost_per_m": 0.02,
   "diesel_maint_cost_const": 0.14,
   "diesel_consumption_per_m": 0.02,
-  "diesel_consumption_const": 0.1918
+  "diesel_consumption_const": 0.1918,
+  "diesel_heating_maintenance_factor": 0.10
 }

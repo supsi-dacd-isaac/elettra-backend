@@ -5,6 +5,11 @@ from pydantic import BaseModel, Field, model_validator
 from typing import Literal, Optional
 from app.schemas.trip_status import TripStatus
 
+# Centralised allowed values for auxiliary heating mode.
+# "default" = standard ebus auxiliary (heat-pump based, fully electric)
+# "diesel"  = diesel-heating ebus-dh (heating shifted to diesel, cooling stays electric)
+AuxiliaryHeatingType = Literal["default", "diesel"]
+
 
 class PredictionRequest(BaseModel):
     shift_ids: list[UUID]
@@ -16,7 +21,15 @@ class PredictionRequest(BaseModel):
     model_name: str = Field(examples=["greybox_qrf_production_crps_optimized_3"])
     external_temp_celsius: float = Field(examples=[15.0])
     occupancy_percent: float = Field(default=50.0, examples=[50.0])
-    auxiliary_heating_type: str = Field(default="default", examples=["default"])
+    auxiliary_heating_type: AuxiliaryHeatingType = Field(
+        default="default",
+        description=(
+            "Auxiliary heating mode. 'default' keeps full-electric auxiliary "
+            "(heat pump). 'diesel' shifts heating to a diesel heater while "
+            "cooling remains electric."
+        ),
+        examples=["default", "diesel"],
+    )
     quantiles: list[float] = Field(default_factory=lambda: [0.05, 0.25, 0.5, 0.75, 0.95])
     num_battery_packs: Optional[int] = Field(default=None, examples=[12])
 
@@ -72,7 +85,15 @@ class PredictionParams(BaseModel):
     model_name: str = Field(default="greybox_qrf_production_crps_optimized_3")
     external_temp_celsius: float = Field(examples=[15.0])
     occupancy_percent: float = Field(default=50.0, examples=[50.0])
-    auxiliary_heating_type: str = Field(default="default", examples=["default"])
+    auxiliary_heating_type: AuxiliaryHeatingType = Field(
+        default="default",
+        description=(
+            "Auxiliary heating mode. 'default' keeps full-electric auxiliary "
+            "(heat pump). 'diesel' shifts heating to a diesel heater while "
+            "cooling remains electric."
+        ),
+        examples=["default", "diesel"],
+    )
     quantiles: list[float] = Field(default_factory=lambda: [0.05, 0.5, 0.95])
     num_battery_packs: Optional[int] = Field(default=None, examples=[12])
 
@@ -86,6 +107,7 @@ _OPTIMIZATION_EXAMPLES = {
         "summary": "charging_only -- optimize charger installation, battery fixed",
         "value": {
             "mode": "charging_only",
+            "auxiliary_heating_type": "default",
             "shift_ids": [_EXAMPLE_SHIFT_ID],
             "prediction_run_ids": [_EXAMPLE_PRED_ID],
             "charging_stations": [
@@ -94,6 +116,30 @@ _OPTIMIZATION_EXAMPLES = {
                     "slot_costs_chf": [350000, 150000],
                     "max_total_power_kw": 450,
                     "max_power_per_slot_kw": 450,
+                }
+            ],
+            "min_soc": 0.4,
+            "max_soc": 0.9,
+            "solver_name": "highs",
+            "max_solver_time_seconds": 300,
+        },
+    },
+    "battery_only_diesel": {
+        "summary": "battery_only with diesel heating -- heating shifted to diesel",
+        "value": {
+            "mode": "battery_only",
+            "auxiliary_heating_type": "diesel",
+            "shift_ids": [_EXAMPLE_SHIFT_ID],
+            "prediction_params": {
+                "external_temp_celsius": -5.0,
+                "auxiliary_heating_type": "diesel",
+            },
+            "charging_stations": [
+                {
+                    "stop_id": _EXAMPLE_STOP_ID,
+                    "num_slots": 2,
+                    "max_total_power_kw": 450,
+                    "max_power_per_slot_kw": 150,
                 }
             ],
             "min_soc": 0.4,
@@ -171,6 +217,17 @@ class OptimizationRequest(BaseModel):
     model_config = {"json_schema_extra": {"examples": list(_OPTIMIZATION_EXAMPLES.values())}}
 
     mode: Literal["battery_only", "charging_only", "joint"]
+    auxiliary_heating_type: AuxiliaryHeatingType = Field(
+        default="default",
+        description=(
+            "Auxiliary heating mode for this optimization. 'default' keeps "
+            "full-electric auxiliary (heat pump). 'diesel' shifts heating to "
+            "a diesel heater while cooling remains electric. When "
+            "prediction_params is used without an explicit heating type, "
+            "this top-level value is propagated."
+        ),
+        examples=["default", "diesel"],
+    )
     shift_ids: list[UUID]
     bus_model_id: Optional[UUID] = Field(
         default=None,
@@ -268,6 +325,9 @@ class OptimizationRequest(BaseModel):
             raise ValueError(
                 "Either prediction_run_ids or prediction_params must be provided"
             )
+        if self.prediction_params is not None:
+            if self.prediction_params.auxiliary_heating_type == "default":
+                self.prediction_params.auxiliary_heating_type = self.auxiliary_heating_type
         return self
 
 

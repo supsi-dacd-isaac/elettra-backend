@@ -103,7 +103,11 @@ class PredictionRunsCreate(BaseModel):
     yearly_analysis_id: Optional[UUID] = None
     model_name: str
     external_temp_celsius: Decimal = Field(examples=[15.0])
-    auxiliary_heating_type: str = "default"
+    auxiliary_heating_type: str = Field(
+        default="default",
+        description="Auxiliary heating mode: 'default' (full electric) or 'diesel' (diesel heating).",
+        examples=["default", "diesel"],
+    )
     occupancy_percent: Decimal = Field(default=Decimal("50"), examples=[50.0])
     contextual_parameters: Optional[dict] = None
     summary: Optional[dict] = None
@@ -118,7 +122,7 @@ class PredictionRunsRead(BaseModel):
     yearly_analysis_id: Optional[UUID] = None
     model_name: str = Field(examples=["greybox_qrf_production_crps_optimized_3"])
     external_temp_celsius: Decimal = Field(examples=[15.0])
-    auxiliary_heating_type: str = Field(examples=["default"])
+    auxiliary_heating_type: str = Field(examples=["default", "diesel"])
     occupancy_percent: Decimal = Field(examples=[50.0])
     contextual_parameters: Optional[dict] = Field(default=None, examples=[{
         "total_weight_kg": 22530.0,

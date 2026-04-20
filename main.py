@@ -80,7 +80,11 @@ app = FastAPI(
         ### Simulation & Analysis
         - Simulation Runs: Electrification simulation execution
         - Results Analysis: Simulation outcome analysis
-        - Yearly Analysis: Annual analysis records, optionally linked to optimization runs
+        - Yearly Analysis: Annual analysis records, optionally linked to optimization runs.
+          Endpoints include ``GET /api/v1/yearly-analysis/{id}/energy-summary`` (aggregate
+          electric and diesel-heating energy from prediction runs), ``GET …/costs`` (mixed
+          e-bus vs full-diesel comparator costs), and ``GET …/emissions`` (mixed e-bus vs
+          full-diesel comparator emissions using ``config/emission_defaults.json`` factors).
         - Weather Integration: PVGIS TMY weather data
         - Elevation Profiles: SwissTopo elevation data integration
         
