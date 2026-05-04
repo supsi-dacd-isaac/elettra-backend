@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -14,6 +14,10 @@ from app.schemas.responses import (
     DepotCreateRequest, DepotUpdateRequest, DepotReadWithLocation,
     ShiftReadWithStructure, ShiftStructureItem,
     ShiftInfoResponse, RouteInfoBrief, TripInfoBrief,
+    BusesModelsListItemRead, ShiftListItemRead,
+)
+from app.schemas.pagination import (
+    PaginatedResponse, PaginationParams, build_paginated_response,
 )
 from app.schemas.requests import ShiftCreateRequest, ShiftUpdateRequest
 from app.models import (
@@ -60,11 +64,43 @@ async def read_bus_models_refs_by_manufacturer(
     return result.scalars().all()
 
 
-@router.get("/bus-models/", response_model=List[BusesModelsRead])
-async def read_bus_models(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    result = await db.execute(select(BusesModels).offset(skip).limit(limit))
-    bus_models = result.scalars().all()
-    return bus_models
+@router.get(
+    "/bus-models/",
+    response_model=PaginatedResponse[BusesModelsListItemRead],
+    summary="List bus models (paginated)",
+    description=(
+        "Returns a paginated, deterministically ordered list of bus models "
+        "(name ASC, id ASC). Use the detail endpoint to fetch the full "
+        "specs payload."
+    ),
+)
+async def read_bus_models(
+    pagination: PaginationParams = Depends(),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    base_query = select(BusesModels)
+
+    total = await db.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    )
+
+    items_result = await db.execute(
+        base_query
+        .order_by(BusesModels.name.asc(), BusesModels.id.asc())
+        .offset(pagination.skip)
+        .limit(pagination.limit)
+    )
+    items = [
+        BusesModelsListItemRead.model_validate(m)
+        for m in items_result.scalars().all()
+    ]
+    return build_paginated_response(
+        items=items,
+        total=int(total or 0),
+        skip=pagination.skip,
+        limit=pagination.limit,
+    )
 
 
 @router.get("/bus-models/{model_id}", response_model=BusesModelsRead)
@@ -391,29 +427,77 @@ async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(g
     return ShiftReadWithStructure(id=db_shift.id, name=db_shift.name, bus_id=db_shift.bus_id, structure=structure)
 
 
-@router.get("/shifts/", response_model=List[ShiftReadWithStructure])
-async def list_shifts(skip: int = 0, limit: int = 100, bus_id: Optional[UUID] = None, user_id: Optional[UUID] = None, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Always filter shifts by the current authenticated user's buses
-    # The user_id query parameter is ignored for security - we use current_user.id instead
-    q = select(Shifts).join(Buses).where(Buses.user_id == current_user.id)
+@router.get(
+    "/shifts/",
+    response_model=PaginatedResponse[ShiftListItemRead],
+    summary="List shifts (paginated)",
+    description=(
+        "Returns a paginated, deterministically ordered list of shifts "
+        "(name ASC, id ASC) owned by the current user. The full structure "
+        "payload is intentionally omitted; use ``GET /shifts/{id}`` to load "
+        "it. Each row carries a ``trip_count`` summary computed at the "
+        "database level."
+    ),
+)
+async def list_shifts(
+    pagination: PaginationParams = Depends(),
+    bus_id: Optional[UUID] = None,
+    user_id: Optional[UUID] = None,  # noqa: ARG001 — kept for backwards compatibility, ignored by design
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    # Always scope to the current authenticated user's buses. The user_id
+    # query parameter is intentionally ignored for security reasons.
+    base_query = (
+        select(Shifts)
+        .join(Buses)
+        .where(Buses.user_id == current_user.id)
+    )
     if bus_id is not None:
-        q = q.where(Shifts.bus_id == bus_id)
-    q = q.offset(skip).limit(limit)
-    shifts = (await db.execute(q)).scalars().all()
+        base_query = base_query.where(Shifts.bus_id == bus_id)
 
-    # Batch fetch structures
-    shift_ids = [s.id for s in shifts]
-    structures_by_shift: dict[UUID, list[ShiftsStructures]] = {sid: [] for sid in shift_ids}
+    total = await db.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    )
+
+    rows = (
+        await db.execute(
+            base_query
+            .order_by(Shifts.name.asc(), Shifts.id.asc())
+            .offset(pagination.skip)
+            .limit(pagination.limit)
+        )
+    ).scalars().all()
+
+    shift_ids = [s.id for s in rows]
+    trip_counts: dict[UUID, int] = {sid: 0 for sid in shift_ids}
     if shift_ids:
-        rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id.in_(shift_ids)).order_by(ShiftsStructures.shift_id, ShiftsStructures.sequence_number))).scalars().all()
-        for r in rows:
-            structures_by_shift[r.shift_id].append(r)
+        count_rows = await db.execute(
+            select(
+                ShiftsStructures.shift_id,
+                func.count(ShiftsStructures.id),
+            )
+            .where(ShiftsStructures.shift_id.in_(shift_ids))
+            .group_by(ShiftsStructures.shift_id)
+        )
+        for sid, c in count_rows.all():
+            trip_counts[sid] = int(c)
 
-    results: List[ShiftReadWithStructure] = []
-    for s in shifts:
-        struct_items = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in structures_by_shift.get(s.id, [])]
-        results.append(ShiftReadWithStructure(id=s.id, name=s.name, bus_id=s.bus_id, structure=struct_items))
-    return results
+    items = [
+        ShiftListItemRead(
+            id=s.id,
+            name=s.name,
+            bus_id=s.bus_id,
+            trip_count=trip_counts.get(s.id, 0),
+        )
+        for s in rows
+    ]
+    return build_paginated_response(
+        items=items,
+        total=int(total or 0),
+        skip=pagination.skip,
+        limit=pagination.limit,
+    )
 
 
 async def _get_shift_if_owned(shift_id: UUID, user_id: UUID, db: AsyncSession) -> Shifts:

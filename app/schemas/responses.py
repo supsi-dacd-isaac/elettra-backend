@@ -202,3 +202,82 @@ class YearlyEnergySummaryResponse(BaseModel):
     scenarios: list[ScenarioEnergySummary]
     yearly_totals: dict
     yearly_diesel_heating: Optional[YearlyDieselHeatingTotals] = None
+
+
+# ---------------------------------------------------------------------------
+# Lightweight list-item schemas for paginated list endpoints
+# ---------------------------------------------------------------------------
+
+
+class BusesModelsListItemRead(BaseModel):
+    """Lightweight bus-model row for list pages.
+
+    Detail/edit pages should still use the full ``GET /bus-models/{id}``
+    endpoint to fetch ``specs`` and other heavy fields.
+    """
+    id: UUID
+    name: str
+    user_id: UUID
+    manufacturer: Optional[str] = None
+    description: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GtfsStopsListItemRead(BaseModel):
+    """Lightweight GTFS stop row for list/table/map selectors."""
+    id: UUID
+    stop_id: str
+    stop_code: Optional[str] = None
+    stop_name: Optional[str] = None
+    stop_lat: Optional[float] = None
+    stop_lon: Optional[float] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ShiftListItemRead(BaseModel):
+    """Lightweight shift row for the main list page.
+
+    Includes ``trip_count`` for the UI without forcing the full structure
+    payload. The full shift detail endpoint (``GET /shifts/{id}``) still
+    returns the complete structure.
+    """
+    id: UUID
+    name: str
+    bus_id: Optional[UUID] = None
+    trip_count: int = 0
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OptimizationRunListItemRead(BaseModel):
+    """Lightweight optimization-run row for the list page.
+
+    Excludes the heavy ``input_params`` and ``results`` blobs but exposes a
+    handful of summary fields commonly shown in the list UI
+    (``electrification_feasible``, ``solver_status``, ``objective_value``).
+    Use the detail endpoint to fetch the full payload.
+    """
+    id: UUID
+    user_id: UUID
+    bus_model_id: Optional[UUID] = None
+    name: Optional[str] = None
+    mode: str
+    status: str
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    electrification_feasible: Optional[bool] = None
+    solver_status: Optional[str] = None
+    objective_value: Optional[float] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class YearlyAnalysisListItemRead(BaseModel):
+    """Lightweight yearly-analysis row for the list page.
+
+    The heavy ``features`` blob is intentionally omitted; load it from the
+    detail endpoint when needed.
+    """
+    id: UUID
+    optimization_run_id: Optional[UUID] = None
+    name: str
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)

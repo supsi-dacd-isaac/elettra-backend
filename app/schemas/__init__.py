@@ -4,6 +4,7 @@ from .auth import *
 from .external_apis import *
 from .responses import *
 from .health import *
+from .pagination import *
 
 # Re-export everything for backward compatibility
 __all__ = [
@@ -24,12 +25,15 @@ __all__ = [
     "PredictionRunsCreate", "PredictionRunsRead",
     "TripPredictionsRead",
     "OptimizationRunsRead",
+    "YearlyAnalysisCreate", "YearlyAnalysisUpdate", "YearlyAnalysisRead",
     
     # Auth schemas
     "UserLogin", "Token", "LogoutResponse", "RoleEnum", "UserRegister",
     
     # External API schemas
-    "PvgisTmyRequest", "PvgisTmyResponse", "ElevationProfileResponse",
+    "PvgisTmyRequest", "PvgisTmyResponse", "PvgisTmyMetadataResponse",
+    "WeatherClusteringRequest", "WeatherClusteringResponse", "ClusterItem",
+    "ElevationProfileResponse",
     
     # Custom response schemas
     "PredictionSubmitResponse", "OptimizationSubmitResponse",

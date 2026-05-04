@@ -5,11 +5,19 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.database import get_async_session
 from app.schemas.database import PredictionRunsRead, TripPredictionsRead, OptimizationRunsRead
-from app.schemas.responses import PredictionSubmitResponse, OptimizationSubmitResponse, CombinedTripStatisticsResponse
+from app.schemas.responses import (
+    PredictionSubmitResponse,
+    OptimizationSubmitResponse,
+    CombinedTripStatisticsResponse,
+    OptimizationRunListItemRead,
+)
+from app.schemas.pagination import (
+    PaginatedResponse, PaginationParams, build_paginated_response,
+)
 from app.schemas.requests import TripStatisticsRequest, PredictionRequest, OptimizationRequest, _OPTIMIZATION_EXAMPLES
 from app.schemas.external_apis import (
     PvgisTmyResponse,
@@ -80,6 +88,33 @@ def _serialize_optimization_run(run: OptimizationRuns) -> OptimizationRunsRead:
     """Build an OptimizationRunsRead applying the read-time name fallback."""
     return OptimizationRunsRead.model_validate(run).model_copy(
         update={"name": _resolve_optimization_run_name(run)}
+    )
+
+
+def _serialize_optimization_run_list_item(
+    run: OptimizationRuns,
+) -> OptimizationRunListItemRead:
+    """Build a lightweight list item, extracting summary fields from results.
+
+    The full ``input_params`` and ``results`` blobs are intentionally not
+    returned in the list payload — fetch the detail endpoint to read them.
+    """
+    results = run.results if isinstance(run.results, dict) else {}
+    objective_value = results.get("objective_value")
+    return OptimizationRunListItemRead(
+        id=run.id,
+        user_id=run.user_id,
+        bus_model_id=run.bus_model_id,
+        name=_resolve_optimization_run_name(run),
+        mode=run.mode,
+        status=run.status,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+        electrification_feasible=results.get("electrification_feasible"),
+        solver_status=results.get("solver_status"),
+        objective_value=(
+            float(objective_value) if isinstance(objective_value, (int, float)) else None
+        ),
     )
 
 
@@ -238,18 +273,51 @@ async def create_optimization_run(
     return OptimizationSubmitResponse(optimization_run_id=run_id)
 
 
-@router.get("/optimization-runs/", response_model=List[OptimizationRunsRead])
+@router.get(
+    "/optimization-runs/",
+    response_model=PaginatedResponse[OptimizationRunListItemRead],
+    summary="List optimization runs (paginated)",
+    description=(
+        "Returns a paginated list of optimization runs owned by the current "
+        "user, ordered by ``created_at DESC, id DESC``. The heavy "
+        "``input_params`` and ``results`` blobs are omitted; a few summary "
+        "fields (``electrification_feasible``, ``solver_status``, "
+        "``objective_value``) are extracted from ``results`` for "
+        "convenience. Use the detail endpoint to load the full payload."
+    ),
+)
 async def list_optimization_runs(
+    pagination: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    """List all optimization runs for the current user."""
-    result = await db.execute(
-        select(OptimizationRuns)
-        .where(OptimizationRuns.user_id == current_user.id)
-        .order_by(OptimizationRuns.created_at.desc())
+    base_query = select(OptimizationRuns).where(
+        OptimizationRuns.user_id == current_user.id
     )
-    return [_serialize_optimization_run(r) for r in result.scalars().all()]
+
+    total = await db.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    )
+
+    items_result = await db.execute(
+        base_query
+        .order_by(
+            OptimizationRuns.created_at.desc(),
+            OptimizationRuns.id.desc(),
+        )
+        .offset(pagination.skip)
+        .limit(pagination.limit)
+    )
+    items = [
+        _serialize_optimization_run_list_item(r)
+        for r in items_result.scalars().all()
+    ]
+    return build_paginated_response(
+        items=items,
+        total=int(total or 0),
+        skip=pagination.skip,
+        limit=pagination.limit,
+    )
 
 
 @router.get("/optimization-runs/{run_id}", response_model=OptimizationRunsRead)

@@ -15,6 +15,10 @@ from app.schemas.requests import AuxTripCreate
 from app.schemas.trip_status import TripStatus
 from app.schemas.responses import (
     GtfsStopsReadWithTimes, VariantsReadWithRoute, GtfsRoutesReadWithVariant,
+    GtfsStopsListItemRead,
+)
+from app.schemas.pagination import (
+    PaginatedResponse, PaginationParams, build_paginated_response,
 )
 from app.schemas.external_apis import ElevationProfileResponse
 from app.models import (
@@ -824,11 +828,44 @@ async def create_gtfs_stop(stop: GtfsStopsCreate, db: AsyncSession = Depends(get
     return db_stop
 
 
-@router.get("/gtfs-stops/", response_model=List[GtfsStopsRead])
-async def read_gtfs_stops(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    result = await db.execute(select(GtfsStops).offset(skip).limit(limit))
-    stops = result.scalars().all()
-    return stops
+@router.get(
+    "/gtfs-stops/",
+    response_model=PaginatedResponse[GtfsStopsListItemRead],
+    summary="List GTFS / custom stops (paginated)",
+    description=(
+        "Returns a paginated, deterministically ordered list of stops "
+        "(stop_name ASC, id ASC). Only the fields needed by list/table "
+        "and map selectors are returned; use the detail endpoint to fetch "
+        "the full stop record."
+    ),
+)
+async def read_gtfs_stops(
+    pagination: PaginationParams = Depends(),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    base_query = select(GtfsStops)
+
+    total = await db.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    )
+
+    items_result = await db.execute(
+        base_query
+        .order_by(GtfsStops.stop_name.asc(), GtfsStops.id.asc())
+        .offset(pagination.skip)
+        .limit(pagination.limit)
+    )
+    items = [
+        GtfsStopsListItemRead.model_validate(s)
+        for s in items_result.scalars().all()
+    ]
+    return build_paginated_response(
+        items=items,
+        total=int(total or 0),
+        skip=pagination.skip,
+        limit=pagination.limit,
+    )
 
 
 @router.get("/gtfs-stops/{stop_pk}", response_model=GtfsStopsRead)

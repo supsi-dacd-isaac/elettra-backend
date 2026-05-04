@@ -57,11 +57,23 @@ def cleanup_models(client):
         if not token:
             return
         hdrs = auth_headers(token)
-        r = client.get(f"{API_BASE}/bus-models/", headers=hdrs)
-        if r.status_code == 200:
-            for m in r.json():
+        skip = 0
+        limit = 100
+        while True:
+            r = client.get(
+                f"{API_BASE}/bus-models/?skip={skip}&limit={limit}",
+                headers=hdrs,
+            )
+            if r.status_code != 200:
+                break
+            payload = r.json()
+            items = payload.get("items", []) if isinstance(payload, dict) else []
+            for m in items:
                 if m.get("name", "").startswith("Test Model") or m.get("name", "").startswith("Updated Model"):
                     client.delete(f"{API_BASE}/bus-models/{m['id']}", headers=hdrs)
+            if not (isinstance(payload, dict) and payload.get("has_next")):
+                break
+            skip += limit
     except Exception:
         pass
 
@@ -86,9 +98,25 @@ def test_create_read_update_delete_bus_model(client: TestClient, record):
     model_id = model["id"]
     record("bm_create_description", model.get("description") == "Initial description", f"desc={model.get('description')}")
 
-    # Read list
-    r = client.get(f"{API_BASE}/bus-models/", headers=hdrs)
-    record("bm_list", r.status_code == 200 and any(m["id"] == model_id for m in r.json()), f"status={r.status_code}")
+    # Read list — paginated; walk pages until we find the new model
+    found = False
+    skip = 0
+    limit = 100
+    last_status = None
+    while not found:
+        r = client.get(f"{API_BASE}/bus-models/?skip={skip}&limit={limit}", headers=hdrs)
+        last_status = r.status_code
+        if r.status_code != 200:
+            break
+        payload = r.json()
+        items = payload.get("items", []) if isinstance(payload, dict) else []
+        if any(m["id"] == model_id for m in items):
+            found = True
+            break
+        if not (isinstance(payload, dict) and payload.get("has_next")):
+            break
+        skip += limit
+    record("bm_list", last_status == 200 and found, f"status={last_status} found={found}")
 
     # Read by id
     r = client.get(f"{API_BASE}/bus-models/{model_id}", headers=hdrs)

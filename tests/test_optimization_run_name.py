@@ -317,12 +317,16 @@ def test_list_endpoint_returns_top_level_name(
 ):
     run_id = _insert_legacy_run(current_user_id, "  In List  ", None)
     try:
+        # The list endpoint is paginated and ordered by created_at DESC,
+        # so the brand-new run lands on the first page.
         r = client.get(
-            f"{SIM_BASE}/optimization-runs/",
+            f"{SIM_BASE}/optimization-runs/?skip=0&limit=100",
             headers=_auth_headers(auth_token),
         )
         ok = r.status_code == 200
-        names_for_run = [item.get("name") for item in r.json() if item.get("id") == run_id]
+        body = r.json() if r.status_code == 200 else {}
+        items = body.get("items", []) if isinstance(body, dict) else []
+        names_for_run = [item.get("name") for item in items if item.get("id") == run_id]
         ok = ok and names_for_run == ["In List"]
         record(
             "list_top_level_name",

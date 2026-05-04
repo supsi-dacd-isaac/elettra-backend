@@ -11,10 +11,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.database import get_async_session
 from app.schemas.database import YearlyAnalysisCreate, YearlyAnalysisUpdate, YearlyAnalysisRead
+from app.schemas.pagination import (
+    PaginatedResponse, PaginationParams, build_paginated_response,
+)
 from app.schemas.economic import (
     CapexLineItem,
     CostSummary,
@@ -30,7 +33,10 @@ from app.schemas.lca import (
     YearlyEmissionsResponse,
     YearlyEmissionsScenario,
 )
-from app.schemas.responses import YearlyEnergySummaryResponse
+from app.schemas.responses import (
+    YearlyEnergySummaryResponse,
+    YearlyAnalysisListItemRead,
+)
 from app.models import YearlyAnalysis, OptimizationRuns, PredictionRuns, Users
 from app.core.auth import get_current_user
 
@@ -119,25 +125,53 @@ async def create_yearly_analysis(
     return obj
 
 
-@router.get("/", response_model=List[YearlyAnalysisRead])
+@router.get(
+    "/",
+    response_model=PaginatedResponse[YearlyAnalysisListItemRead],
+    summary="List yearly analyses (paginated)",
+    description=(
+        "Returns a paginated list of yearly analyses owned by the current "
+        "user, ordered by ``created_at DESC, id DESC``. The heavy "
+        "``features`` blob is omitted; use the detail endpoint to load it."
+    ),
+)
 async def list_yearly_analyses(
-    skip: int = 0,
-    limit: int = 100,
+    pagination: PaginationParams = Depends(),
     optimization_run_id: Optional[UUID] = Query(None, description="Filter by optimization run"),
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    """List yearly analyses owned by the current user, with optional filtering by optimization run."""
-    q = (
+    base_query = (
         select(YearlyAnalysis)
         .join(OptimizationRuns, YearlyAnalysis.optimization_run_id == OptimizationRuns.id)
         .where(OptimizationRuns.user_id == current_user.id)
     )
     if optimization_run_id is not None:
-        q = q.where(YearlyAnalysis.optimization_run_id == optimization_run_id)
-    q = q.order_by(YearlyAnalysis.created_at.desc()).offset(skip).limit(limit)
-    result = await db.execute(q)
-    return result.scalars().all()
+        base_query = base_query.where(YearlyAnalysis.optimization_run_id == optimization_run_id)
+
+    total = await db.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    )
+
+    items_result = await db.execute(
+        base_query
+        .order_by(
+            YearlyAnalysis.created_at.desc(),
+            YearlyAnalysis.id.desc(),
+        )
+        .offset(pagination.skip)
+        .limit(pagination.limit)
+    )
+    items = [
+        YearlyAnalysisListItemRead.model_validate(ya)
+        for ya in items_result.scalars().all()
+    ]
+    return build_paginated_response(
+        items=items,
+        total=int(total or 0),
+        skip=pagination.skip,
+        limit=pagination.limit,
+    )
 
 
 @router.get("/{yearly_analysis_id}", response_model=YearlyAnalysisRead)

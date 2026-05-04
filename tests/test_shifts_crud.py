@@ -103,10 +103,12 @@ def test_shifts_crud_flow(client: TestClient, record):
         data = r.json()
         record("shift_get_structure_len", len(data.get("structure", [])) == len(trips))
 
-    # List shifts, filter by bus_id
+    # List shifts, filter by bus_id (paginated response)
     r = client.get(f"{API_BASE}/shifts/?bus_id={bus_id}", headers=hdrs)
-    ok = r.status_code == 200 and any(s["id"] == shift_id for s in r.json())
-    record("shift_list_filter_bus", ok, f"status={r.status_code}")
+    body = r.json() if r.status_code == 200 else {}
+    items = body.get("items", []) if isinstance(body, dict) else []
+    ok = r.status_code == 200 and any(s["id"] == shift_id for s in items)
+    record("shift_list_filter_bus", ok, f"status={r.status_code} items={len(items)}")
 
     # Update: replace structure with first 2 trips
     new_trips = trips[:2]
