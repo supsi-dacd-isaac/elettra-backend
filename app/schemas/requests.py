@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from uuid import UUID
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 from app.schemas.trip_status import TripStatus
 
@@ -106,6 +106,7 @@ _OPTIMIZATION_EXAMPLES = {
     "charging_only": {
         "summary": "charging_only -- optimize charger installation, battery fixed",
         "value": {
+            "name": "Charging-only feasibility evaluation",
             "mode": "charging_only",
             "auxiliary_heating_type": "default",
             "shift_ids": [_EXAMPLE_SHIFT_ID],
@@ -127,6 +128,7 @@ _OPTIMIZATION_EXAMPLES = {
     "battery_only_diesel": {
         "summary": "battery_only with diesel heating -- heating shifted to diesel",
         "value": {
+            "name": "Battery-only diesel-heating evaluation",
             "mode": "battery_only",
             "auxiliary_heating_type": "diesel",
             "shift_ids": [_EXAMPLE_SHIFT_ID],
@@ -151,6 +153,7 @@ _OPTIMIZATION_EXAMPLES = {
     "battery_only": {
         "summary": "battery_only -- optimize battery sizing, chargers fixed",
         "value": {
+            "name": "Battery-only feasibility evaluation",
             "mode": "battery_only",
             "shift_ids": [_EXAMPLE_SHIFT_ID],
             "prediction_run_ids": [_EXAMPLE_PRED_ID],
@@ -171,6 +174,7 @@ _OPTIMIZATION_EXAMPLES = {
     "joint": {
         "summary": "joint -- optimize both chargers and battery sizing",
         "value": {
+            "name": "Joint feasibility evaluation",
             "mode": "joint",
             "shift_ids": [_EXAMPLE_SHIFT_ID],
             "prediction_run_ids": [_EXAMPLE_PRED_ID],
@@ -216,6 +220,17 @@ class OptimizationRequest(BaseModel):
 
     model_config = {"json_schema_extra": {"examples": list(_OPTIMIZATION_EXAMPLES.values())}}
 
+    name: str = Field(
+        ...,
+        min_length=1,
+        examples=["My feasibility evaluation"],
+        description=(
+            "Human-readable display name for this optimization run. "
+            "Required. Leading/trailing whitespace is trimmed; empty or "
+            "whitespace-only values are rejected. Stored in "
+            "`optimization_runs.name` and not duplicated into `input_params`."
+        ),
+    )
     mode: Literal["battery_only", "charging_only", "joint"]
     auxiliary_heating_type: AuxiliaryHeatingType = Field(
         default="default",
@@ -304,6 +319,16 @@ class OptimizationRequest(BaseModel):
     mip_abs_gap: Optional[float] = Field(default=None, examples=[0.0])
     feasibility_tol: Optional[float] = Field(default=None, examples=[1e-6])
     optimality_tol: Optional[float] = Field(default=None, examples=[1e-6])
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _trim_and_validate_name(cls, v):
+        if not isinstance(v, str):
+            raise ValueError("name must be a non-empty string")
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("name must not be empty or whitespace-only")
+        return trimmed
 
     @model_validator(mode="after")
     def validate_mode_fields(self):

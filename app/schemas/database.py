@@ -164,6 +164,15 @@ class OptimizationRunsRead(BaseModel):
     id: UUID
     user_id: UUID
     bus_model_id: Optional[UUID] = None
+    name: Optional[str] = Field(
+        default=None,
+        examples=["My feasibility evaluation"],
+        description=(
+            "Display name of the optimization run. For legacy rows where "
+            "`optimization_runs.name` is NULL, this falls back to "
+            "`input_params.name` (if set and non-empty after trim)."
+        ),
+    )
     mode: str = Field(examples=["charging_only"])
     status: str = Field(examples=["completed"])
     input_params: dict = Field(examples=[{

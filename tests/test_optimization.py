@@ -400,6 +400,7 @@ def test_optimization_auth_required(client: TestClient, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [str(uuid.uuid4())],
             "bus_model_id": str(uuid.uuid4()),
@@ -425,6 +426,7 @@ def test_optimization_invalid_bus_model(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": fake_id,
@@ -451,6 +453,7 @@ def test_optimization_invalid_shift(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [fake_id],
             "bus_model_id": opt_env["bus_model_id"],
@@ -476,6 +479,7 @@ def test_optimization_invalid_mode(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "invalid_mode",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -496,6 +500,7 @@ def test_optimization_missing_prediction_params(client: TestClient, opt_env, rec
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -517,6 +522,7 @@ def test_optimization_charging_only_missing_slot_costs(client: TestClient, opt_e
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "charging_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -538,6 +544,7 @@ def test_optimization_joint_missing_battery_cost(client: TestClient, opt_env, re
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "joint",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -572,6 +579,7 @@ def test_battery_only_mode(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -621,6 +629,7 @@ def test_charging_only_mode(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "charging_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -672,6 +681,7 @@ def test_joint_mode(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "joint",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -733,6 +743,7 @@ def test_soc_bounds_respected(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -791,6 +802,7 @@ def test_slot_exclusivity(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "charging_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -846,6 +858,7 @@ def test_multi_shift_optimization(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "charging_only",
             "shift_ids": [opt_env["shift_id"], opt_env["shift_id_b"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -883,6 +896,7 @@ def test_excess_packs_mark_run_infeasible(client: TestClient, opt_env, record, m
     """Any API run that uses excess packs must be marked as physically infeasible."""
     token = opt_env["token"]
     payload = {
+        "name": "Test optimization name",
         "mode": mode,
         "shift_ids": [opt_env["shift_id"]],
         "bus_model_id": opt_env["bus_model_id"],
@@ -950,6 +964,7 @@ def test_auto_prediction_creates_predictions(client: TestClient, opt_env, record
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -996,6 +1011,7 @@ def test_auto_prediction_reuses_existing(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],
@@ -1047,6 +1063,7 @@ def test_solver_time_limit(client: TestClient, opt_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Test optimization name",
             "mode": "battery_only",
             "shift_ids": [opt_env["shift_id"]],
             "bus_model_id": opt_env["bus_model_id"],

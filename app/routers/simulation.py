@@ -44,6 +44,46 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_optimization_run_name(run: OptimizationRuns) -> str | None:
+    """Return the display name for an optimization run.
+
+    Resolution order (read-time, with backward-compat fallback for legacy rows):
+    1. `optimization_runs.name` (DB column) if set and non-empty after trim.
+    2. `input_params["name"]` if present, a string, and non-empty after trim.
+    3. None.
+
+    Old rows can have a NULL DB column; some transitional rows may carry a
+    `name` inside `input_params`. New rows store the name only in the
+    dedicated DB column.
+    """
+    db_name = getattr(run, "name", None)
+    if isinstance(db_name, str):
+        trimmed = db_name.strip()
+        if trimmed:
+            return trimmed
+
+    input_params = getattr(run, "input_params", None)
+    if isinstance(input_params, dict):
+        legacy_name = input_params.get("name")
+        if isinstance(legacy_name, str):
+            trimmed = legacy_name.strip()
+            if trimmed:
+                return trimmed
+
+    return None
+
+
+def _serialize_optimization_run(run: OptimizationRuns) -> OptimizationRunsRead:
+    """Build an OptimizationRunsRead applying the read-time name fallback."""
+    return OptimizationRunsRead.model_validate(run).model_copy(
+        update={"name": _resolve_optimization_run_name(run)}
+    )
+
+
+# ---------------------------------------------------------------------------
 # Prediction Runs endpoints
 # ---------------------------------------------------------------------------
 
@@ -174,12 +214,15 @@ async def create_optimization_run(
                     detail=f"Prediction run {pred_id} is not completed (status={pred.status})",
                 )
 
-    input_params = request.model_dump(mode="json")
+    # `name` is a first-class column on optimization_runs; keep it out of
+    # input_params (which is reserved for solver/technical inputs).
+    input_params = request.model_dump(mode="json", exclude={"name"})
 
     run = OptimizationRuns(
         user_id=current_user.id,
         bus_model_id=request.bus_model_id,
         mode=request.mode,
+        name=request.name,
         input_params=input_params,
         prediction_run_ids=[str(pid) for pid in request.prediction_run_ids] if request.prediction_run_ids else None,
         status="pending",
@@ -206,7 +249,7 @@ async def list_optimization_runs(
         .where(OptimizationRuns.user_id == current_user.id)
         .order_by(OptimizationRuns.created_at.desc())
     )
-    return result.scalars().all()
+    return [_serialize_optimization_run(r) for r in result.scalars().all()]
 
 
 @router.get("/optimization-runs/{run_id}", response_model=OptimizationRunsRead)
@@ -219,7 +262,7 @@ async def get_optimization_run(
     run = await db.get(OptimizationRuns, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Optimization run not found")
-    return run
+    return _serialize_optimization_run(run)
 
 
 # ---------------------------------------------------------------------------

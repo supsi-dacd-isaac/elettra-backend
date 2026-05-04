@@ -403,6 +403,7 @@ class OptimizationRuns(Base):
     results: Mapped[Optional[dict]] = mapped_column(JSONB)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
     completed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     user: Mapped['Users'] = relationship('Users')
     bus_model: Mapped['BusesModels'] = relationship('BusesModels')
