@@ -306,7 +306,24 @@ class YearlyImpactResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class YearlyEmissionsIndicator(BaseModel):
-    """Breakdown of one indicator for the mixed e-bus branch."""
+    """Breakdown of one indicator for the mixed e-bus branch.
+
+    **Lifecycle phases** (from the external LCA API when available):
+    ``direct``, ``directNonExhaust``, ``energyChain``, ``maintenance``,
+    ``vehicle``, ``endOfLife``, ``infrastructure``.  These are computed
+    using phase-share allocation: the Mobitool per-pkm phase proportions
+    are applied to the operational ``electric`` total so that
+    ``sum(phases) ≈ electric``.
+
+    **Operational energy fields:**
+    ``electric`` = yearly_electric_kwh × emission factor (energy-based);
+    ``diesel_heating`` = yearly_diesel_liters × emission factor (energy-based).
+
+    **total**: ``sum(lifecycle phases) + diesel_heating``.
+    When lifecycle phases are unavailable, ``total = electric +
+    diesel_heating``.  The ``diesel_heating`` component is NOT
+    attributed to any specific lifecycle phase.
+    """
 
     unit: str
     electric: float = Field(
@@ -317,12 +334,60 @@ class YearlyEmissionsIndicator(BaseModel):
     )
     total: float
 
+    direct: Optional[float] = Field(
+        None, description="Direct (tailpipe/exhaust) emissions.",
+    )
+    directNonExhaust: Optional[float] = Field(
+        None, description="Non-exhaust direct emissions (brake/tyre wear).",
+    )
+    energyChain: Optional[float] = Field(
+        None, description="Upstream energy chain (fuel/electricity production).",
+    )
+    maintenance: Optional[float] = Field(
+        None, description="Vehicle maintenance lifecycle emissions.",
+    )
+    vehicle: Optional[float] = Field(
+        None, description="Vehicle manufacturing lifecycle emissions.",
+    )
+    endOfLife: Optional[float] = Field(
+        None, description="End-of-life (recycling/disposal) emissions.",
+    )
+    infrastructure: Optional[float] = Field(
+        None, description="Infrastructure (road/charging) lifecycle emissions.",
+    )
+
 
 class YearlyEmissionsComparatorIndicator(BaseModel):
-    """Single indicator for the full-diesel comparator."""
+    """Single indicator for the full-diesel comparator.
+
+    Includes lifecycle phase fields when an LCA vehicle is available
+    for the diesel comparator.
+    """
 
     unit: str
     total: float
+
+    direct: Optional[float] = Field(
+        None, description="Direct (tailpipe/exhaust) emissions.",
+    )
+    directNonExhaust: Optional[float] = Field(
+        None, description="Non-exhaust direct emissions (brake/tyre wear).",
+    )
+    energyChain: Optional[float] = Field(
+        None, description="Upstream energy chain (fuel production).",
+    )
+    maintenance: Optional[float] = Field(
+        None, description="Vehicle maintenance lifecycle emissions.",
+    )
+    vehicle: Optional[float] = Field(
+        None, description="Vehicle manufacturing lifecycle emissions.",
+    )
+    endOfLife: Optional[float] = Field(
+        None, description="End-of-life (recycling/disposal) emissions.",
+    )
+    infrastructure: Optional[float] = Field(
+        None, description="Infrastructure (road) lifecycle emissions.",
+    )
 
 
 class YearlyEmissionsScenario(BaseModel):
@@ -344,7 +409,30 @@ class YearlyEmissionsScenario(BaseModel):
 
 
 class YearlyEmissionsAssumptions(BaseModel):
-    """Emission factor assumptions used for a yearly emissions calculation."""
+    """Emission factor assumptions used for a yearly emissions calculation.
+
+    **Phase-share allocation method:**
+
+    When lifecycle phase data is available, the external LCA API provides
+    per-pkm phase values which are used ONLY as relative proportions
+    (shares) to decompose the operational electric-side total across
+    lifecycle phases:
+
+        raw_phase_sum = sum(all Mobitool per-pkm phase values)
+        phase_share_i = raw_phase_i / raw_phase_sum
+        allocated_phase_i = phase_share_i × electric_side_total
+
+    This ensures the lifecycle breakdown sums to the same electric-side
+    total shown in the KPI/table, rather than producing a separate
+    absolute Mobitool LCA estimate.
+
+    ``electric`` and ``diesel_heating`` are energy-based operational
+    indicators (yearly_kwh × factor, yearly_liters × factor).
+
+    When ``auxiliary_heating_type`` is ``"diesel"``, the ``diesel_heating``
+    component is included in the indicator ``total`` but is NOT attributed
+    to any specific lifecycle phase.
+    """
 
     auxiliary_heating_type: str
     yearly_electric_kwh: float
@@ -355,18 +443,51 @@ class YearlyEmissionsAssumptions(BaseModel):
     diesel_heating_gwp100a_g_per_liter: float
     diesel_bus_gwp100a_g_per_liter: float
     diesel_comparator_consumption_l_per_km: float
+    lca_phase_method: Optional[str] = Field(
+        None,
+        description=(
+            "Method used for lifecycle phase allocation. "
+            "'mobitool_phase_share' = Mobitool per-pkm proportions applied to "
+            "the operational electric-side total. Null when phases unavailable."
+        ),
+    )
+    lca_source_functional_unit: Optional[str] = Field(
+        None,
+        description=(
+            "Functional unit of the external LCA source data (typically 'pkm'). "
+            "Used only to derive relative phase shares, not for absolute scaling. "
+            "Null when lifecycle phases are unavailable."
+        ),
+    )
+    bus_length_m: Optional[float] = Field(
+        None, description="Bus length used for diesel comparator regression.",
+    )
+    electric_kwh_per_100km: Optional[float] = Field(
+        None, description="Average electric consumption in kWh per 100 km.",
+    )
+    lca_vehicle_id: Optional[str] = Field(
+        None, description="External LCA vehicle ID used for phase-share allocation.",
+    )
+    lca_phase_status: Optional[str] = Field(
+        None, description="'available' or 'unavailable'.",
+    )
+    lca_phase_reason: Optional[str] = Field(
+        None,
+        description=(
+            "Reason when lca_phase_status is 'unavailable'. "
+            "Values: 'no_lca_vehicle_match', 'external_lca_error', "
+            "'unexpected_lca_response', 'empty_phase_response'."
+        ),
+    )
 
 
 class YearlyEmissionsResponse(BaseModel):
     """Yearly emissions comparison: mixed e-bus vs full-diesel comparator.
 
-    For ``auxiliary_heating_type = "diesel"`` the ``ebus`` indicators
-    include both an electric contribution (from battery-side kWh) and a
-    diesel-heating contribution (from heater fuel liters).  For
-    ``"default"`` the diesel-heating contribution is zero.
-
-    The ``diesel_comparator`` uses legacy distance-based diesel-bus
-    factors and is always separate from the mixed e-bus branch.
+    Complete payload for the Yearly Analysis → Emissions tab.
+    Contains all data needed for KPI cards, comparison tables, lifecycle
+    breakdown, primary energy chart, savings chart, and mixed-case
+    decomposition.
     """
 
     yearly_analysis_id: UUID
@@ -384,3 +505,144 @@ class YearlyEmissionsResponse(BaseModel):
     )
     assumptions: YearlyEmissionsAssumptions
     scenarios: List[YearlyEmissionsScenario]
+
+    # --- New complete-payload sections ---
+
+    indicators: List["IndicatorSummary"] = Field(
+        default_factory=list,
+        description="Flat list of all indicators with delta, percent, normalized values.",
+    )
+    mixed_case_decomposition: "MixedCaseDecomposition" = Field(
+        default=None,
+        description="Electric/diesel-heating breakdown per indicator.",
+    )
+    lifecycle_breakdown: "LifecycleBreakdown" = Field(
+        default=None,
+        description="Dedicated lifecycle phase breakdown for CO₂.",
+    )
+    primary_energy_breakdown: "PrimaryEnergyBreakdown" = Field(
+        default=None,
+        description="Renewable vs non-renewable primary energy split.",
+    )
+    savings: "SavingsBlock" = Field(
+        default=None,
+        description="Display-ready savings for CO₂, NOx, PM₁₀.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# New schema blocks for complete emissions payload
+# ---------------------------------------------------------------------------
+
+class IndicatorSummary(BaseModel):
+    """Summary of one indicator with comparison and normalized values."""
+    key: str
+    label: str
+    unit: str
+    display_unit: str
+    ebus_total: float
+    diesel_comparator: float
+    delta_vs_diesel: float
+    change_vs_diesel_percent: Optional[float] = None
+    normalized_ebus_per_km: float
+    normalized_diesel_per_km: float
+    normalized_unit: str
+
+
+class MixedCaseIndicator(BaseModel):
+    """Electric/diesel-heating decomposition for one indicator."""
+    unit: str
+    electric_side: float
+    diesel_heating: float
+    total: float
+
+
+class MixedCaseDecomposition(BaseModel):
+    """Decomposition of e-bus emissions into electric and diesel-heating parts."""
+    available: bool
+    yearly_electric_kwh: Optional[float] = None
+    electric_kwh_per_100km: Optional[float] = None
+    yearly_diesel_heating_liters: Optional[float] = None
+    indicators: Dict[str, MixedCaseIndicator] = Field(default_factory=dict)
+
+
+class LifecyclePhases(BaseModel):
+    """Lifecycle phase values."""
+    direct: Optional[float] = None
+    directNonExhaust: Optional[float] = None
+    energyChain: Optional[float] = None
+    maintenance: Optional[float] = None
+    vehicle: Optional[float] = None
+    endOfLife: Optional[float] = None
+    infrastructure: Optional[float] = None
+
+
+class LifecycleEbus(BaseModel):
+    """E-bus lifecycle breakdown."""
+    label: str
+    electric_side: float
+    diesel_heating: float
+    total: float
+    phases: LifecyclePhases
+    phase_sum: Optional[float] = None
+    phase_sum_represents: str = "electric_side_only"
+
+
+class LifecycleDieselComparator(BaseModel):
+    """Diesel comparator lifecycle breakdown."""
+    available: bool
+    total: float
+    phases: LifecyclePhases
+    phase_sum: Optional[float] = None
+    reason: Optional[str] = None
+    lca_vehicle_id: Optional[str] = None
+    size: Optional[str] = None
+    lca_size: Optional[str] = None
+    source_id: Optional[int] = None
+    name: Optional[str] = None
+
+
+class LifecycleBreakdown(BaseModel):
+    """Dedicated lifecycle phase breakdown for CO₂ (gwp100a)."""
+    indicator: str = "gwp100a"
+    unit: str
+    method: Optional[str] = None
+    ebus: LifecycleEbus
+    diesel_comparator: LifecycleDieselComparator
+
+
+class PrimaryEnergySide(BaseModel):
+    """Renewable/non-renewable split for one side."""
+    renewable: float
+    non_renewable: float
+    total: float
+    renewable_percent: float
+    non_renewable_percent: float
+
+
+class PrimaryEnergyBreakdown(BaseModel):
+    """Primary energy renewable vs non-renewable."""
+    unit: str = "MJ/year"
+    display_unit: str = "GJ/year"
+    ebus: PrimaryEnergySide
+    diesel_comparator: PrimaryEnergySide
+
+
+class SavingsItem(BaseModel):
+    """One row in the savings chart."""
+    key: str
+    label: str
+    unit: str
+    ebus_display: float
+    diesel_display: float
+    saved_display: float
+    saved_percent: Optional[float] = None
+
+
+class SavingsBlock(BaseModel):
+    """Savings chart data."""
+    items: List[SavingsItem]
+
+
+# Resolve forward references
+YearlyEmissionsResponse.model_rebuild()

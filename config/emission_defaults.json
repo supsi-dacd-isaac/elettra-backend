@@ -1,0 +1,61 @@
+{
+  "_doc": "Emission factors per unit of final energy. Configurable; values are consistent with Swiss LCA methodology (Mobitool / KBOB).",
+
+  "electricity": {
+    "_doc": "Per kWh of electricity consumed (Swiss consumer mix, lifecycle including upstream).",
+    "gwp100a_g_per_kwh": 128.0,
+    "nox_mg_per_kwh": 80.0,
+    "pm10_mg_per_kwh": 12.0,
+    "primaryEnergy_mj_per_kwh": 10.5,
+    "primaryEnergyNonRenewable_mj_per_kwh": 3.0
+  },
+
+  "diesel_heating": {
+    "_doc": "Per liter of diesel burned in an auxiliary heater (lifecycle including upstream). NOx and PM are lower than engine combustion because heaters use clean catalytic burners.",
+    "gwp100a_g_per_liter": 3170.0,
+    "nox_mg_per_liter": 500.0,
+    "pm10_mg_per_liter": 20.0,
+    "primaryEnergy_mj_per_liter": 42.5,
+    "primaryEnergyNonRenewable_mj_per_liter": 41.0
+  },
+
+  "diesel_bus": {
+    "_doc": "Per liter of diesel consumed by a full diesel bus engine (lifecycle including upstream). Higher NOx and PM than a heater due to engine combustion characteristics.",
+    "gwp100a_g_per_liter": 3170.0,
+    "nox_mg_per_liter": 4700.0,
+    "pm10_mg_per_liter": 100.0,
+    "primaryEnergy_mj_per_liter": 42.5,
+    "primaryEnergyNonRenewable_mj_per_liter": 41.0
+  },
+
+  "diesel_comparator_lca_vehicles": {
+    "_doc": "Canonical diesel comparator LCA vehicles per ELETTRA size class. Used for lifecycle phase-share allocation in the yearly-analysis emissions endpoint.",
+    "9m": {
+      "id": "40ac537a-b112-40a0-8f73-c314237bc7e2",
+      "source_id": 207,
+      "name": "Midibus9mICEV-d2020",
+      "size": "9m",
+      "lca_size": "9m",
+      "powertrain": "ICEV-d",
+      "reason": "Default diesel comparator for 9m bus; mapped to the Mobitool 9m diesel midibus reference"
+    },
+    "12m": {
+      "id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+      "source_id": 217,
+      "name": "City busSingle deck13m-cityICEV-d2020",
+      "size": "12m",
+      "lca_size": "13m-city",
+      "powertrain": "ICEV-d",
+      "reason": "Default diesel comparator for 12m bus; mapped to the closest Mobitool 13m-city single-deck diesel bus reference"
+    },
+    "18m": {
+      "id": "2b46af76-34e0-4b67-8631-0478d2d8b712",
+      "source_id": 238,
+      "name": "City busArticulated18mICEV-d2020",
+      "size": "18m",
+      "lca_size": "18m",
+      "powertrain": "ICEV-d",
+      "reason": "Default diesel comparator for 18m articulated bus; mapped to the Mobitool 18m articulated diesel bus reference"
+    }
+  }
+}
