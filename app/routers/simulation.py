@@ -5,13 +5,15 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import get_async_session
 from app.schemas.database import PredictionRunsRead, TripPredictionsRead, OptimizationRunsRead
 from app.schemas.responses import (
     PredictionSubmitResponse,
     OptimizationSubmitResponse,
+    OptimizationDeleteResponse,
     CombinedTripStatisticsResponse,
     OptimizationRunListItemRead,
 )
@@ -238,6 +240,7 @@ async def create_optimization_run(
         if shift is None:
             raise HTTPException(status_code=404, detail=f"Shift {shift_id} not found")
 
+    prediction_bus_model_ids: set[UUID] = set()
     if request.prediction_run_ids:
         for pred_id in request.prediction_run_ids:
             pred = await db.get(PredictionRuns, pred_id)
@@ -247,6 +250,19 @@ async def create_optimization_run(
                 raise HTTPException(
                     status_code=400,
                     detail=f"Prediction run {pred_id} is not completed (status={pred.status})",
+                )
+            prediction_bus_model_ids.add(pred.bus_model_id)
+
+        if request.bus_model_id is not None:
+            mismatched_model_ids = prediction_bus_model_ids - {request.bus_model_id}
+            if mismatched_model_ids:
+                found = ", ".join(str(model_id) for model_id in sorted(mismatched_model_ids, key=str))
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "prediction_run_ids must use the same bus_model_id as the optimization "
+                        f"request bus_model_id ({request.bus_model_id}); found {found}"
+                    ),
                 )
 
     # `name` is a first-class column on optimization_runs; keep it out of
@@ -331,6 +347,41 @@ async def get_optimization_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Optimization run not found")
     return _serialize_optimization_run(run)
+
+
+@router.delete("/optimization-runs/{run_id}", response_model=OptimizationDeleteResponse)
+async def delete_optimization_run(
+    run_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    """Delete an optimization run owned by the current user."""
+    result = await db.execute(
+        select(OptimizationRuns).where(
+            OptimizationRuns.id == run_id,
+            OptimizationRuns.user_id == current_user.id,
+        )
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Optimization run not found")
+
+    try:
+        await db.execute(
+            update(YearlyAnalysis)
+            .where(YearlyAnalysis.optimization_run_id == run_id)
+            .values(optimization_run_id=None)
+        )
+        await db.delete(run)
+        await db.commit()
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to delete optimization run",
+        ) from exc
+
+    return OptimizationDeleteResponse(deleted=True, id=run_id)
 
 
 # ---------------------------------------------------------------------------

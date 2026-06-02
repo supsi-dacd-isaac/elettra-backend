@@ -160,12 +160,18 @@ async def prepare_optimization_input(
     params = optimization_run.input_params
     quantile_consumption = params.get("quantile_consumption", "mean")
 
-    # Shared bus model (optional -- used as fallback when set)
-    shared_specs: dict | None = None
-    if optimization_run.bus_model_id is not None:
-        shared_model = await db.get(BusesModels, optimization_run.bus_model_id)
-        if shared_model is not None:
-            shared_specs = shared_model.specs or {}
+    _bus_model_cache: dict[UUID, dict] = {}
+
+    async def _get_specs_for_bus_model(bus_model_id: UUID) -> dict:
+        """Load and cache specs for an explicit simulation bus model."""
+        if bus_model_id in _bus_model_cache:
+            return _bus_model_cache[bus_model_id]
+        model = await db.get(BusesModels, bus_model_id)
+        if model is None:
+            raise ValueError(f"Bus model {bus_model_id} not found")
+        specs = model.specs or {}
+        _bus_model_cache[bus_model_id] = specs
+        return specs
 
     # Build station lookup: stop_id (str) -> station config
     charging_stations_raw = params.get("charging_stations", [])
@@ -195,11 +201,36 @@ async def prepare_optimization_input(
         ))
     station_stop_id_to_idx = {s.stop_id: i for i, s in enumerate(station_list)}
 
+    prediction_runs: list[PredictionRuns] = []
+    for pred_run_id in prediction_run_ids:
+        pred_run = await db.get(PredictionRuns, pred_run_id)
+        if pred_run is None:
+            raise ValueError(f"Prediction run {pred_run_id} not found")
+        prediction_runs.append(pred_run)
+
+    explicit_bus_model_id: UUID | None = optimization_run.bus_model_id
+    if explicit_bus_model_id is not None:
+        mismatched_prediction_ids = [
+            str(pred.id)
+            for pred in prediction_runs
+            if pred.bus_model_id != explicit_bus_model_id
+        ]
+        if mismatched_prediction_ids:
+            raise ValueError(
+                "Prediction run bus_model_id does not match optimization bus_model_id "
+                f"{explicit_bus_model_id}: {', '.join(mismatched_prediction_ids)}"
+            )
+
+    shared_specs = (
+        await _get_specs_for_bus_model(explicit_bus_model_id)
+        if explicit_bus_model_id is not None
+        else None
+    )
+
     # Build per-bus data from prediction runs.
-    # Each bus resolves its own specs through: prediction_run -> shift -> bus -> bus_model.
-    # Falls back to the shared bus_model_id (if provided) or hard-coded defaults.
+    # Precedence for physical bus specs:
+    # explicit optimization bus_model_id -> prediction bus_model_id -> shift bus model.
     buses: list[BusData] = []
-    _bus_model_cache: dict[UUID, dict] = {}
 
     async def _get_specs_for_shift(shift_id: UUID) -> dict:
         """Resolve bus model specs for a shift via shift->bus->bus_model."""
@@ -209,23 +240,20 @@ async def prepare_optimization_input(
         bus = await db.get(Buses, shift.bus_id) if shift.bus_id else None
         if bus is None or bus.bus_model_id is None:
             return shared_specs or {}
-        if bus.bus_model_id in _bus_model_cache:
-            return _bus_model_cache[bus.bus_model_id]
-        model = await db.get(BusesModels, bus.bus_model_id)
-        specs = (model.specs if model else None) or shared_specs or {}
-        _bus_model_cache[bus.bus_model_id] = specs
-        return specs
+        return await _get_specs_for_bus_model(bus.bus_model_id)
 
-    for pred_run_id in prediction_run_ids:
-        pred_run = await db.get(PredictionRuns, pred_run_id)
-        if pred_run is None:
-            raise ValueError(f"Prediction run {pred_run_id} not found")
-
+    for pred_run in prediction_runs:
         shift = await db.get(Shifts, pred_run.shift_id)
         shift_name = shift.name if shift else str(pred_run.shift_id)
 
         # Per-bus specs
-        specs = await _get_specs_for_shift(pred_run.shift_id)
+        specs = (
+            shared_specs
+            if shared_specs is not None
+            else await _get_specs_for_bus_model(pred_run.bus_model_id)
+            if pred_run.bus_model_id is not None
+            else await _get_specs_for_shift(pred_run.shift_id)
+        )
         pack_size = float(specs.get("battery_pack_size_kwh", 37))
         min_packs_spec = int(specs.get("min_battery_packs", 10))
         max_packs_spec = int(specs.get("max_battery_packs", 14))
@@ -241,7 +269,7 @@ async def prepare_optimization_input(
         # Load trip predictions
         tp_result = await db.execute(
             select(TripPredictions)
-            .where(TripPredictions.prediction_run_id == pred_run_id)
+            .where(TripPredictions.prediction_run_id == pred_run.id)
             .order_by(TripPredictions.sequence_number)
         )
         trip_preds = tp_result.scalars().all()

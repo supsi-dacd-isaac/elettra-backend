@@ -215,7 +215,8 @@ class OptimizationRequest(BaseModel):
       optional.
 
     Bus model specs (pack size, min/max packs, max charging power) are resolved
-    automatically from the database via shift -> bus -> bus_model.
+    from the explicit simulation bus_model_id first, then from linked prediction
+    runs, and only then from shift -> bus -> bus_model.
     """
 
     model_config = {"json_schema_extra": {"examples": list(_OPTIMIZATION_EXAMPLES.values())}}
@@ -246,12 +247,21 @@ class OptimizationRequest(BaseModel):
     shift_ids: list[UUID]
     bus_model_id: Optional[UUID] = Field(
         default=None,
-        description="Bus model for all shifts. If omitted, each shift's bus model is resolved from the DB (shift->bus->bus_model).",
+        description=(
+            "Bus model for the simulation. Takes precedence over shift assignments "
+            "and must match linked prediction_run_ids when they are provided. If "
+            "omitted, linked prediction runs define each bus's simulation model; "
+            "otherwise the shift's bus model is resolved from the DB."
+        ),
     )
 
     prediction_run_ids: Optional[list[UUID]] = Field(
         default=None,
-        description="Reuse existing prediction runs; if omitted, predictions are auto-created.",
+        description=(
+            "Reuse existing prediction runs. Their bus_model_id values define "
+            "simulation bus specs unless bus_model_id is provided, in which case "
+            "they must match it. If omitted, predictions are auto-created."
+        ),
     )
     prediction_params: Optional[PredictionParams] = Field(
         default=None,

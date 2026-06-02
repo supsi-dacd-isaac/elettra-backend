@@ -8,6 +8,7 @@ import os
 import pathlib
 import time
 import uuid
+from copy import deepcopy
 
 import numpy as np
 import pytest
@@ -36,6 +37,22 @@ BUS_MODEL_SPECS = {
             "consumption_kw": [24, 16, 12, 8, 9, 10, 16],
         },
     },
+}
+
+BUS_MODEL_12M_SPECS = {
+    **deepcopy(BUS_MODEL_SPECS),
+    "bus_length_m": 12,
+    "battery_pack_size_kwh": 50,
+    "min_battery_packs": 7,
+    "max_battery_packs": 11,
+}
+
+BUS_MODEL_18M_OVERRIDE_SPECS = {
+    **deepcopy(BUS_MODEL_SPECS),
+    "bus_length_m": 18,
+    "battery_pack_size_kwh": 50,
+    "min_battery_packs": 12,
+    "max_battery_packs": 20,
 }
 
 
@@ -71,19 +88,25 @@ def current_user_id(client: TestClient, token: str) -> str:
 # Test data helpers
 # ---------------------------------------------------------------------------
 
-def create_bus_model(client: TestClient, token: str, user_id: str) -> str:
+def create_bus_model_with_specs(
+    client: TestClient, token: str, user_id: str, specs: dict, name_prefix: str = "AA_NF_test"
+) -> str:
     unique = uuid.uuid4().hex[:8]
     r = client.post(
         f"{API_BASE}/bus-models/",
         json={
-            "name": f"AA_NF_test_{unique}",
-            "specs": BUS_MODEL_SPECS,
+            "name": f"{name_prefix}_{unique}",
+            "specs": specs,
             "user_id": user_id,
         },
         headers=auth_headers(token),
     )
     assert r.status_code == 200, f"create bus model failed: {r.text}"
     return r.json()["id"]
+
+
+def create_bus_model(client: TestClient, token: str, user_id: str) -> str:
+    return create_bus_model_with_specs(client, token, user_id, BUS_MODEL_SPECS)
 
 
 def create_bus(client: TestClient, token: str, user_id: str, bus_model_id: str) -> str:
@@ -143,19 +166,23 @@ def get_shift_end_stops(client: TestClient, token: str, shift_id: str) -> list[s
 
 def run_prediction_and_wait(
     client: TestClient, token: str, shift_ids: list[str],
-    bus_model_id: str, max_wait: int = 120,
+    bus_model_id: str, max_wait: int = 120, num_battery_packs: int | None = None,
 ) -> list[str]:
     """Submit a prediction and poll until completed. Return prediction_run_ids."""
+    payload = {
+        "shift_ids": shift_ids,
+        "bus_model_id": bus_model_id,
+        "model_name": "greybox_qrf_production_crps_optimized_3",
+        "external_temp_celsius": 15.0,
+        "occupancy_percent": 50.0,
+        "quantiles": [0.05, 0.5, 0.95],
+    }
+    if num_battery_packs is not None:
+        payload["num_battery_packs"] = num_battery_packs
+
     r = client.post(
         f"{SIM_BASE}/prediction-runs/",
-        json={
-            "shift_ids": shift_ids,
-            "bus_model_id": bus_model_id,
-            "model_name": "greybox_qrf_production_crps_optimized_3",
-            "external_temp_celsius": 15.0,
-            "occupancy_percent": 50.0,
-            "quantiles": [0.05, 0.5, 0.95],
-        },
+        json=payload,
         headers=auth_headers(token),
     )
     assert r.status_code == 200, f"prediction submit failed: {r.text}"
@@ -443,6 +470,120 @@ def test_optimization_invalid_bus_model(client: TestClient, opt_env, record):
         headers=auth_headers(token),
     )
     record("optimization_invalid_bus_model", r.status_code == 404, f"status={r.status_code}")
+
+
+@pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
+def test_optimization_rejects_prediction_bus_model_mismatch(client: TestClient, opt_env, record):
+    """POST rejects explicit bus_model_id when linked predictions use another model."""
+    token = opt_env["token"]
+    other_bus_model_id = create_bus_model_with_specs(
+        client,
+        token,
+        opt_env["user_id"],
+        BUS_MODEL_18M_OVERRIDE_SPECS,
+        name_prefix="MismatchModel",
+    )
+    try:
+        r = client.post(
+            f"{SIM_BASE}/optimization-runs/",
+            json={
+                "name": "Mismatched prediction bus model",
+                "mode": "battery_only",
+                "shift_ids": [opt_env["shift_id"]],
+                "bus_model_id": other_bus_model_id,
+                "prediction_run_ids": opt_env["prediction_run_ids_a"],
+                "charging_stations": [{
+                    "stop_id": opt_env["end_stop_ids"][0] if opt_env["end_stop_ids"] else str(uuid.uuid4()),
+                    "num_slots": 2,
+                    "max_total_power_kw": 450,
+                }],
+            },
+            headers=auth_headers(token),
+        )
+        detail = r.json().get("detail") if r.headers.get("content-type", "").startswith("application/json") else r.text
+        record(
+            "optimization_rejects_prediction_bus_model_mismatch",
+            r.status_code == 400 and "bus_model_id" in str(detail),
+            f"status={r.status_code}, detail={detail}",
+        )
+    finally:
+        client.delete(f"{API_BASE}/bus-models/{other_bus_model_id}", headers=auth_headers(token))
+
+
+@pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
+def test_optimization_input_uses_override_bus_model_over_shift_assignment(
+    client: TestClient, opt_env, record
+):
+    """A 12m-assigned shift with 18m predictions gets 18m physical pack bounds."""
+    token = opt_env["token"]
+    hdrs = auth_headers(token)
+    model_12m_id = create_bus_model_with_specs(
+        client, token, opt_env["user_id"], BUS_MODEL_12M_SPECS, name_prefix="Resolver12m"
+    )
+    model_18m_id = create_bus_model_with_specs(
+        client, token, opt_env["user_id"], BUS_MODEL_18M_OVERRIDE_SPECS, name_prefix="Resolver18m"
+    )
+    bus_12m_id = create_bus(client, token, opt_env["user_id"], model_12m_id)
+    shift_id = create_shift(client, token, bus_12m_id, opt_env["trip_ids"], "Resolver Shift 12m")
+    optimization_run_id = None
+
+    try:
+        pred_run_ids = run_prediction_and_wait(
+            client,
+            token,
+            [shift_id],
+            model_18m_id,
+            num_battery_packs=BUS_MODEL_18M_OVERRIDE_SPECS["min_battery_packs"],
+        )
+
+        pred = client.get(f"{SIM_BASE}/prediction-runs/{pred_run_ids[0]}", headers=hdrs)
+        assert pred.status_code == 200, pred.text
+        pred_data = pred.json()
+        assert pred_data["bus_model_id"] == model_18m_id
+        assert pred_data["contextual_parameters"]["bus_length_m"] == 18
+        assert pred_data["contextual_parameters"]["num_battery_packs"] == 12
+
+        r = client.post(
+            f"{SIM_BASE}/optimization-runs/",
+            json={
+                "name": "Resolver override 18m on 12m shift",
+                "mode": "battery_only",
+                "shift_ids": [shift_id],
+                "bus_model_id": model_18m_id,
+                "prediction_run_ids": pred_run_ids,
+                "charging_stations": [],
+                "min_soc": 0.4,
+                "max_soc": 0.9,
+                "solver_name": "highs",
+                "max_battery_penalty_per_kwh": 1e6,
+            },
+            headers=hdrs,
+        )
+        assert r.status_code == 200, r.text
+        optimization_run_id = r.json()["optimization_run_id"]
+        run_data = wait_for_optimization(client, token, optimization_run_id)
+
+        battery = (run_data.get("results") or {}).get("battery_results", {}).get(shift_id)
+        passed = (
+            run_data["status"] == "completed"
+            and battery is not None
+            and battery["base_packs"] == 12
+            and battery["max_physical_packs"] == 20
+            and battery["max_physical_kwh"] == 1000.0
+        )
+        record(
+            "optimization_input_uses_override_bus_model",
+            passed,
+            f"status={run_data['status']}, prediction_bus_model={pred_data['bus_model_id']}, "
+            f"battery_results={json.dumps(battery, default=str)}",
+        )
+    finally:
+        if optimization_run_id:
+            client.delete(f"{SIM_BASE}/optimization-runs/{optimization_run_id}", headers=hdrs)
+        client.delete(f"{API_BASE}/shifts/{shift_id}", headers=hdrs)
+        client.delete(f"{API_BASE}/buses/{bus_12m_id}", headers=hdrs)
+        client.delete(f"{API_BASE}/bus-models/{model_18m_id}", headers=hdrs)
+        client.delete(f"{API_BASE}/bus-models/{model_12m_id}", headers=hdrs)
 
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)

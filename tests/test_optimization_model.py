@@ -61,6 +61,52 @@ def test_battery_only_maxes_physical_packs_before_excess():
     assert result.electrification_summary["status"] == "infeasible"
 
 
+def test_battery_results_report_simulation_bus_model_physical_bounds():
+    bus = BusData(
+        shift_id="shift-18m-override",
+        shift_name="L31_MON_after11am_12m",
+        battery_capacity_kwh=1000.0,
+        battery_offset_kwh=400.0,
+        max_charging_power_kw=450.0,
+        pack_size_kwh=50.0,
+        min_packs=12,
+        max_packs=20,
+        reference_packs=12,
+        trips=[
+            TripData(
+                trip_id="trip-1",
+                departure_minute=0,
+                arrival_minute=1,
+                end_station_idx=-1,
+                base_energy_kwh=650.0,
+                sensitivity=0.0,
+            )
+        ],
+    )
+
+    result = solve_optimization(
+        buses=[bus],
+        stations=[],
+        config=OptimizationConfig(
+            mode="battery_only",
+            min_soc=0.4,
+            max_soc=0.9,
+            solver_name="highs",
+            max_battery_penalty_per_kwh=1e6,
+            soc_increase_weight=1e4,
+        ),
+    )
+
+    battery = result.battery_results["shift-18m-override"]
+
+    assert result.solver_status == "optimal"
+    assert battery["base_packs"] == 12
+    assert battery["max_physical_packs"] == 20
+    assert battery["max_physical_kwh"] == 1000.0
+    assert battery["required_total_packs"] > battery["max_physical_packs"]
+    assert battery["physical_feasible"] is False
+
+
 @pytest.mark.parametrize(
     ("mode", "reference_packs", "battery_cost_per_kwh", "expected_physical_packs"),
     [
