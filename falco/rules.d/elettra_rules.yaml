@@ -129,6 +129,7 @@
   desc: Detect potential container escape tools being spawned
   condition: >
     spawned_process and
+    container and
     proc.name in (chroot, nsenter, unshare) and
     container.name != "elettra-falco"
   output: >
@@ -142,6 +143,7 @@
   desc: Detect privilege escalation attempts in containers
   condition: >
     spawned_process and
+    container and
     proc.name in (su, sudo, gosu) and
     container.name != "elettra-falco"
   output: >
