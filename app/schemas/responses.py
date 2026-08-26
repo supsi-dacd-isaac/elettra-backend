@@ -5,6 +5,8 @@ from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.database import GtfsTripsRead
+
 
 class PredictionSubmitResponse(BaseModel):
     prediction_run_ids: list[UUID]
@@ -12,6 +14,34 @@ class PredictionSubmitResponse(BaseModel):
 
 class OptimizationSubmitResponse(BaseModel):
     optimization_run_id: UUID
+
+
+class OptimizationDeleteResponse(BaseModel):
+    deleted: bool
+    id: UUID
+
+
+class ElevationProfileJobResponse(BaseModel):
+    id: UUID
+    trip_id: UUID
+    status: str
+    attempts: int
+    available_at: datetime
+    lease_expires_at: Optional[datetime]
+    worker_id: Optional[str]
+    last_error: Optional[str]
+    algorithm_version: Optional[str]
+    roads_release: Optional[str]
+    output_object_name: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime]
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AuxTripCreateResponse(BaseModel):
+    trip: GtfsTripsRead
+    elevation_job: ElevationProfileJobResponse
 
 
 class GtfsStopsReadWithTimes(BaseModel):

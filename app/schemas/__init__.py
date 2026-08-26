@@ -18,7 +18,7 @@ __all__ = [
     "DepotsCreate", "DepotsUpdate", "DepotsRead",
     "GtfsRoutesCreate", "GtfsRoutesUpdate", "GtfsRoutesRead",
     "UsersCreate", "UsersUpdate", "UsersRead",
-    "GtfsTripsCreate", "GtfsTripsUpdate", "GtfsTripsRead",
+    "GtfsTripsCreate", "GtfsTripsUpdate", "GtfsTripsRead", "ElevationProfileJobsRead",
     "VariantsCreate", "VariantsUpdate", "VariantsRead",
     "GtfsStopsTimesCreate", "GtfsStopsTimesUpdate", "GtfsStopsTimesRead",
     "ShiftsStructuresCreate", "ShiftsStructuresUpdate", "ShiftsStructuresRead",
@@ -37,6 +37,7 @@ __all__ = [
     
     # Custom response schemas
     "PredictionSubmitResponse", "OptimizationSubmitResponse",
+    "AuxTripCreateResponse", "ElevationProfileJobResponse",
     "GtfsStopsReadWithTimes", "VariantsReadWithRoute", "GtfsRoutesReadWithVariant",
     
     # Health check schemas
