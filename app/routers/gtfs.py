@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List, Optional
-from datetime import date
+import asyncio
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from app.database import get_async_session
@@ -15,7 +16,7 @@ from app.schemas.requests import AuxTripCreate
 from app.schemas.trip_status import TripStatus
 from app.schemas.responses import (
     GtfsStopsReadWithTimes, VariantsReadWithRoute, GtfsRoutesReadWithVariant,
-    GtfsStopsListItemRead,
+    GtfsStopsListItemRead, AuxTripCreateResponse, ElevationProfileJobResponse,
 )
 from app.schemas.pagination import (
     PaginatedResponse, PaginationParams, build_paginated_response,
@@ -24,16 +25,27 @@ from app.schemas.external_apis import ElevationProfileResponse
 from app.models import (
     Users, GtfsAgencies, GtfsCalendar,
     GtfsStops, GtfsTrips, Variants,
-    GtfsStopsTimes, GtfsRoutes
+    GtfsStopsTimes, GtfsRoutes, ElevationProfileJobs,
+    ElevationProfileCleanupJobs,
 )
 from app.core.auth import get_current_user
-from minio import Minio
-import pandas as pd
-import io
+from app.services.elevation_profiles import (
+    ElevationProfileFormatError,
+    ElevationProfileNotFoundError,
+    ElevationProfileNotReadyError,
+    ElevationProfileStorageError,
+    dataframe_json_records,
+    elevation_profiles_bucket,
+    get_elevation_profile_job,
+    load_trip_elevation_dataframe,
+    release_profile_shape_ids,
+    remove_profile_objects,
+    validate_configured_release,
+)
 import os
 import httpx
 import requests
-from map_services import SwissTopoElevationClient
+import logging
 
 try:
     # pyproj is a dependency of geopandas, but import may fail if extras not installed
@@ -48,6 +60,7 @@ except ImportError:
     polyline = None  # type: ignore
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 
@@ -560,12 +573,38 @@ async def read_trips_by_route(
 
 
 # GTFS Trips CUD endpoints (authenticated users only)
+def _ensure_gtfs_shape_in_configured_release(shape_id: str | None) -> None:
+    """Reject live GTFS mutations that would escape an active release catalog."""
+    manifest = validate_configured_release()
+    if manifest is None:
+        return
+    if not shape_id or not str(shape_id).strip():
+        raise HTTPException(
+            status_code=409,
+            detail="A non-empty shape_id is required while an elevation release is active",
+        )
+    if str(shape_id) not in release_profile_shape_ids(manifest):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"shape_id {shape_id!r} is not present in the configured immutable "
+                "elevation profiles release"
+            ),
+        )
+
+
 @router.post("/gtfs-trips/", response_model=GtfsTripsRead)
 async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate status against enum values to provide clear error messages
-    if trip.status not in {s.value for s in TripStatus}:
-        raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {[s.value for s in TripStatus]}")
+    if trip.status != TripStatus.GTFS.value:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "POST /gtfs-trips accepts only status='gtfs'. "
+                "Create depot, transfer and other auxiliary trips with POST /api/v1/gtfs/aux-trip."
+            ),
+        )
 
+    _ensure_gtfs_shape_in_configured_release(trip.shape_id)
     db_trip = GtfsTrips(**trip.model_dump(exclude_unset=True))
     db.add(db_trip)
     await db.commit()
@@ -581,10 +620,38 @@ async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSess
 
     update_data = trip_update.model_dump(exclude_unset=True, exclude={"id"})
 
-    # Validate status if provided
+    current_status = (
+        db_trip.status.value if hasattr(db_trip.status, "value") else str(db_trip.status)
+    )
+
+    # Status determines the profile lifecycle and cannot be changed in-place.
     if "status" in update_data and update_data["status"] is not None:
-        if update_data["status"] not in {s.value for s in TripStatus}:
-            raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {[s.value for s in TripStatus]}")
+        if update_data["status"] != current_status:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Trip status cannot transition from '{current_status}' to "
+                    f"'{update_data['status']}'. Create a new trip through the appropriate endpoint."
+                ),
+            )
+
+    # Auxiliary shape IDs are also the stable MinIO/job identity.
+    if (
+        current_status != TripStatus.GTFS.value
+        and "shape_id" in update_data
+        and update_data["shape_id"] != db_trip.shape_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="shape_id cannot be changed for an auxiliary trip managed by an elevation job.",
+        )
+
+    if (
+        current_status == TripStatus.GTFS.value
+        and "shape_id" in update_data
+        and update_data["shape_id"] != db_trip.shape_id
+    ):
+        _ensure_gtfs_shape_in_configured_release(update_data["shape_id"])
 
     for field, value in update_data.items():
         setattr(db_trip, field, value)
@@ -600,6 +667,97 @@ async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_sessio
     if db_trip is None:
         raise HTTPException(status_code=404, detail="Trip not found")
 
+    cleanup_objects: list[tuple[str, str]] = []
+    cleanup_prefixes: list[tuple[str, str]] = []
+    profile_job_id: str | None = None
+    cleanup_available_at = datetime.now(timezone.utc)
+    trip_status = db_trip.status.value if hasattr(db_trip.status, "value") else str(db_trip.status)
+    if trip_status != "gtfs" and db_trip.shape_id:
+        bucket = elevation_profiles_bucket()
+        expected_output_object = f"{db_trip.shape_id}.parquet"
+        cleanup_objects.append((bucket, expected_output_object))
+        cleanup_objects.append((bucket, f"backups/dtm/{db_trip.shape_id}.parquet"))
+        # Serialize deletion with worker claim/lease updates.  If a worker
+        # already owns this row we observe its current lease; otherwise the row
+        # remains unclaimable until it is removed by the same commit.
+        job = await get_elevation_profile_job(db, trip_pk, for_update=True)
+        if job is not None:
+            profile_job_id = str(job.id)
+            if job.output_object_name != expected_output_object:
+                logger.warning(
+                    "Ignoring unsafe auxiliary output key %r for trip %s",
+                    job.output_object_name,
+                    trip_pk,
+                )
+            cleanup_prefixes.append(
+                (bucket, f"._staging/elevation-jobs/{job.id}/")
+            )
+            # A generation worker may have passed its final ownership check just
+            # before this transaction deletes the job.  Delay the durable sweep
+            # until after that worker's last possible lease, then delete again.
+            if job.lease_expires_at is not None:
+                lease_expires_at = job.lease_expires_at
+                if lease_expires_at.tzinfo is None:
+                    lease_expires_at = lease_expires_at.replace(tzinfo=timezone.utc)
+                cleanup_available_at = max(
+                    cleanup_available_at,
+                    lease_expires_at + timedelta(seconds=30),
+                )
+            source = (job.payload or {}).get("source", {})
+            if source.get("kind") == "minio_parquet" and source.get("object_name"):
+                # The supported aux namespace is deliberately narrow.  Never
+                # turn a mutable JSON payload into an arbitrary object delete.
+                source_object_name = str(source["object_name"])
+                supported_source_objects = {
+                    f"{db_trip.shape_id}.parquet",
+                    f"backups/dtm/{db_trip.shape_id}.parquet",
+                }
+                source_bucket = str(source.get("bucket") or bucket)
+                if (
+                    source_object_name in supported_source_objects
+                    and source_bucket == bucket
+                ):
+                    cleanup_objects.append(
+                        (source_bucket, source_object_name)
+                    )
+                else:
+                    logger.warning(
+                        "Ignoring unsafe auxiliary cleanup source %s/%r for trip %s",
+                        source_bucket,
+                        source_object_name,
+                        trip_pk,
+                    )
+        # Without a queue row the expected stable object still covers auxiliary
+        # trips created before asynchronous generation was introduced.
+
+        # The outbox row has no FK by design and therefore survives the trip/job
+        # cascade.  It is added before deletion and committed atomically with it.
+        unique_objects = [
+            {"bucket": object_bucket, "object_name": object_name}
+            for object_bucket, object_name in sorted(set(cleanup_objects))
+        ]
+        unique_prefixes = [
+            {"bucket": prefix_bucket, "prefix": prefix}
+            for prefix_bucket, prefix in sorted(set(cleanup_prefixes))
+        ]
+        db.add(
+            ElevationProfileCleanupJobs(
+                trip_id=trip_pk,
+                payload={
+                    "schema_version": 1,
+                    "trip_id": str(trip_pk),
+                    "shape_id": db_trip.shape_id,
+                    "profile_job_id": profile_job_id,
+                    "objects": unique_objects,
+                    "prefixes": unique_prefixes,
+                },
+                available_at=cleanup_available_at,
+            )
+        )
+        # Materialize the outbox INSERT before issuing the trip DELETE/cascade;
+        # both remain part of the same transaction and commit atomically.
+        await db.flush()
+
     # Delete associated stop_times first to avoid foreign key constraint violation
     result = await db.execute(select(GtfsStopsTimes).filter(GtfsStopsTimes.trip_id == trip_pk))
     stop_times = result.scalars().all()
@@ -609,7 +767,30 @@ async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_sessio
     # Delete the trip
     await db.delete(db_trip)
     await db.commit()
-    return {"message": "Trip deleted successfully"}
+
+    # Fast-path only.  The durable outbox remains pending even when this works,
+    # so its delayed sweep also closes the concurrent-publication race.
+    cleanup_errors: list[str] = []
+    if cleanup_objects and os.getenv(
+        "ELEVATION_PROFILE_CLEANUP_FAST_PATH", "false"
+    ).lower() in {"1", "true", "yes", "on"}:
+        # Production API credentials are intentionally read-only. This opt-in
+        # path is only a latency optimization for controlled deployments; the
+        # durable worker remains the source of truth for deletion.
+        cleanup_errors = await asyncio.to_thread(
+            remove_profile_objects, cleanup_objects
+        )
+    if cleanup_errors:
+        logger.error(
+            "Trip %s was deleted but elevation object cleanup failed: %s",
+            trip_pk,
+            cleanup_errors,
+        )
+    return {
+        "message": "Trip deleted successfully",
+        "elevation_cleanup_queued": bool(cleanup_objects),
+        "elevation_cleanup_errors": cleanup_errors,
+    }
 
 # Variants endpoints (authenticated users only)
 @router.get("/variants/by-route/{route_id}", response_model=List[VariantsReadWithRoute])
@@ -1035,57 +1216,77 @@ async def get_driving_distance_to_stop(
 # Elevation profile by trip
 @router.get("/elevation-profile/by-trip/{trip_id}", response_model=ElevationProfileResponse)
 async def get_elevation_profile_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    """Fetch elevation profile parquet by trip's shape_id from MinIO and return as JSON records"""
-    # 1) Find the trip to get shape_id
+    """Fetch the release/job-resolved elevation profile and return JSON records."""
     trip = await db.get(GtfsTrips, trip_id)
     if trip is None:
         raise HTTPException(status_code=404, detail="Trip not found")
     if not trip.shape_id:
         raise HTTPException(status_code=404, detail="Trip has no shape_id")
 
-    shape_id = trip.shape_id
-
-    # 2) Connect to MinIO within the docker network
-    # Using docker-compose defaults: endpoint http://minio:9000 and env AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-    endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
-    access_key = os.getenv("AWS_ACCESS_KEY_ID", "minio_user")
-    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "minio_password")
-    secure = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes", "on")
-
-    client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
-
-    bucket_name = "elevation-profiles"
-    object_name = f"{shape_id}.parquet"
-
-    # 3) Fetch object and load parquet into pandas
     try:
-        response = client.get_object(bucket_name, object_name)
-        try:
-            data = response.read()
-        finally:
-            response.close()
-            response.release_conn()
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Elevation profile not found for shape_id {shape_id}: {str(e)}")
+        df = await load_trip_elevation_dataframe(db, trip)
+    except ElevationProfileNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+    except ElevationProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ElevationProfileStorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ElevationProfileFormatError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    try:
-        df = pd.read_parquet(io.BytesIO(data))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse parquet for shape_id {shape_id}: {str(e)}")
+    records = dataframe_json_records(df)
+    return ElevationProfileResponse(shape_id=trip.shape_id, records=records)
 
-    # 4) Return as list of dict records
-    records = df.to_dict(orient="records")
-    return ElevationProfileResponse(shape_id=shape_id, records=records)
+
+@router.get(
+    "/aux-trip/{trip_id}/elevation-status",
+    response_model=ElevationProfileJobResponse,
+)
+async def get_aux_trip_elevation_status(
+    trip_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    trip = await db.get(GtfsTrips, trip_id)
+    if trip is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    trip_status = trip.status.value if hasattr(trip.status, "value") else str(trip.status)
+    if trip_status == "gtfs":
+        raise HTTPException(status_code=400, detail="GTFS trips do not have auxiliary elevation jobs")
+    job = await get_elevation_profile_job(db, trip_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Elevation profile job not found")
+    return job
 
 
 # Create a new auxiliary trip (depot or transfer) between two stops
-@router.post("/aux-trip", response_model=GtfsTripsRead)
+@router.post("/aux-trip", response_model=AuxTripCreateResponse, status_code=202)
 async def create_aux_trip(
     req: AuxTripCreate,
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    # 1) Fetch departure and arrival stops
+    prefix = req.status.value if hasattr(req.status, "value") else str(req.status)
+    if prefix == "gtfs":
+        raise HTTPException(status_code=400, detail="Auxiliary trip status cannot be 'gtfs'")
+
+    # Resolve and validate all database references before invoking OSRM.
+    route = await db.get(GtfsRoutes, req.route_id)
+    if route is None:
+        raise HTTPException(status_code=404, detail="Route not found")
+    route_type = route.route_type
+    is_bus_route = route_type == 3 or (
+        isinstance(route_type, int) and 700 <= route_type <= 719
+    )
+    if not is_bus_route:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Auxiliary elevation profiles require a bus route "
+                f"(route_type 3 or 700-719); route has route_type {route_type}"
+            ),
+        )
+
     dep_stop = await db.get(GtfsStops, req.departure_stop_id)
     arr_stop = await db.get(GtfsStops, req.arrival_stop_id)
     if dep_stop is None or arr_stop is None:
@@ -1095,12 +1296,43 @@ async def create_aux_trip(
     if arr_stop.stop_lat is None or arr_stop.stop_lon is None:
         raise HTTPException(status_code=400, detail="Arrival stop has no coordinates")
 
-    # 2) Call OSRM to get route geometry (polyline) between the two stops
+    if getattr(req, "day_of_week", None):
+        day = (req.day_of_week or "").strip().lower()
+        day_to_suffix = {
+            "monday": "mon",
+            "tuesday": "tue",
+            "wednesday": "wed",
+            "thursday": "thu",
+            "friday": "fri",
+            "saturday": "sat",
+            "sunday": "sun",
+        }
+        if day not in day_to_suffix:
+            raise HTTPException(status_code=400, detail="Invalid day_of_week. Use monday..sunday")
+        calendar_key = f"auxiliary_{day_to_suffix[day]}"
+    else:
+        calendar_key = req.calendar_service_key or "auxiliary"
+
+    result = await db.execute(
+        select(GtfsCalendar).filter(GtfsCalendar.service_id == calendar_key)
+    )
+    svc_row = result.scalars().first()
+    if svc_row is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Service '{calendar_key}' not found in gtfs_calendar",
+        )
+
+    # OSRM remains synchronous from the API consumer's perspective. Elevation
+    # lookup and road matching are deliberately delegated to the durable job.
     start_lon, start_lat = float(dep_stop.stop_lon), float(dep_stop.stop_lat)
     end_lon, end_lat = float(arr_stop.stop_lon), float(arr_stop.stop_lat)
 
     osrm_base = os.getenv("OSRM_BASE_URL", "http://osrm:5000")
-    url = f"{osrm_base}/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=full"
+    url = (
+        f"{osrm_base}/route/v1/driving/{start_lon},{start_lat};"
+        f"{end_lon},{end_lat}?overview=full&geometries=polyline"
+    )
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
@@ -1116,91 +1348,15 @@ async def create_aux_trip(
 
     route = data["routes"][0]
     geometry = route.get("geometry")
-    if not geometry:
-        raise HTTPException(status_code=502, detail="OSRM response missing geometry")
+    if not isinstance(geometry, str) or not geometry:
+        raise HTTPException(status_code=502, detail="OSRM response missing encoded polyline geometry")
 
-    # Decode polyline to list of (lat, lon), convert to (lon, lat) for elevation client
-    if polyline and isinstance(geometry, str):
-        try:
-            decoded = polyline.decode(geometry)
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Failed to decode OSRM polyline: {str(e)}")
-    else:
-        raise HTTPException(status_code=500, detail="Polyline decoder not available")
-
-    coords_lon_lat = [(lon, lat) for (lat, lon) in decoded]
-
-    # 3) Elevation profile using SwissTopoElevationClient
-    # The client now handles WGS84 to LV95 conversion internally and uses the efficient Profile API
-    elev_client = SwissTopoElevationClient()
-    try:
-        elevations = elev_client.get_elevation_batch(coords_lon_lat)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Elevation service failed: {str(e)}")
-
-    # Build DataFrame for parquet
-    lats = [lat for (lat, lon) in decoded]
-    lons = [lon for (lat, lon) in decoded]
-    df = pd.DataFrame({
-        "segment_id": ["main"] * len(decoded),
-        "point_number": list(range(1, len(decoded) + 1)),
-        "latitude": lats,
-        "longitude": lons,
-        "altitude_m": elevations,
-    })
-
-    # 4) Store parquet to MinIO with unique shape_id, prefixed by status
-    prefix = req.status.value if hasattr(req.status, 'value') else str(req.status)
     shape_id = f"{prefix}-{uuid4().hex}"
-    parquet_buf = io.BytesIO()
-    try:
-        df.to_parquet(parquet_buf, index=False)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to serialize elevation parquet: {str(e)}")
-    parquet_bytes = parquet_buf.getvalue()
-
-    endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
-    access_key = os.getenv("AWS_ACCESS_KEY_ID", "minio_user")
-    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "minio_password")
-    secure = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes", "on")
-    bucket_name = "elevation-profiles"
     object_name = f"{shape_id}.parquet"
 
-    try:
-        mclient = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
-        # Note: bucket is created by compose; assume exists
-        mclient.put_object(bucket_name, object_name, io.BytesIO(parquet_bytes), length=len(parquet_bytes))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to upload elevation parquet to MinIO: {str(e)}")
-
-    # 5) Resolve calendar service key:
-    # Priority:
-    #   - req.day_of_week => auxiliary_mon..sun
-    #   - req.calendar_service_key (legacy/custom)
-    #   - default 'auxiliary'
-    calendar_key = None
-    if getattr(req, 'day_of_week', None):
-        day = (req.day_of_week or '').strip().lower()
-        day_to_suffix = {
-            'monday': 'mon',
-            'tuesday': 'tue',
-            'wednesday': 'wed',
-            'thursday': 'thu',
-            'friday': 'fri',
-            'saturday': 'sat',
-            'sunday': 'sun',
-        }
-        if day not in day_to_suffix:
-            raise HTTPException(status_code=400, detail="Invalid day_of_week. Use monday..sunday")
-        calendar_key = f"auxiliary_{day_to_suffix[day]}"
-    else:
-        calendar_key = (req.calendar_service_key or 'auxiliary')
-    result = await db.execute(select(GtfsCalendar).filter(GtfsCalendar.service_id == calendar_key))
-    svc_row = result.scalars().first()
-    if svc_row is None:
-        raise HTTPException(status_code=400, detail=f"Service '{calendar_key}' not found in gtfs_calendar")
-
-    # 6) Create trip row (prefix trip_id by status, set status and gtfs_service_id)
+    # Trip, its two stop-times and the job are committed atomically. A worker
+    # can never observe a job whose owning trip/stop-times were only partially
+    # persisted.
     trip = GtfsTrips(
         route_id=req.route_id,
         service_id=svc_row.id,
@@ -1214,25 +1370,49 @@ async def create_aux_trip(
         arrival_time=req.arrival_time,
     )
     db.add(trip)
-    await db.commit()
-    await db.refresh(trip)
+    try:
+        await db.flush()
+        stop_times = [
+            GtfsStopsTimes(
+                trip_id=trip.id,
+                stop_id=dep_stop.id,
+                arrival_time=req.departure_time,
+                departure_time=req.departure_time,
+                stop_sequence=1,
+            ),
+            GtfsStopsTimes(
+                trip_id=trip.id,
+                stop_id=arr_stop.id,
+                arrival_time=req.arrival_time,
+                departure_time=req.arrival_time,
+                stop_sequence=2,
+            ),
+        ]
+        job = ElevationProfileJobs(
+            trip_id=trip.id,
+            payload={
+                "schema_version": 1,
+                "shape_id": shape_id,
+                "source": {
+                    "kind": "polyline",
+                    "encoded": geometry,
+                    "precision": 5,
+                },
+                "routing": {
+                    "engine": "osrm",
+                    "distance_m": route.get("distance"),
+                    "duration_s": route.get("duration"),
+                },
+            },
+            status="pending",
+            output_object_name=object_name,
+        )
+        db.add_all([*stop_times, job])
+        await db.commit()
+        await db.refresh(trip)
+        await db.refresh(job)
+    except Exception:
+        await db.rollback()
+        raise
 
-    # 7) Create stop_times entries
-    st1 = GtfsStopsTimes(
-        trip_id=trip.id,
-        stop_id=dep_stop.id,
-        arrival_time=req.departure_time,
-        departure_time=req.departure_time,
-        stop_sequence=1,
-    )
-    st2 = GtfsStopsTimes(
-        trip_id=trip.id,
-        stop_id=arr_stop.id,
-        arrival_time=req.arrival_time,
-        departure_time=req.arrival_time,
-        stop_sequence=2,
-    )
-    db.add_all([st1, st2])
-    await db.commit()
-
-    return trip
+    return AuxTripCreateResponse(trip=trip, elevation_job=job)

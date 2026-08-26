@@ -2,17 +2,14 @@
 Prediction service: runs ConsumptionPredictor for shifts stored in the DB.
 """
 
-import io
 import logging
 import math
-import os
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
 import numpy as np
 import pandas as pd
-from minio import Minio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +28,7 @@ from app.utils.trip_statistics import (
     extract_route_difficulty_metrics_from_elevation,
     extract_stop_to_stop_statistics_for_schedule,
 )
+from app.services.elevation_profiles import load_trip_elevation_dataframe
 from simulation.consumption_prediction import ConsumptionPredictor
 
 logger = logging.getLogger(__name__)
@@ -317,36 +315,7 @@ async def _load_trip_elevation(db: AsyncSession, trip_id: UUID) -> pd.DataFrame:
     trip = await db.get(GtfsTrips, trip_id)
     if not trip or not trip.shape_id:
         return pd.DataFrame()
-    try:
-        endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
-        access_key = os.getenv("AWS_ACCESS_KEY_ID", "minio_user")
-        secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "minio_password")
-        secure = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes", "on")
-        client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
-        response = client.get_object("elevation-profiles", f"{trip.shape_id}.parquet")
-        try:
-            data = response.read()
-        finally:
-            response.close()
-            response.release_conn()
-        df = pd.read_parquet(io.BytesIO(data))
-        if "cumulative_distance_m" not in df.columns and len(df) > 1:
-            from math import radians, cos, sin, asin, sqrt
-            distances = [0.0]
-            for i in range(1, len(df)):
-                lat1 = radians(df.iloc[i - 1]["latitude"])
-                lon1 = radians(df.iloc[i - 1]["longitude"])
-                lat2 = radians(df.iloc[i]["latitude"])
-                lon2 = radians(df.iloc[i]["longitude"])
-                dlat = lat2 - lat1
-                dlon = lon2 - lon1
-                a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
-                c = 2 * asin(sqrt(a))
-                distances.append(distances[-1] + c * 6371000)
-            df["cumulative_distance_m"] = distances
-        return df
-    except Exception:
-        return pd.DataFrame()
+    return await load_trip_elevation_dataframe(db, trip)
 
 
 # ---------------------------------------------------------------------------

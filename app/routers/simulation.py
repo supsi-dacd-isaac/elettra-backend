@@ -44,6 +44,14 @@ from app.services.weather import (
     get_saved_clustering,
     sanitize_weather_values,
 )
+from app.services.elevation_profiles import (
+    ElevationProfileFormatError,
+    ElevationProfileNotFoundError,
+    ElevationProfileNotReadyError,
+    ElevationProfileStorageError,
+    ensure_shift_profiles_ready,
+    load_trip_elevation_dataframe,
+)
 from app.utils.trip_statistics import (
     compute_global_trip_statistics_combined,
     extract_stop_to_stop_statistics_for_schedule,
@@ -140,12 +148,18 @@ async def create_prediction_runs(
         if ya is None:
             raise HTTPException(status_code=404, detail="Yearly analysis not found")
 
-    run_ids: list[UUID] = []
     for shift_id in request.shift_ids:
         shift = await db.get(Shifts, shift_id)
         if shift is None:
             raise HTTPException(status_code=404, detail=f"Shift {shift_id} not found")
 
+    try:
+        await ensure_shift_profiles_ready(db, request.shift_ids)
+    except ElevationProfileNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+
+    run_ids: list[UUID] = []
+    for shift_id in request.shift_ids:
         run = PredictionRuns(
             user_id=current_user.id,
             shift_id=shift_id,
@@ -239,6 +253,11 @@ async def create_optimization_run(
         shift = await db.get(Shifts, shift_id)
         if shift is None:
             raise HTTPException(status_code=404, detail=f"Shift {shift_id} not found")
+
+    try:
+        await ensure_shift_profiles_ready(db, request.shift_ids)
+    except ElevationProfileNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
 
     prediction_bus_model_ids: set[UUID] = set()
     if request.prediction_run_ids:
@@ -683,10 +702,6 @@ async def compute_trip_statistics(
     Concatenates GTFS schedules and elevation profiles (offsetting cumulative distance)
     and returns a single statistics object.
     """
-    import os
-    import io
-    from minio import Minio
-
     if not request.trip_ids:
         return CombinedTripStatisticsResponse(trip_ids=[], statistics={}, error=None)
 
@@ -721,46 +736,22 @@ async def compute_trip_statistics(
             } for (stop, arrival_time, departure_time, stop_sequence) in rows]
             schedules.append(pd.DataFrame(trip_schedule_data))
 
-        # 2) Elevation (MinIO)
+        # 2) Elevation (release-aware for GTFS, job-aware for auxiliary trips)
+        trip = await db.get(GtfsTrips, trip_id)
+        if trip is None:
+            raise HTTPException(status_code=404, detail=f"Trip {trip_id} not found")
+        if not trip.shape_id:
+            raise HTTPException(status_code=404, detail=f"Trip {trip_id} has no shape_id")
         try:
-            trip = await db.get(GtfsTrips, trip_id)
-            if trip and trip.shape_id:
-                endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
-                access_key = os.getenv("AWS_ACCESS_KEY_ID", "minio_user")
-                secret_key = os.getenv("AWS_SECRET_ACCESS_KEY", "minio_password")
-                secure = os.getenv("MINIO_SECURE", "false").lower() in ("1", "true", "yes", "on")
-                client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
-                bucket_name = "elevation-profiles"
-                object_name = f"{trip.shape_id}.parquet"
-                response = client.get_object(bucket_name, object_name)
-                try:
-                    data = response.read()
-                finally:
-                    response.close()
-                    response.release_conn()
-                df = pd.read_parquet(io.BytesIO(data))
-                if 'cumulative_distance_m' not in df.columns:
-                    if len(df) > 1:
-                        from math import radians, cos, sin, asin, sqrt
-                        distances = [0.0]
-                        for i in range(1, len(df)):
-                            lat1 = radians(df.iloc[i-1]['latitude'])
-                            lon1 = radians(df.iloc[i-1]['longitude'])
-                            lat2 = radians(df.iloc[i]['latitude'])
-                            lon2 = radians(df.iloc[i]['longitude'])
-                            dlat = lat2 - lat1
-                            dlon = lon2 - lon1
-                            a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-                            c = 2 * asin(sqrt(a))
-                            r = 6371000
-                            distances.append(distances[-1] + c * r)
-                        df['cumulative_distance_m'] = distances
-                    else:
-                        df['cumulative_distance_m'] = [0.0]
-                elevation_dfs.append(df)
-        except Exception:
-            # tolerate missing elevation
-            pass
+            elevation_dfs.append(await load_trip_elevation_dataframe(db, trip))
+        except ElevationProfileNotReadyError as exc:
+            raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+        except ElevationProfileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ElevationProfileStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ElevationProfileFormatError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # Concatenate schedules
     if schedules:

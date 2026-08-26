@@ -35,6 +35,11 @@ def _cleanup_trip(client, trip_id, headers):
             print(f"Warning: Exception during trip cleanup: {e}")
 
 
+def _created_trip_and_job(response):
+    payload = response.json()
+    return payload["trip"], payload["elevation_job"]
+
+
 @pytest.mark.skipif(
     not (
         os.getenv("OSRM_BASE_URL")
@@ -69,24 +74,36 @@ def test_create_depot_trip(client, record, monkeypatch):
     # Use aux-trip endpoint, explicitly setting depot status for same behavior
     payload["status"] = "depot"
     r = client.post(f"{API_BASE}/aux-trip", json=payload, headers=headers)
-    ok = r.status_code == 200
+    ok = r.status_code == 202
     record("create_depot_trip_status", ok, f"status={r.status_code} body={r.text[:200]}")
     
     created_trip_id = None
     if ok:
-        data = r.json()
+        data, job = _created_trip_and_job(r)
         created_trip_id = data.get("id")
         record("created_has_shape_id", bool(data.get("shape_id")), "Missing shape_id")
         record("created_status_depot", data.get("status") == "depot", f"status={data.get('status')}")
+        record("elevation_job_created", job.get("status") == "pending", f"job={job}")
 
-        # Try fetching elevation profile to ensure parquet accessible
+        # The profile is intentionally unavailable until the worker succeeds.
         if created_trip_id:
+            status_response = client.get(
+                f"{API_BASE}/aux-trip/{created_trip_id}/elevation-status",
+                headers=headers,
+            )
+            record(
+                "elevation_status_fetch",
+                status_response.status_code == 200,
+                f"status={status_response.status_code}",
+            )
             r2 = client.get(f"{API_BASE}/elevation-profile/by-trip/{created_trip_id}", headers=headers)
-            elevation_fetch_ok = r2.status_code == 200
-            record("elevation_profile_fetch", elevation_fetch_ok, f"status={r2.status_code}")
+            current_status = status_response.json().get("status")
+            allowed_profile_statuses = {200} if current_status == "succeeded" else {200, 409}
+            elevation_fetch_ok = r2.status_code in allowed_profile_statuses
+            record("elevation_profile_readiness", elevation_fetch_ok, f"status={r2.status_code}")
             
             # Check that elevation profile has non-null altitude values
-            if elevation_fetch_ok:
+            if r2.status_code == 200:
                 elevation_data = r2.json()
                 records = elevation_data.get("records", [])
                 non_null_altitudes = [r for r in records if r.get("altitude_m") is not None]
@@ -133,24 +150,36 @@ def test_create_transfer_trip(client, record, monkeypatch):
     }
     headers = _auth_headers(client)
     r = client.post(f"{API_BASE}/aux-trip", json=payload, headers=headers)
-    ok = r.status_code == 200
+    ok = r.status_code == 202
     record("create_transfer_trip_status", ok, f"status={r.status_code} body={r.text[:200]}")
     
     created_trip_id = None
     if ok:
-        data = r.json()
+        data, job = _created_trip_and_job(r)
         created_trip_id = data.get("id")
         record("created_status_transfer", data.get("status") == "transfer", f"status={data.get('status')}")
         record("gtfs_service_auxiliary", data.get("gtfs_service_id") == "auxiliary", f"gtfs_service_id={data.get('gtfs_service_id')}")
+        record("elevation_job_created", job.get("status") == "pending", f"job={job}")
         
         # Try fetching elevation profile and check for valid altitudes
         if created_trip_id:
+            status_response = client.get(
+                f"{API_BASE}/aux-trip/{created_trip_id}/elevation-status",
+                headers=headers,
+            )
+            record(
+                "elevation_status_fetch",
+                status_response.status_code == 200,
+                f"status={status_response.status_code}",
+            )
             r2 = client.get(f"{API_BASE}/elevation-profile/by-trip/{created_trip_id}", headers=headers)
-            elevation_fetch_ok = r2.status_code == 200
-            record("elevation_profile_fetch", elevation_fetch_ok, f"status={r2.status_code}")
+            current_status = status_response.json().get("status")
+            allowed_profile_statuses = {200} if current_status == "succeeded" else {200, 409}
+            elevation_fetch_ok = r2.status_code in allowed_profile_statuses
+            record("elevation_profile_readiness", elevation_fetch_ok, f"status={r2.status_code}")
             
             # Check that elevation profile has non-null altitude values
-            if elevation_fetch_ok:
+            if r2.status_code == 200:
                 elevation_data = r2.json()
                 records = elevation_data.get("records", [])
                 non_null_altitudes = [r for r in records if r.get("altitude_m") is not None]
@@ -199,15 +228,14 @@ def test_create_depot_trip_with_day_of_week(client, record, monkeypatch):
         "day_of_week": "monday",
     }
     r = client.post(f"{API_BASE}/aux-trip", json=payload, headers=headers)
-    ok = r.status_code == 200
+    ok = r.status_code == 202
     record("create_depot_trip_mon_status", ok, f"status={r.status_code} body={r.text[:200]}")
 
     created_trip_id = None
     if ok:
-        data = r.json()
+        data, job = _created_trip_and_job(r)
         created_trip_id = data.get("id")
         record("gtfs_service_auxiliary_mon", data.get("gtfs_service_id") == "auxiliary_mon", f"gtfs_service_id={data.get('gtfs_service_id')}")
+        record("elevation_job_created", job.get("status") == "pending", f"job={job}")
 
     _cleanup_trip(client, created_trip_id, headers)
-
-

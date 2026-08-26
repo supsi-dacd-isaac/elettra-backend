@@ -10,7 +10,7 @@ from main import app
 class FakeSession:
     async def get(self, model, pk):
         # Return an object with a shape_id for any requested trip
-        return SimpleNamespace(shape_id="shape_test_123")
+        return SimpleNamespace(id=pk, shape_id="shape_test_123", status="gtfs")
 
 
 class FakeMinioObject:
@@ -51,7 +51,8 @@ def test_get_elevation_profile_by_trip(client, monkeypatch, record, trip_id):
 
     # Mock Minio client
     from app import routers
-    monkeypatch.setattr(routers.gtfs, "Minio", FakeMinioClient)
+    from app.services import elevation_profiles
+    monkeypatch.setattr(elevation_profiles, "create_minio_client", FakeMinioClient)
 
     # Mock pandas.read_parquet to return deterministic data
     import pandas as pd
@@ -62,7 +63,7 @@ def test_get_elevation_profile_by_trip(client, monkeypatch, record, trip_id):
             {"segment_id": "A", "point_number": 2, "latitude": 46.001, "longitude": 8.001, "altitude_m": 505.5},
         ])
 
-    monkeypatch.setattr(routers.gtfs.pd, "read_parquet", fake_read_parquet)
+    monkeypatch.setattr(elevation_profiles.pd, "read_parquet", fake_read_parquet)
 
     # Call endpoint
     try:
@@ -74,12 +75,17 @@ def test_get_elevation_profile_by_trip(client, monkeypatch, record, trip_id):
         assert data["shape_id"] == "shape_test_123"
         assert isinstance(data["records"], list)
         assert len(data["records"]) == 2
-        assert set(data["records"][0].keys()) == {"segment_id", "point_number", "latitude", "longitude", "altitude_m"}
+        assert set(data["records"][0].keys()) == {
+            "segment_id",
+            "point_number",
+            "latitude",
+            "longitude",
+            "altitude_m",
+            "cumulative_distance_m",
+        }
 
         record("elevation_profile_by_trip_returns_records", True, "Endpoint returned mocked parquet records successfully")
     finally:
         # Clean up overrides to avoid affecting other tests
         app.dependency_overrides.pop(get_async_session, None)
         app.dependency_overrides.pop(get_current_user, None)
-
-

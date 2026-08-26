@@ -43,7 +43,7 @@ def _existing_trip_on_route(client: TestClient, headers: dict) -> dict | None:
     return None
 
 
-def _make_trip_payload(client: TestClient, headers: dict, status: str = "other") -> dict | None:
+def _make_trip_payload(client: TestClient, headers: dict, status: str = "gtfs") -> dict | None:
     base = _existing_trip_on_route(client, headers)
     if not base:
         return None
@@ -66,8 +66,8 @@ def test_trip_crud_and_status_filter(client: TestClient, record):
         record("auth_missing", False, "No auth token available")
         return
 
-    # Create a trip with status 'other'
-    payload = _make_trip_payload(client, headers, status="other")
+    # Generic creation is intentionally restricted to canonical GTFS trips.
+    payload = _make_trip_payload(client, headers, status="gtfs")
     if not payload:
         record("no_existing_trip_for_seed", False, "No existing GTFS trip found on route to clone service_id")
         return
@@ -81,30 +81,30 @@ def test_trip_crud_and_status_filter(client: TestClient, record):
         created = r_create.json()
         created_id = created.get("id")
         record("create_trip_has_id", bool(created_id), "Missing trip id")
-        record("create_trip_status_other", created.get("status") == "other", f"status={created.get('status')}")
+        record("create_trip_status_gtfs", created.get("status") == "gtfs", f"status={created.get('status')}")
 
-        # Read trips by route, default status (gtfs) should not include our 'other' trip
+        # Read trips by route, default status (gtfs) includes the created trip.
         r_read_default = client.get(f"{API_BASE}/gtfs-trips/by-route/{TEST_ROUTE_ID}", headers=headers)
         record("read_default_200", r_read_default.status_code == 200, f"status={r_read_default.status_code}")
         if r_read_default.status_code == 200:
             ids_default = {t["id"] for t in r_read_default.json()}
-            record("default_excludes_other", created_id not in ids_default, "'other' trip appears without status filter")
+            record("default_includes_gtfs", created_id in ids_default, "created GTFS trip is missing")
 
-        # Read with status=other should include it
+        # A different status filter must exclude it.
         r_read_other = client.get(f"{API_BASE}/gtfs-trips/by-route/{TEST_ROUTE_ID}?status=other", headers=headers)
         record("read_other_200", r_read_other.status_code == 200, f"status={r_read_other.status_code}")
         if r_read_other.status_code == 200:
             ids_other = {t["id"] for t in r_read_other.json()}
-            record("other_included", created_id in ids_other, "'other' trip not in filtered list")
+            record("other_excludes_gtfs", created_id not in ids_other, "GTFS trip appears in other filter")
 
-        # Update trip: set trip_headsign and status remain other
-        update = {"trip_headsign": "Updated Head", "status": "other"}
+        # Updating non-identity fields and repeating the same status remains supported.
+        update = {"trip_headsign": "Updated Head", "status": "gtfs"}
         r_update = client.put(f"{API_BASE}/gtfs-trips/{created_id}", json=update, headers=headers)
         record("update_trip_200", r_update.status_code == 200, f"status={r_update.status_code} body={r_update.text}")
         if r_update.status_code == 200:
             updated = r_update.json()
             record("update_trip_headsign", updated.get("trip_headsign") == "Updated Head", f"trip_headsign={updated.get('trip_headsign')}")
-            record("update_trip_status_still_other", updated.get("status") == "other", f"status={updated.get('status')}")
+            record("update_trip_status_still_gtfs", updated.get("status") == "gtfs", f"status={updated.get('status')}")
     finally:
         # Cleanup: delete the created trip
         if created_id:
@@ -121,7 +121,7 @@ def test_trip_delete_cleanup(client: TestClient, record):
         record("auth_missing2", False, "No auth token available")
         return
 
-    payload = _make_trip_payload(client, headers, status="other")
+    payload = _make_trip_payload(client, headers, status="gtfs")
     if not payload:
         record("no_existing_trip_for_seed2", False, "No existing GTFS trip found on route to clone service_id")
         return
@@ -137,5 +137,4 @@ def test_trip_delete_cleanup(client: TestClient, record):
         # Verify deletion by attempting to delete again
         r_del_again = client.delete(f"{API_BASE}/gtfs-trips/{created_id}", headers=headers)
         record("delete_trip2_404", r_del_again.status_code == 404, f"status={r_del_again.status_code}")
-
 
