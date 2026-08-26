@@ -288,6 +288,24 @@ class GtfsTripsRead(BaseModel):
     arrival_time: Optional[str]
     model_config = ConfigDict(from_attributes=True)
 
+class ElevationProfileJobsRead(BaseModel):
+    id: UUID
+    trip_id: UUID
+    payload: dict
+    status: str
+    attempts: int
+    available_at: datetime
+    lease_expires_at: Optional[datetime]
+    worker_id: Optional[str]
+    last_error: Optional[str]
+    algorithm_version: Optional[str]
+    roads_release: Optional[str]
+    output_object_name: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime]
+    model_config = ConfigDict(from_attributes=True)
+
 class GtfsStopsTimesCreate(BaseModel):
     trip_id: UUID
     stop_id: UUID

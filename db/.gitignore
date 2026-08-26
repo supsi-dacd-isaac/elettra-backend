@@ -1,4 +1,2 @@
-# Ignore the generated init schema file
-# This is auto-generated from elettra_schema.sql
-elettra_schema_init.sql
-
+# `elettra_schema_init.sql` is generated from the canonical dump, but remains
+# versioned because docker-compose mounts it when initializing a clean clone.

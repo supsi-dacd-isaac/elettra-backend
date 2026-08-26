@@ -255,6 +255,107 @@ class GtfsTrips(Base):
     service: Mapped['GtfsCalendar'] = relationship('GtfsCalendar', back_populates='gtfs_trips')
     gtfs_stops_times: Mapped[list['GtfsStopsTimes']] = relationship('GtfsStopsTimes', back_populates='trip')
     shifts_structures: Mapped[list['ShiftsStructures']] = relationship('ShiftsStructures', back_populates='trip')
+    elevation_profile_job: Mapped[Optional['ElevationProfileJobs']] = relationship(
+        'ElevationProfileJobs',
+        back_populates='trip',
+        uselist=False,
+        passive_deletes=True,
+    )
+
+
+class ElevationProfileJobs(Base):
+    __tablename__ = 'elevation_profile_jobs'
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'succeeded', 'failed')",
+            name='elevation_profile_jobs_status_check',
+        ),
+        CheckConstraint('attempts >= 0', name='elevation_profile_jobs_attempts_check'),
+        ForeignKeyConstraint(
+            ['trip_id'],
+            ['gtfs_trips.id'],
+            ondelete='CASCADE',
+            name='elevation_profile_jobs_trip_id_fkey',
+        ),
+        PrimaryKeyConstraint('id', name='elevation_profile_jobs_pkey'),
+        UniqueConstraint('trip_id', name='elevation_profile_jobs_trip_id_key'),
+        Index('elevation_profile_jobs_status_available_at_idx', 'status', 'available_at'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, server_default=text('gen_random_uuid()')
+    )
+    trip_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'::text")
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
+    available_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(True), nullable=False, server_default=text('now()')
+    )
+    lease_expires_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    worker_id: Mapped[Optional[str]] = mapped_column(Text)
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    algorithm_version: Mapped[Optional[str]] = mapped_column(Text)
+    roads_release: Mapped[Optional[str]] = mapped_column(Text)
+    output_object_name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(True), nullable=False, server_default=text('now()')
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(True), nullable=False, server_default=text('now()')
+    )
+    completed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+
+    trip: Mapped['GtfsTrips'] = relationship('GtfsTrips', back_populates='elevation_profile_job')
+
+
+class ElevationProfileCleanupJobs(Base):
+    """Durable outbox row that survives deletion of its former owning trip."""
+
+    __tablename__ = 'elevation_profile_cleanup_jobs'
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'succeeded', 'failed')",
+            name='elevation_profile_cleanup_jobs_status_check',
+        ),
+        CheckConstraint(
+            'attempts >= 0',
+            name='elevation_profile_cleanup_jobs_attempts_check',
+        ),
+        PrimaryKeyConstraint('id', name='elevation_profile_cleanup_jobs_pkey'),
+        UniqueConstraint('trip_id', name='elevation_profile_cleanup_jobs_trip_id_key'),
+        Index(
+            'elevation_profile_cleanup_jobs_status_available_at_idx',
+            'status',
+            'available_at',
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, server_default=text('gen_random_uuid()')
+    )
+    # Deliberately no FK: the outbox must outlive the deleted gtfs_trips row.
+    trip_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pending'::text")
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text('0'))
+    available_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(True), nullable=False, server_default=text('now()')
+    )
+    lease_expires_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    worker_id: Mapped[Optional[str]] = mapped_column(Text)
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(True), nullable=False, server_default=text('now()')
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(True), nullable=False, server_default=text('now()')
+    )
+    completed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
 
 
 class Variants(Base):

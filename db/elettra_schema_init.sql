@@ -2,7 +2,6 @@
 -- PostgreSQL database dump
 --
 
-\restrict bSUlLl6GHjK5gJeZ0c9qtfbC1IIhmMf26YTxN0VOt1wbVzVyJgGPF5fYGWbPrxx
 
 -- Dumped from database version 16.10
 -- Dumped by pg_dump version 16.10 (Ubuntu 16.10-0ubuntu0.24.04.1)
@@ -26,7 +25,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 
 
 --
--- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
@@ -44,7 +43,7 @@ CREATE TYPE public.sim_status AS ENUM (
 );
 
 
-ALTER TYPE public.sim_status OWNER TO admin;
+-- Owner will be set automatically for type sim_status
 
 --
 -- Name: simstatus; Type: TYPE; Schema: public; Owner: admin
@@ -58,7 +57,7 @@ CREATE TYPE public.simstatus AS ENUM (
 );
 
 
-ALTER TYPE public.simstatus OWNER TO admin;
+-- Owner will be set automatically for type simstatus
 
 --
 -- Name: trip_status; Type: TYPE; Schema: public; Owner: admin
@@ -74,7 +73,7 @@ CREATE TYPE public.trip_status AS ENUM (
 );
 
 
-ALTER TYPE public.trip_status OWNER TO admin;
+-- Owner will be set automatically for type trip_status
 
 SET default_tablespace = '';
 
@@ -93,7 +92,7 @@ CREATE TABLE public.buses (
 );
 
 
-ALTER TABLE public.buses OWNER TO admin;
+-- Owner will be set automatically for table buses
 
 --
 -- Name: buses_models; Type: TABLE; Schema: public; Owner: admin
@@ -109,7 +108,7 @@ CREATE TABLE public.buses_models (
 );
 
 
-ALTER TABLE public.buses_models OWNER TO admin;
+-- Owner will be set automatically for table buses_models
 
 --
 -- Name: depots; Type: TABLE; Schema: public; Owner: admin
@@ -125,7 +124,7 @@ CREATE TABLE public.depots (
 );
 
 
-ALTER TABLE public.depots OWNER TO admin;
+-- Owner will be set automatically for table depots
 
 --
 -- Name: elevation_profile_cleanup_jobs; Type: TABLE; Schema: public; Owner: admin
@@ -149,7 +148,7 @@ CREATE TABLE public.elevation_profile_cleanup_jobs (
 );
 
 
-ALTER TABLE public.elevation_profile_cleanup_jobs OWNER TO admin;
+-- Owner will be set automatically for table elevation_profile_cleanup_jobs
 
 --
 -- Name: elevation_profile_jobs; Type: TABLE; Schema: public; Owner: admin
@@ -176,7 +175,7 @@ CREATE TABLE public.elevation_profile_jobs (
 );
 
 
-ALTER TABLE public.elevation_profile_jobs OWNER TO admin;
+-- Owner will be set automatically for table elevation_profile_jobs
 
 --
 -- Name: gtfs_agencies; Type: TABLE; Schema: public; Owner: admin
@@ -195,7 +194,7 @@ CREATE TABLE public.gtfs_agencies (
 );
 
 
-ALTER TABLE public.gtfs_agencies OWNER TO admin;
+-- Owner will be set automatically for table gtfs_agencies
 
 --
 -- Name: gtfs_calendar; Type: TABLE; Schema: public; Owner: admin
@@ -216,7 +215,7 @@ CREATE TABLE public.gtfs_calendar (
 );
 
 
-ALTER TABLE public.gtfs_calendar OWNER TO admin;
+-- Owner will be set automatically for table gtfs_calendar
 
 --
 -- Name: gtfs_routes; Type: TABLE; Schema: public; Owner: admin
@@ -241,7 +240,7 @@ CREATE TABLE public.gtfs_routes (
 );
 
 
-ALTER TABLE public.gtfs_routes OWNER TO admin;
+-- Owner will be set automatically for table gtfs_routes
 
 --
 -- Name: gtfs_stops; Type: TABLE; Schema: public; Owner: admin
@@ -268,7 +267,7 @@ CREATE TABLE public.gtfs_stops (
 );
 
 
-ALTER TABLE public.gtfs_stops OWNER TO admin;
+-- Owner will be set automatically for table gtfs_stops
 
 --
 -- Name: gtfs_stops_times; Type: TABLE; Schema: public; Owner: admin
@@ -291,7 +290,7 @@ CREATE TABLE public.gtfs_stops_times (
 );
 
 
-ALTER TABLE public.gtfs_stops_times OWNER TO admin;
+-- Owner will be set automatically for table gtfs_stops_times
 
 --
 -- Name: gtfs_trips; Type: TABLE; Schema: public; Owner: admin
@@ -318,7 +317,7 @@ CREATE TABLE public.gtfs_trips (
 );
 
 
-ALTER TABLE public.gtfs_trips OWNER TO admin;
+-- Owner will be set automatically for table gtfs_trips
 
 --
 -- Name: shifts; Type: TABLE; Schema: public; Owner: admin
@@ -331,7 +330,7 @@ CREATE TABLE public.shifts (
 );
 
 
-ALTER TABLE public.shifts OWNER TO admin;
+-- Owner will be set automatically for table shifts
 
 --
 -- Name: shifts_structures; Type: TABLE; Schema: public; Owner: admin
@@ -345,7 +344,7 @@ CREATE TABLE public.shifts_structures (
 );
 
 
-ALTER TABLE public.shifts_structures OWNER TO admin;
+-- Owner will be set automatically for table shifts_structures
 
 --
 -- Name: prediction_runs; Type: TABLE; Schema: public; Owner: admin
@@ -368,7 +367,7 @@ CREATE TABLE public.prediction_runs (
     completed_at timestamp with time zone
 );
 
-ALTER TABLE public.prediction_runs OWNER TO admin;
+-- Owner will be set automatically for table prediction_runs
 
 --
 -- Name: trip_predictions; Type: TABLE; Schema: public; Owner: admin
@@ -387,7 +386,7 @@ CREATE TABLE public.trip_predictions (
     quantiles jsonb
 );
 
-ALTER TABLE public.trip_predictions OWNER TO admin;
+-- Owner will be set automatically for table trip_predictions
 
 --
 -- Name: optimization_runs; Type: TABLE; Schema: public; Owner: admin
@@ -407,7 +406,7 @@ CREATE TABLE public.optimization_runs (
     CONSTRAINT optimization_runs_mode_check CHECK ((mode = ANY (ARRAY['battery_only'::text, 'charging_only'::text, 'joint'::text])))
 );
 
-ALTER TABLE public.optimization_runs OWNER TO admin;
+-- Owner will be set automatically for table optimization_runs
 
 --
 -- Name: users; Type: TABLE; Schema: public; Owner: admin
@@ -425,7 +424,7 @@ CREATE TABLE public.users (
 );
 
 
-ALTER TABLE public.users OWNER TO admin;
+-- Owner will be set automatically for table users
 
 --
 -- Name: variants; Type: TABLE; Schema: public; Owner: admin
@@ -441,7 +440,7 @@ CREATE TABLE public.variants (
 );
 
 
-ALTER TABLE public.variants OWNER TO admin;
+-- Owner will be set automatically for table variants
 
 --
 -- Name: weather_temperature_clusters; Type: TABLE; Schema: public; Owner: admin
@@ -463,7 +462,7 @@ CREATE TABLE public.weather_temperature_clusters (
 );
 
 
-ALTER TABLE public.weather_temperature_clusters OWNER TO admin;
+-- Owner will be set automatically for table weather_temperature_clusters
 
 --
 -- Name: weather_measurements; Type: TABLE; Schema: public; Owner: admin
@@ -492,7 +491,7 @@ CREATE TABLE public.weather_measurements (
 );
 
 
-ALTER TABLE public.weather_measurements OWNER TO admin;
+-- Owner will be set automatically for table weather_measurements
 
 --
 -- Name: yearly_analysis; Type: TABLE; Schema: public; Owner: admin
@@ -507,7 +506,7 @@ CREATE TABLE public.yearly_analysis (
 );
 
 
-ALTER TABLE public.yearly_analysis OWNER TO admin;
+-- Owner will be set automatically for table yearly_analysis
 
 --
 -- Name: buses_manufacturers; Type: TABLE; Schema: public; Owner: admin
@@ -519,7 +518,7 @@ CREATE TABLE public.buses_manufacturers (
 );
 
 
-ALTER TABLE public.buses_manufacturers OWNER TO admin;
+-- Owner will be set automatically for table buses_manufacturers
 
 --
 -- Name: buses_models_refs; Type: TABLE; Schema: public; Owner: admin
@@ -532,7 +531,7 @@ CREATE TABLE public.buses_models_refs (
 );
 
 
-ALTER TABLE public.buses_models_refs OWNER TO admin;
+-- Owner will be set automatically for table buses_models_refs
 
 --
 -- Name: buses_lca_data; Type: TABLE; Schema: public; Owner: admin
@@ -555,7 +554,7 @@ CREATE TABLE public.buses_lca_data (
 );
 
 
-ALTER TABLE public.buses_lca_data OWNER TO admin;
+-- Owner will be set automatically for table buses_lca_data
 
 --
 -- Name: buses bus_name_user_id_unique; Type: CONSTRAINT; Schema: public; Owner: admin
@@ -1195,4 +1194,44 @@ ALTER TABLE ONLY public.buses_models_refs
 -- PostgreSQL database dump complete
 --
 
-\unrestrict bSUlLl6GHjK5gJeZ0c9qtfbC1IIhmMf26YTxN0VOt1wbVzVyJgGPF5fYGWbPrxx
+
+--
+-- Essential seed data for Elettra Backend
+--
+
+-- Insert 'auxiliary' service into gtfs_calendar
+-- This service is used for depot trips, transfer trips, and other non-GTFS trips
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary', 1, 1, 1, 1, 1, 1, 1, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (
+    SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary'
+);
+
+-- Per-day auxiliary services
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_mon', 1, 0, 0, 0, 0, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_mon');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_tue', 0, 1, 0, 0, 0, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_tue');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_wed', 0, 0, 1, 0, 0, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_wed');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_thu', 0, 0, 0, 1, 0, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_thu');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_fri', 0, 0, 0, 0, 1, 0, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_fri');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_sat', 0, 0, 0, 0, 0, 1, 0, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_sat');
+
+INSERT INTO public.gtfs_calendar (service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+SELECT 'auxiliary_sun', 0, 0, 0, 0, 0, 0, 1, '2020-01-01'::date, '2099-12-31'::date
+WHERE NOT EXISTS (SELECT 1 FROM public.gtfs_calendar WHERE service_id = 'auxiliary_sun');
