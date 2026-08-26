@@ -1,14 +1,14 @@
-version: "3.9"
-
-# Option B: Run ONLY the FastAPI app container and connect to an existing / externally managed Postgres database.
-# Provide the external database connection string via the DATABASE_URL environment variable
-# before running `docker compose -f docker-compose.external.yml up -d`.
+# Run the FastAPI app (plus the optional `road-deck` worker profile) against
+# externally managed PostgreSQL and MinIO services.
 # Example:
 #   export DATABASE_URL=postgresql+asyncpg://user:pwd@your-db-host:5432/elettra
 #   docker compose -f docker-compose.external.yml up --build
 
 services:
   app:
+    # Production should select the exact image digest that passed the release
+    # gate instead of rebuilding a potentially dirty checkout on the host.
+    image: ${ELETTRA_BACKEND_IMAGE:-elettra-backend-app}
     build: .
     container_name: elettra-api
     restart: unless-stopped
@@ -16,11 +16,20 @@ services:
       # Path to config file inside container (copied or mounted below)
       ELETTRA_CONFIG_FILE: /app/config/elettra-config.docker.yaml
       # Runtime overrides (DATABASE_URL MUST point to existing external DB host)
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to the production PostgreSQL instance}
       APP_LOG_LEVEL: INFO
       APP_DEBUG: "false"
-      # Optional: override secret at runtime
-      # APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me}
+      # No production fallback: refusing to render the compose file is safer
+      # than starting with the secret embedded in the repository config.
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY must be set to a strong production secret}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      # Grant this identity only ListBucket/GetObject on the profile and
+      # consumption-model buckets used by backend reads.
+      AWS_ACCESS_KEY_ID: ${ELEVATION_PROFILES_READ_ACCESS_KEY:?Set a read-only MinIO access key for the backend}
+      AWS_SECRET_ACCESS_KEY: ${ELEVATION_PROFILES_READ_SECRET_KEY:?Set the read-only MinIO secret for the backend}
+      ELEVATION_PROFILES_BUCKET: ${ELEVATION_PROFILES_BUCKET:-elevation-profiles}
+      ELEVATION_PROFILES_RELEASE: ${ELEVATION_PROFILES_RELEASE:-}
     ports:
       - "8000:8000"
     volumes:
@@ -29,5 +38,30 @@ services:
     # Command can be overridden for reload in dev with: --reload (not recommended in prod)
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-# No volumes needed here (database is external)
+  elevation-profile-worker:
+    profiles: ["road-deck"]
+    # Production must set this to an immutable registry tag or digest built
+    # from pyriadne/Dockerfile.elevation-worker.
+    image: ${ELEVATION_PROFILE_WORKER_IMAGE:-pyriadne-elevation-worker:latest}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to the production PostgreSQL instance}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      # The worker needs List/Get/Put/DeleteObject. Keep these credentials
+      # distinct from both the backend reader and the MinIO administrator. They
+      # may remain empty while this profile is disabled; worker startup rejects
+      # them before polling when `--profile road-deck` is enabled.
+      MINIO_ACCESS_KEY: ${ELEVATION_PROFILES_WRITE_ACCESS_KEY:-}
+      MINIO_SECRET_KEY: ${ELEVATION_PROFILES_WRITE_SECRET_KEY:-}
+      ELEVATION_PROFILES_BUCKET: ${ELEVATION_PROFILES_BUCKET:-elevation-profiles}
+      ROADS_GPKG: /data/swisstlm3d/roads.gpkg
+      ROADS_MANIFEST: /data/swisstlm3d/roads_manifest.json
+      ELEVATION_WORKER_POLL_SECONDS: ${ELEVATION_WORKER_POLL_SECONDS:-5}
+      ELEVATION_WORKER_LEASE_SECONDS: ${ELEVATION_WORKER_LEASE_SECONDS:-900}
+      ELEVATION_WORKER_MAX_ATTEMPTS: ${ELEVATION_WORKER_MAX_ATTEMPTS:-3}
+      ELEVATION_WORKER_BACKOFF_SECONDS: ${ELEVATION_WORKER_BACKOFF_SECONDS:-30}
+    volumes:
+      - ${SWISSTLM3D_DATA_DIR:-./data/swisstlm3d}:/data/swisstlm3d:ro
 
+# No volumes needed here (database is external)

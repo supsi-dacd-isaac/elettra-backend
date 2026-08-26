@@ -20,19 +20,31 @@ services:
       - ./db/elettra_schema_init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
 
   app:
+    image: ${ELETTRA_BACKEND_IMAGE:-elettra-backend-app}
     build: .
     container_name: elettra-api
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     environment:
       # Point to the docker-specific config file copied into the image
       ELETTRA_CONFIG_FILE: /app/config/elettra-config.docker.yaml
+      # Development-only default. Production uses docker-compose.external.yml,
+      # where APP_SECRET_KEY is mandatory.
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-local-development-only-change-me}
       # MinIO endpoint (Docker-internal)
       MINIO_ENDPOINT: minio:9000
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minio_user}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minio_password}
+      # The API needs only ListBucket/GetObject permissions on profile/model
+      # buckets. Dedicated read-only credentials avoid worker/admin key reuse.
+      AWS_ACCESS_KEY_ID: ${ELEVATION_PROFILES_READ_ACCESS_KEY:-${AWS_ACCESS_KEY_ID:-minio_user}}
+      AWS_SECRET_ACCESS_KEY: ${ELEVATION_PROFILES_READ_SECRET_KEY:-${AWS_SECRET_ACCESS_KEY:-minio_password}}
+      ELEVATION_PROFILES_BUCKET: ${ELEVATION_PROFILES_BUCKET:-elevation-profiles}
+      # Empty keeps the legacy root namespace during the compatibility rollout.
+      # Set this to a completed immutable release ID to switch every GTFS read.
+      ELEVATION_PROFILES_RELEASE: ${ELEVATION_PROFILES_RELEASE:-}
       # Optionally override log level at runtime
       LOG_LEVEL: INFO
       # LCA API server selection (DEV / INT / PROD)
@@ -80,8 +92,8 @@ services:
       # MinIO Console is available at http://localhost:9001
       - "9003:9001"
     environment:
-      MINIO_ROOT_USER: "${AWS_ACCESS_KEY_ID:-minio_user}"
-      MINIO_ROOT_PASSWORD: "${AWS_SECRET_ACCESS_KEY:-minio_password}"
+      MINIO_ROOT_USER: "${MINIO_ADMIN_ACCESS_KEY:-${AWS_ACCESS_KEY_ID:-minio_user}}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ADMIN_SECRET_KEY:-${AWS_SECRET_ACCESS_KEY:-minio_password}}"
     healthcheck:
       test: timeout 5s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
       interval: 1s
@@ -96,13 +108,48 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      MINIO_ADMIN_ACCESS_KEY: ${MINIO_ADMIN_ACCESS_KEY:-${AWS_ACCESS_KEY_ID:-minio_user}}
+      MINIO_ADMIN_SECRET_KEY: ${MINIO_ADMIN_SECRET_KEY:-${AWS_SECRET_ACCESS_KEY:-minio_password}}
     entrypoint: >
       bash -c "
-      mc alias set minio http://minio:9000 ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY} &&
-      mc mb minio/elevation-profiles --ignore-existing &&
+      mc alias set minio http://minio:9000 $${MINIO_ADMIN_ACCESS_KEY} $${MINIO_ADMIN_SECRET_KEY} &&
+      mc mb minio/${ELEVATION_PROFILES_BUCKET:-elevation-profiles} --ignore-existing &&
       mc mb minio/consumption-models --ignore-existing &&
       echo 'Buckets created successfully'
       "
+
+  elevation-profile-worker:
+    profiles: ["road-deck"]
+    image: ${ELEVATION_PROFILE_WORKER_IMAGE:-pyriadne-elevation-worker:local}
+    build:
+      context: ../pyriadne
+      dockerfile: Dockerfile.elevation-worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-create-bucket:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-elettra}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_SECURE: "false"
+      # The worker requires List/Get/Put/DeleteObject permissions and must use
+      # a credential distinct from the backend's read-only identity.
+      MINIO_ACCESS_KEY: ${ELEVATION_PROFILES_WRITE_ACCESS_KEY:-${AWS_ACCESS_KEY_ID:-minio_user}}
+      MINIO_SECRET_KEY: ${ELEVATION_PROFILES_WRITE_SECRET_KEY:-${AWS_SECRET_ACCESS_KEY:-minio_password}}
+      ELEVATION_PROFILES_BUCKET: ${ELEVATION_PROFILES_BUCKET:-elevation-profiles}
+      ROADS_GPKG: /data/swisstlm3d/roads.gpkg
+      ROADS_MANIFEST: /data/swisstlm3d/roads_manifest.json
+      ELEVATION_WORKER_POLL_SECONDS: ${ELEVATION_WORKER_POLL_SECONDS:-5}
+      ELEVATION_WORKER_LEASE_SECONDS: ${ELEVATION_WORKER_LEASE_SECONDS:-900}
+      ELEVATION_WORKER_MAX_ATTEMPTS: ${ELEVATION_WORKER_MAX_ATTEMPTS:-3}
+      ELEVATION_WORKER_BACKOFF_SECONDS: ${ELEVATION_WORKER_BACKOFF_SECONDS:-30}
+    volumes:
+      - ${SWISSTLM3D_DATA_DIR:-../pyriadne/data/swisstlm3d}:/data/swisstlm3d:ro
 
   osrm-download:
     image: alpine:latest

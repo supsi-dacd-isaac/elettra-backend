@@ -1,0 +1,58 @@
+# MinIO identities for elevation profiles
+
+Create three non-root identities and attach the policies in this directory:
+
+- `elevation-backend-readonly.json` for the FastAPI service;
+- `elevation-worker.json` for the auxiliary worker;
+- `elevation-release-publisher.json` only for the offline release command.
+
+Example with an administrative `mc` alias named `production`:
+
+```bash
+mc admin policy create production elevation-backend-readonly \
+  deploy/minio/elevation-backend-readonly.json
+mc admin policy create production elevation-worker \
+  deploy/minio/elevation-worker.json
+mc admin policy create production elevation-release-publisher \
+  deploy/minio/elevation-release-publisher.json
+```
+
+Attach each policy to its dedicated user/service account using the MinIO
+administrative workflow for the deployed server version. Store generated keys
+in the secret manager, not `.env` or Compose. The worker policy has an explicit
+deny for every object operation under `releases/`; only the offline publisher
+can upload profiles and commit `release.json`. The publisher cannot delete
+release objects. Worker and publisher include `AbortMultipartUpload` so a
+failed large upload can be cleaned up.
+
+The backend is explicitly denied access to worker-only `backups/`,
+`._staging/` and `._health/` objects. It can read release objects, root-level
+auxiliary profiles and the `consumption-models` bucket. While auxiliary objects
+remain at `<shape_id>.parquet`, an IAM policy cannot distinguish them from
+legacy GTFS objects in the same root namespace; application validation is the
+remaining isolation boundary. A future `aux/` namespace would remove that
+limitation.
+
+The templates use the default bucket names. If
+`ELEVATION_PROFILES_BUCKET` differs, change every corresponding ARN before
+creating the policies. Enable bucket versioning/object locking and retention in
+the infrastructure layer when supported; these JSON policies do not substitute
+for storage-level retention.
+
+Before enabling a release in production, verify all of the following:
+
+```bash
+mc version info production/elevation-profiles
+mc retention info production/elevation-profiles
+mc anonymous get production/elevation-profiles
+mc admin policy entities production --policy elevation-backend-readonly
+mc admin policy entities production --policy elevation-worker
+mc admin policy entities production --policy elevation-release-publisher
+```
+
+`release.json` is written last by the publisher, but IAM cannot express write
+ordering or prevent overwriting an existing key. Object locking/retention is
+therefore the storage-level immutability control. If the existing bucket does
+not support locking, publish into a bucket created with object locking enabled
+or treat disabling the publisher identity immediately after a successful
+release as a temporary operational control.

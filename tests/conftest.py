@@ -45,6 +45,7 @@ for env_file in env_files:
         load_env_file(env_file)
         break
 
+import main as main_module  # noqa: E402
 from main import app  # noqa: E402
 from app.core.config import get_cached_settings  # noqa: E402
 from app.database import get_async_session  # noqa: E402
@@ -66,8 +67,24 @@ USE_COLOR = os.getenv("TEST_REPORT_COLOR") == "1"
 # -----------------------------
 @pytest.fixture(scope="session")
 def client():
-    with TestClient(app) as c:
-        yield c
+    async def test_profile_store_ready():
+        return "test fixture bypasses external MinIO startup probe"
+
+    async def test_queue_schema_ready(_session):
+        # Runtime readiness has dedicated unit tests. Most API tests target an
+        # existing shared DB that intentionally is not migrated by the suite.
+        return None
+
+    original_profile_probe = main_module.probe_elevation_profiles_store
+    original_schema_probe = main_module.validate_elevation_jobs_schema
+    main_module.probe_elevation_profiles_store = test_profile_store_ready
+    main_module.validate_elevation_jobs_schema = test_queue_schema_ready
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        main_module.probe_elevation_profiles_store = original_profile_probe
+        main_module.validate_elevation_jobs_schema = original_schema_probe
 
 ## Removed autouse temp-user provision to avoid overriding seeded users
 

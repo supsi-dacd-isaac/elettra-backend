@@ -1,0 +1,38 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::elevation-profiles",
+        "arn:aws:s3:::consumption-models"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::elevation-profiles/*",
+        "arn:aws:s3:::consumption-models/*"
+      ]
+    },
+    {
+      "Effect": "Deny",
+      "Action": ["s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+      "Resource": [
+        "arn:aws:s3:::elevation-profiles/*",
+        "arn:aws:s3:::consumption-models/*"
+      ]
+    },
+    {
+      "Effect": "Deny",
+      "Action": ["s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::elevation-profiles/backups/*",
+        "arn:aws:s3:::elevation-profiles/._staging/*",
+        "arn:aws:s3:::elevation-profiles/._health/*"
+      ]
+    }
+  ]
+}

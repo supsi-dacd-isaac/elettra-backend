@@ -2,11 +2,12 @@
 Elettra Backend - Main FastAPI Application
 """
 
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, UTC
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -14,7 +15,15 @@ import textwrap
 from app.routers import agency, auth, economic, environmental, gtfs, simulation, user as user_router, yearly_analysis
 from app.core.config import get_cached_settings
 from app.schemas.health import HealthCheckResponse, ServiceStatus
-from app.database import get_async_session
+from app.database import AsyncSessionLocal, get_async_session
+from app.services.elevation_profiles import (
+    configured_release,
+    create_minio_client,
+    elevation_profiles_bucket,
+    probe_configured_release_immutable,
+    validate_configured_release,
+    validate_release_covers_database,
+)
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 import re
@@ -27,6 +36,194 @@ settings = get_cached_settings()
 
 # Track application startup time for uptime calculation
 startup_time = time.time()
+
+_ELEVATION_JOB_COLUMNS = {
+    "id",
+    "trip_id",
+    "payload",
+    "status",
+    "attempts",
+    "available_at",
+    "lease_expires_at",
+    "worker_id",
+    "last_error",
+    "algorithm_version",
+    "roads_release",
+    "output_object_name",
+    "created_at",
+    "updated_at",
+    "completed_at",
+}
+_ELEVATION_JOB_CONSTRAINTS = {
+    "elevation_profile_jobs_pkey",
+    "elevation_profile_jobs_trip_id_key",
+    "elevation_profile_jobs_trip_id_fkey",
+    "elevation_profile_jobs_status_check",
+    "elevation_profile_jobs_attempts_check",
+}
+_ELEVATION_JOB_INDEX = "elevation_profile_jobs_status_available_at_idx"
+_CLEANUP_JOB_COLUMNS = {
+    "id",
+    "trip_id",
+    "payload",
+    "status",
+    "attempts",
+    "available_at",
+    "lease_expires_at",
+    "worker_id",
+    "last_error",
+    "created_at",
+    "updated_at",
+    "completed_at",
+}
+_CLEANUP_JOB_CONSTRAINTS = {
+    "elevation_profile_cleanup_jobs_pkey",
+    "elevation_profile_cleanup_jobs_trip_id_key",
+    "elevation_profile_cleanup_jobs_status_check",
+    "elevation_profile_cleanup_jobs_attempts_check",
+}
+_CLEANUP_JOB_INDEX = "elevation_profile_cleanup_jobs_status_available_at_idx"
+
+
+async def validate_elevation_jobs_schema(session) -> None:
+    """Fail when either durable elevation migration is partially applied."""
+    columns_result = await session.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'elevation_profile_jobs'
+            """
+        )
+    )
+    columns = set(columns_result.scalars().all())
+    missing_columns = sorted(_ELEVATION_JOB_COLUMNS - columns)
+    if missing_columns:
+        raise RuntimeError(
+            "migration 005 is missing or incomplete; elevation_profile_jobs "
+            f"lacks columns: {', '.join(missing_columns)}"
+        )
+
+    constraints_result = await session.execute(
+        text(
+            """
+            SELECT conname
+            FROM pg_constraint
+            WHERE conrelid = 'public.elevation_profile_jobs'::regclass
+            """
+        )
+    )
+    constraints = set(constraints_result.scalars().all())
+    missing_constraints = sorted(_ELEVATION_JOB_CONSTRAINTS - constraints)
+    if missing_constraints:
+        raise RuntimeError(
+            "migration 005 is incomplete; elevation_profile_jobs lacks constraints: "
+            + ", ".join(missing_constraints)
+        )
+
+    index_result = await session.execute(
+        text(
+            """
+            SELECT indexname
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'elevation_profile_jobs'
+            """
+        )
+    )
+    indexes = set(index_result.scalars().all())
+    if _ELEVATION_JOB_INDEX not in indexes:
+        raise RuntimeError(
+            "migration 005 is incomplete; elevation_profile_jobs lacks index "
+            f"{_ELEVATION_JOB_INDEX}"
+        )
+
+    cleanup_columns_result = await session.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'elevation_profile_cleanup_jobs'
+            """
+        )
+    )
+    cleanup_columns = set(cleanup_columns_result.scalars().all())
+    missing_cleanup_columns = sorted(_CLEANUP_JOB_COLUMNS - cleanup_columns)
+    if missing_cleanup_columns:
+        raise RuntimeError(
+            "migration 006 is missing or incomplete; elevation_profile_cleanup_jobs "
+            f"lacks columns: {', '.join(missing_cleanup_columns)}"
+        )
+
+    cleanup_constraints_result = await session.execute(
+        text(
+            """
+            SELECT conname
+            FROM pg_constraint
+            WHERE conrelid = 'public.elevation_profile_cleanup_jobs'::regclass
+            """
+        )
+    )
+    cleanup_constraints = set(cleanup_constraints_result.scalars().all())
+    missing_cleanup_constraints = sorted(
+        _CLEANUP_JOB_CONSTRAINTS - cleanup_constraints
+    )
+    if missing_cleanup_constraints:
+        raise RuntimeError(
+            "migration 006 is incomplete; elevation_profile_cleanup_jobs lacks "
+            "constraints: " + ", ".join(missing_cleanup_constraints)
+        )
+    cleanup_fk_result = await session.execute(
+        text(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'public.elevation_profile_cleanup_jobs'::regclass
+                  AND contype = 'f'
+            )
+            """
+        )
+    )
+    if bool(cleanup_fk_result.scalar_one()):
+        raise RuntimeError(
+            "migration 006 is invalid; elevation_profile_cleanup_jobs must not "
+            "have a foreign key because the outbox must survive trip deletion"
+        )
+
+    cleanup_index_result = await session.execute(
+        text(
+            """
+            SELECT indexname
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'elevation_profile_cleanup_jobs'
+            """
+        )
+    )
+    cleanup_indexes = set(cleanup_index_result.scalars().all())
+    if _CLEANUP_JOB_INDEX not in cleanup_indexes:
+        raise RuntimeError(
+            "migration 006 is incomplete; elevation_profile_cleanup_jobs lacks index "
+            f"{_CLEANUP_JOB_INDEX}"
+        )
+
+
+async def probe_elevation_profiles_store() -> str:
+    """Contact MinIO for both release and compatibility-mode deployments."""
+    release_id = configured_release()
+    if release_id is not None:
+        await asyncio.to_thread(probe_configured_release_immutable)
+        return f"MinIO elevation release '{release_id}' is active and complete"
+
+    bucket = elevation_profiles_bucket()
+    client = create_minio_client()
+    exists = await asyncio.to_thread(client.bucket_exists, bucket)
+    if not exists:
+        raise RuntimeError(f"MinIO bucket {bucket!r} does not exist")
+    return f"Legacy MinIO elevation namespace is reachable in bucket '{bucket}'"
 
 # Configure logging with settings
 logging.basicConfig(
@@ -42,6 +239,26 @@ async def lifespan(app: FastAPI):
     logger.info(f"🚌 {settings.app_name} v{settings.app_version} starting...")
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"Database URL: {settings.database_url.split('@')[1] if '@' in settings.database_url else 'localhost'}")
+    profile_status = await probe_elevation_profiles_store()
+    release_id = configured_release()
+    async with AsyncSessionLocal() as release_session:
+        await release_session.execute(text("SELECT 1"))
+        await validate_elevation_jobs_schema(release_session)
+        if release_id is not None:
+            release_manifest = validate_configured_release()
+            await validate_release_covers_database(release_session, release_manifest)
+    if release_id is not None:
+        logger.info(
+            "Elevation profiles: bucket=%s release=%s (manifest validated)",
+            elevation_profiles_bucket(),
+            release_id,
+        )
+    else:
+        logger.warning(
+            "Elevation profiles: legacy root namespace active because "
+            "ELEVATION_PROFILES_RELEASE is not configured"
+        )
+    logger.info("Startup dependency preflight passed: %s", profile_status)
     yield
     # Shutdown
     logger.info(f"🔌 {settings.app_name} shutting down...")
@@ -243,8 +460,13 @@ async def root():
     }
 
 
-@app.get("/health", response_model=HealthCheckResponse, tags=["Health"])
-async def health_check():
+@app.get(
+    "/health",
+    response_model=HealthCheckResponse,
+    tags=["Health"],
+    responses={503: {"model": HealthCheckResponse}},
+)
+async def health_check(response: Response):
     """
     Health check endpoint for monitoring and load balancers.
     
@@ -262,10 +484,11 @@ async def health_check():
         async for session in get_async_session():
             result = await session.execute(text("SELECT 1"))
             result.fetchone()
+            await validate_elevation_jobs_schema(session)
             response_time = (time.time() - start_time) * 1000
             services["database"] = ServiceStatus(
                 status="healthy",
-                message="Database connection successful",
+                message="Database connection and migrations 005/006 are ready",
                 response_time_ms=round(response_time, 2),
                 last_checked=timestamp
             )
@@ -275,6 +498,26 @@ async def health_check():
             status="unhealthy",
             message=f"Database connection failed: {str(e)}",
             last_checked=timestamp
+        )
+        overall_status = "unhealthy"
+
+    # Probe MinIO on every readiness request. In compatibility mode this still
+    # contacts the configured bucket instead of declaring the legacy namespace
+    # healthy without checking its storage dependency.
+    try:
+        start_time = time.time()
+        minio_message = await probe_elevation_profiles_store()
+        services["elevation_profiles"] = ServiceStatus(
+            status="healthy",
+            message=minio_message,
+            response_time_ms=round((time.time() - start_time) * 1000, 2),
+            last_checked=timestamp,
+        )
+    except Exception as e:
+        services["elevation_profiles"] = ServiceStatus(
+            status="unhealthy",
+            message=f"Elevation release validation failed: {str(e)}",
+            last_checked=timestamp,
         )
         overall_status = "unhealthy"
     
@@ -292,6 +535,9 @@ async def health_check():
     elif any(service.status == "degraded" for service in services.values()):
         overall_status = "degraded"
     
+    if overall_status == "unhealthy":
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
     return HealthCheckResponse(
         status=overall_status,
         timestamp=timestamp,

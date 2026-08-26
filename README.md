@@ -326,13 +326,29 @@ docker compose down -v
 ```
 
 ### 15.2 External / Managed Database
-If you already run PostgreSQL elsewhere, use `docker-compose.external.yml` which only launches the API container and connects to your external DB via the `DATABASE_URL` environment variable.
+If you already run PostgreSQL and MinIO elsewhere, use
+`docker-compose.external.yml`. It defines the API and an optional elevation
+worker enabled with the `road-deck` profile.
 
 Example run:
 ```bash
 export DATABASE_URL="postgresql+asyncpg://$user:$password@$host:5432/elettra"
-docker compose -f docker-compose.external.yml up --build -d
+export APP_SECRET_KEY="$(openssl rand -hex 32)"
+export ELEVATION_PROFILES_READ_ACCESS_KEY="elettra-backend-reader"
+export ELEVATION_PROFILES_READ_SECRET_KEY="..."
+export ELETTRA_BACKEND_IMAGE="registry.example/elettra-backend@sha256:<digest>"
+docker compose -f docker-compose.external.yml pull app
+docker compose -f docker-compose.external.yml up --no-build -d app
 ```
+
+For a production rollout of a prebuilt image, use `--no-build`; the digest in
+`ELETTRA_BACKEND_IMAGE` must be the image that passed the release gate.
+
+Before enabling the worker, provision a separate MinIO identity with
+List/Get/Put/DeleteObject permissions and set
+`ELEVATION_PROFILES_WRITE_ACCESS_KEY` and
+`ELEVATION_PROFILES_WRITE_SECRET_KEY`. Then start it with
+`docker compose -f docker-compose.external.yml --profile road-deck up -d`.
 
 ### 15.3 Configuration Files inside Containers
 By default the image expects: `ELETTRA_CONFIG_FILE=/app/config/elettra-config.docker.yaml`.
@@ -351,6 +367,9 @@ The loader allows these direct env overrides (case sensitive):
 - `APP_DEBUG` (`true/false/1/0`) → replaces `debug`
 - `APP_ALLOWED_ORIGINS` (comma separated)
 - `APP_SECRET_KEY`
+- `ELEVATION_PROFILES_BUCKET` and `ELEVATION_PROFILES_RELEASE`
+- `ELEVATION_PROFILES_READ_ACCESS_KEY` / `ELEVATION_PROFILES_READ_SECRET_KEY`
+  (mapped to the backend's MinIO identity)
 
 ### 15.5 Development (Live Reload) in Docker
 For rapid iteration you can:
@@ -392,10 +411,17 @@ docker rm elettra-api       # Remove the container
 
 ### 15.7 Health & Logs
 - Basic health: `curl http://localhost:8000/`
+- Dependency readiness: `curl -f http://localhost:8000/health` (returns `503`
+  until PostgreSQL migrations 005/006 and the configured MinIO namespace are
+  reachable)
 - Container logs: `docker logs -f elettra-api`
 
 ### 15.8 Security Notes
 - Always set a strong `APP_SECRET_KEY` (override value in config file).
+- Use distinct MinIO identities: read-only for the backend and write-capable
+  for the elevation worker; do not reuse MinIO root credentials. The backend
+  reader also needs read access to the `consumption-models` bucket used by
+  prediction.
 - Restrict exposed ports in production (e.g. run behind a reverse proxy / API gateway).
 - Use separate, least‑privilege DB credentials for production.
 - When using `--network host`, the container shares the host's network stack entirely.

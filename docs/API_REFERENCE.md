@@ -197,11 +197,13 @@ Body:
 ```
 Behavior:
 - Computes OSRM route geometry between the two stops
-- Uses SwissTopo to compute elevation profile and stores parquet in MinIO bucket `elevation-profiles` as `{shape_id}.parquet`
 - Looks up `gtfs_calendar.service_id` using `calendar_service_key` (default `auxiliary`)
-- Creates a new trip with `status` set from the request, `gtfs_service_id` set to the calendar key, and `trip_id`/`shape_id` prefixed by the status
-- Inserts two stop_times: departure (seq 1) and arrival (seq 2)
-Returns the created trip (`GtfsTripsRead`).
+- Atomically creates the trip, its two stop-times and a durable elevation job containing the encoded OSRM polyline
+- Returns `202 Accepted` with `{ "trip": ..., "elevation_job": ... }`; no synchronous elevation request or provisional MinIO upload is made
+
+Poll `GET /api/v1/gtfs/aux-trip/{trip_id}/elevation-status`. Until the job is
+`succeeded`, elevation, statistics, prediction and optimization requests that
+need the trip return `409` with code `elevation_profile_not_ready`.
 
 ---
 
@@ -455,6 +457,13 @@ curl -H 'Authorization: Bearer $TOKEN' \
 curl -H 'Authorization: Bearer $TOKEN' \
   http://127.0.0.1:8002/api/v1/gtfs/elevation-profile/by-trip/<trip_id>
 ```
+
+GTFS objects are resolved as
+`releases/$ELEVATION_PROFILES_RELEASE/<shape_id>.parquet` when a release is
+configured. Startup fails unless that prefix contains a completed compatible
+`release.json`; reads never fall back to the legacy root key. With the variable
+unset, GTFS reads remain compatible with `<shape_id>.parquet`. Auxiliary trips
+always use their job's stable `output_object_name` after successful completion.
 
 ### 14.3 PVGIS TMY Data (`/api/v1/simulation/pvgis-tmy/`)
 ```bash
