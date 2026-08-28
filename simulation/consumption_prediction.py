@@ -30,6 +30,30 @@ from .greybox_sensitivity import compute_battery_sensitivity_from_metadata
 logger = logging.getLogger(__name__)
 
 
+def _register_legacy_pickle_symbols() -> None:
+    """Expose trainer symbols required by historical ``__main__`` pickles.
+
+    The training CLI is intentionally executable as a script.  Models produced
+    that way may record the combined grey-box wrapper under ``__main__`` even
+    though the production implementation lives in ``greybox_models``.  Both
+    MinIO and local-file loaders must install the same trusted compatibility
+    aliases before calling :func:`joblib.load`; otherwise the release gate can
+    reject a model that the MinIO path would accept (or vice versa).
+    """
+
+    main_module = sys.modules.get("__main__")
+    if main_module is None:  # pragma: no cover - CPython always provides it
+        raise RuntimeError("Cannot register legacy model pickle symbols")
+    symbols = {
+        "CombinedGreyboxQRF": CombinedGreyboxQRF,
+        "MechanicalGreyBox": MechanicalGreyBox,
+        "GreyBoxParams": GreyBoxParams,
+        "compute_aux_energy": compute_aux_energy,
+    }
+    for name, value in symbols.items():
+        setattr(main_module, name, value)
+
+
 def validate_model_feature_contract(metadata: Optional[Dict[str, Any]]) -> None:
     """Reject models trained with a different feature meaning.
 
@@ -114,16 +138,10 @@ class ConsumptionPredictor:
         )
         validate_model_feature_contract(metadata)
         
-        # Load model from bytes
-        # Register custom classes/functions under __main__ to support models pickled from training script
-        try:
-            sys.modules['__main__'].CombinedGreyboxQRF = CombinedGreyboxQRF
-            sys.modules['__main__'].MechanicalGreyBox = MechanicalGreyBox
-            sys.modules['__main__'].GreyBoxParams = GreyBoxParams
-            sys.modules['__main__'].compute_aux_energy = compute_aux_energy
-        except Exception:
-            # Non-fatal; proceed to load (will fail if required)
-            pass
+        # Load model from bytes. Models created by the executable trainer can
+        # contain trusted ``__main__`` references; keep this path identical to
+        # ``load_model_from_file`` used by the container compatibility gate.
+        _register_legacy_pickle_symbols()
         self.model = joblib.load(io.BytesIO(model_bytes))
         self.metadata = metadata
         # Determine model type
@@ -160,7 +178,8 @@ class ConsumptionPredictor:
             metadata_path: Optional path to metadata JSON file
         """
         logger.info(f"Loading model from local file: {file_path}")
-        
+
+        _register_legacy_pickle_symbols()
         self.model = joblib.load(file_path)
         
         if metadata_path:
