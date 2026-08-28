@@ -32,7 +32,7 @@ beautifulsoup4>=4.12.3
 
 # GTFS and geospatial processing
 gtfs-kit>=5.2.0
-pandas>=2.1.4
+pandas>=2.1.4,<3
 geopandas>=0.14.1
 shapely>=2.0.2
 matplotlib>=3.10.6
