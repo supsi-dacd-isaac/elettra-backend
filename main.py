@@ -235,9 +235,11 @@ async def elevation_job_health_metadata(session) -> dict[str, int | str | None]:
                 count(*) FILTER (
                     WHERE status = 'succeeded'
                       AND (
-                        (:algorithm IS NOT NULL AND algorithm_version IS DISTINCT FROM :algorithm)
+                        (CAST(:algorithm AS text) IS NOT NULL
+                         AND algorithm_version IS DISTINCT FROM CAST(:algorithm AS text))
                         OR
-                        (:roads_release IS NOT NULL AND roads_release IS DISTINCT FROM :roads_release)
+                        (CAST(:roads_release AS text) IS NOT NULL
+                         AND roads_release IS DISTINCT FROM CAST(:roads_release AS text))
                       )
                 ) AS incompatible
             FROM elevation_profile_jobs

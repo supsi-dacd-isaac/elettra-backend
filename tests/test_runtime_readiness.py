@@ -38,9 +38,12 @@ class _ScalarResult:
 
 
 class _ReadySession:
-    async def execute(self, statement, _parameters=None):
+    async def execute(self, statement, parameters=None):
         sql = str(statement)
         if "FROM elevation_profile_jobs" in sql and "count(*) AS total" in sql:
+            if parameters == {"algorithm": None, "roads_release": None}:
+                assert "CAST(:algorithm AS text)" in sql
+                assert "CAST(:roads_release AS text)" in sql
             return _ScalarResult(row=(984, 984, 0, 0, 0))
         if "contype = 'f'" in sql:
             return _ScalarResult(row=(False,))
