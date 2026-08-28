@@ -1,0 +1,16 @@
+{
+  "vecto_console_version": "5.1.3.0",
+  "vecto_core_version": "5.1.3",
+  "source_commit": "cef1f3d260afa7f7c6ec09981d821e545d21b249",
+  "vecto_core_dll_sha256": "0e2ee07a7e28e2ba82764274873f1ca7b22a218da2349ddef44ae602c8751ab7",
+  "vecto_common_dll_sha256": "7ad750aad7dc1bfa65b601a39839a57eb87ae1d32b75fc47a85d0fda10487298",
+  "vectocmd_dll_sha256": "c8f737f452cf380fdaa71d4757a4ef00c8c709681c56371cd147c53090670109",
+  "oracle_case_count": 18,
+  "heating_distribution_coverage": [
+    "HD1", "HD2", "HD3", "HD4", "HD5", "HD6",
+    "HD7", "HD8", "HD9", "HD10", "HD11", "HD12"
+  ],
+  "oracle": "tests/vecto_oracle/Program.cs",
+  "cases": "tests/fixtures/vecto_ssm_5_1_3_cases.json",
+  "golden": "tests/fixtures/vecto_ssm_5_1_3_golden.json"
+}

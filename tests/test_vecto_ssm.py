@@ -1,189 +1,180 @@
-"""
-Tests for app.services.vecto_ssm — VECTO SSM auxiliary power model.
+"""Regression tests for the VECTO 5.1.3 HVAC SSM transcription."""
 
-Validates the Python re-implementation against known VECTO 5.1.3 outputs
-(city_10m bus, HD7, engine_waste_heat=8kW, weighted average over EU conditions).
-"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
 
 import pytest
 
 from app.services.vecto_ssm import (
-    BusGeometry,
     VectoAuxResult,
-    vecto_auxiliary_power,
+    VectoEnvironmentalCondition,
+    VectoSsmInputs,
+    _heating_distribution_case,
     _ssm_calculate,
-    _interpolate_cop,
-    _thermal_balance,
-    _HEATING_BOUNDARY_TEMP,
+    default_environmental_condition,
+    vecto_auxiliary_power,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures"
+CASES = json.loads((FIXTURES / "vecto_ssm_5_1_3_cases.json").read_text())
+GOLDEN = json.loads((FIXTURES / "vecto_ssm_5_1_3_golden.json").read_text())
+GOLDEN_BY_NAME = {item["name"]: item for item in GOLDEN}
+BREAKDOWN_FIELDS = (
+    "electrical_cooling_and_ventilation_w",
+    "mechanical_cooling_w",
+    "required_heating_power_w",
+    "electrical_heat_pump_w",
+    "mechanical_heat_pump_w",
+    "electric_heater_w",
+    "fuel_heater_w",
 )
 
 
-# ---------------------------------------------------------------------------
-# Validation against VECTO 5.1.3 weighted-average output
-# ---------------------------------------------------------------------------
-
-class TestVectoValidation:
-    """Validate against known VECTO 5.1.3 simulation outputs."""
-
-    def test_weighted_average_matches_vecto(self):
-        """The weighted EU-average for a 10.6m bus (HD7, EWH=8kW) should match
-        the VECTO output within 5%: P_el=0.966 kW, P_fuel=0.044 kW."""
-        from app.services.vecto_ssm import _ENV_CONDITIONS_MAP
-
-        bus = BusGeometry(length=10.6, n_passengers=50, floor_type="LowFloor")
-        engine_waste_heat = 8000  # W
-
-        total_weight = sum(ec["weight"] for ec in _ENV_CONDITIONS_MAP)
-        w_el = 0.0
-        w_fuel = 0.0
-
-        for ec in _ENV_CONDITIONS_MAP:
-            w = ec["weight"] / total_weight
-            from app.services.vecto_ssm import (
-                _thermal_balance, _interpolate_cop,
-                _HEATING_BOUNDARY_TEMP, _COOLING_BOUNDARY_TEMP,
-                _MAX_DELTA_LOW_FLOOR, _HEATING_DISTRIBUTIONS,
-                _FUEL_HEATER_CAPACITY, _ENV_CONDITIONS_MAP as ecm,
-            )
-            # Replicate full calc with engine waste heat
-            r1 = _thermal_balance(ec["temp"], ec["solar"], _HEATING_BOUNDARY_TEMP, bus)
-            t_calc_r2 = max(_COOLING_BOUNDARY_TEMP, ec["temp"] - _MAX_DELTA_LOW_FLOOR)
-            r2 = _thermal_balance(ec["temp"], ec["solar"], t_calc_r2, bus)
-
-            cop = _interpolate_cop(ec["temp"], "2stage")
-            p_el = 0.0
-            p_fuel = 0.0
-
-            if r1 > 0 and r2 > 0:
-                q_demand = min(min(r1, r2), bus.max_cooling_power)
-                if cop:
-                    p_el = q_demand / cop
-                p_el += bus.vent_power_cooling
-            elif r1 < 0 and r2 < 0:
-                raw_demand = abs(max(r1, r2))
-                q_demand = max(0, raw_demand - engine_waste_heat)
-                dist_map = _HEATING_DISTRIBUTIONS["HD7"]
-                hp_frac, fuel_frac = dist_map.get(ec["id"], (1.0, 0.0))
-                hp_demand = q_demand * hp_frac
-                fuel_demand = q_demand * fuel_frac
-                if cop and hp_demand > 0:
-                    p_el = hp_demand / cop
-                if fuel_demand > 0:
-                    fuel_eff = ec.get("heater_eff", {}).get("fuel", 0.80)
-                    if fuel_eff:
-                        p_fuel = min(fuel_demand, _FUEL_HEATER_CAPACITY) / fuel_eff
-                p_el += bus.vent_power_heating
-            else:
-                p_el = bus.vent_power_cooling
-
-            w_el += p_el * w
-            w_fuel += p_fuel * w
-
-        p_el_kw = w_el / 1000.0
-        p_fuel_kw = w_fuel / 1000.0
-
-        # VECTO reference: P_el = 0.966 kW, P_fuel = 0.044 kW, Total = 1.010 kW
-        assert abs(p_el_kw - 0.966) < 0.05, f"P_el={p_el_kw:.3f}, expected ~0.966"
-        assert abs(p_fuel_kw - 0.044) < 0.02, f"P_fuel={p_fuel_kw:.3f}, expected ~0.044"
-        assert abs((p_el_kw + p_fuel_kw) - 1.010) < 0.06
+def _optional_number(value):
+    return None if value == "NaN" else value
 
 
-# ---------------------------------------------------------------------------
-# Unit tests for the public API
-# ---------------------------------------------------------------------------
+def _inputs_from_oracle_case(case: dict) -> tuple[VectoEnvironmentalCondition, VectoSsmInputs]:
+    efficiency: dict[str, float] = {}
+    fuel_efficiency = _optional_number(case["fuel_heater_efficiency"])
+    if fuel_efficiency is not None:
+        efficiency["fuel"] = fuel_efficiency
+    electric_efficiency = _optional_number(case["electric_heater_efficiency"])
+    if case["electric_heater"] != "none" and electric_efficiency is not None:
+        efficiency[case["electric_heater"]] = electric_efficiency
 
-class TestVectoAuxiliaryPower:
-    """Test the convenience wrapper vecto_auxiliary_power()."""
-
-    def test_returns_dataclass(self):
-        result = vecto_auxiliary_power(10.0, 12.0)
-        assert isinstance(result, VectoAuxResult)
-
-    def test_cold_diesel_heater_reduces_electric(self):
-        r_hp = vecto_auxiliary_power(-5.0, 18.0, diesel_heater=False)
-        r_dh = vecto_auxiliary_power(-5.0, 18.0, diesel_heater=True)
-        assert r_dh.p_electrical_kw < r_hp.p_electrical_kw
-        assert r_dh.p_fuel_kw > 0
-        assert r_hp.p_fuel_kw == 0
-
-    def test_warm_no_fuel(self):
-        r = vecto_auxiliary_power(25.0, 12.0)
-        assert r.p_fuel_kw == 0
-        assert r.mode == "cooling"
-
-    def test_baseline_included(self):
-        r = vecto_auxiliary_power(15.0, 18.0)
-        assert r.p_baseline_kw > 0
-        assert r.p_electrical_kw >= r.p_baseline_kw
-
-    def test_default_passengers_by_length(self):
-        r10 = vecto_auxiliary_power(10.0, 10.0)
-        r12 = vecto_auxiliary_power(10.0, 12.0)
-        r18 = vecto_auxiliary_power(10.0, 18.0)
-        # Larger buses should have higher baseline
-        assert r18.p_baseline_kw > r10.p_baseline_kw
-
-    def test_custom_passengers(self):
-        r_empty = vecto_auxiliary_power(-5.0, 12.0, n_passengers=0, diesel_heater=False)
-        r_full = vecto_auxiliary_power(-5.0, 12.0, n_passengers=80, diesel_heater=False)
-        # More passengers = more body heat = less heating needed
-        assert r_full.p_hvac_electrical_kw < r_empty.p_hvac_electrical_kw
-
-    def test_solar_affects_cooling(self):
-        r_dark = vecto_auxiliary_power(28.0, 12.0, solar_irradiance_wm2=0)
-        r_sunny = vecto_auxiliary_power(28.0, 12.0, solar_irradiance_wm2=300)
-        # More sun = more cooling needed
-        assert r_sunny.p_electrical_kw > r_dark.p_electrical_kw
-
-    def test_custom_baseline(self):
-        r = vecto_auxiliary_power(15.0, 12.0, non_hvac_baseline_kw=5.0)
-        assert r.p_baseline_kw == 5.0
-
-    def test_hp_technology_variants(self):
-        r_r744 = vecto_auxiliary_power(-5.0, 12.0, hp_technology="R744", diesel_heater=False)
-        r_2stage = vecto_auxiliary_power(-5.0, 12.0, hp_technology="2stage", diesel_heater=False)
-        # R744 has better COP at low temps → less electrical
-        assert r_r744.p_hvac_electrical_kw < r_2stage.p_hvac_electrical_kw
-
-
-# ---------------------------------------------------------------------------
-# BusGeometry tests
-# ---------------------------------------------------------------------------
-
-class TestBusGeometry:
-
-    def test_surface_area_positive(self):
-        bus = BusGeometry(length=12.0)
-        assert bus.surface_area > 0
-
-    def test_volume_scales_with_length(self):
-        b10 = BusGeometry(length=10.0)
-        b18 = BusGeometry(length=18.0)
-        assert b18.volume > b10.volume
-
-    def test_u_value_by_floor_type(self):
-        assert BusGeometry(length=12.0, floor_type="LowFloor").u_value == 4.0
-        assert BusGeometry(length=12.0, floor_type="HighFloor").u_value == 3.0
+    environment = VectoEnvironmentalCondition(
+        environmental_id=case["environmental_id"],
+        temperature_celsius=case["temperature_celsius"],
+        solar_irradiance_wm2=case["solar_irradiance_wm2"],
+        heat_pump_cop=case["heat_pump_cop"],
+        heater_efficiency=efficiency,
+    )
+    inputs = VectoSsmInputs(
+        number_of_passengers=case["number_of_passengers"],
+        floor_type=case["floor_type"],
+        surface_area_m2=case["surface_area_m2"],
+        window_surface_m2=case["window_surface_m2"],
+        volume_m3=case["volume_m3"],
+        u_value_w_per_k_m2=case["u_value_w_per_k_square_m"],
+        hvac_configuration=int(case["hvac_configuration"].removeprefix("Configuration")),
+        driver_heat_pump=case["driver_heat_pump"],
+        passenger_heat_pump=case["passenger_heat_pump"],
+        electric_heaters=(
+            () if case["electric_heater"] == "none" else (case["electric_heater"],)
+        ),
+        driver_compartment_length_m=case["driver_compartment_length_m"],
+        passenger_compartment_length_m=case["passenger_compartment_length_m"],
+        max_cooling_power_driver_w=case["max_cooling_power_driver_w"],
+        max_cooling_power_passenger_w=case["max_cooling_power_passenger_w"],
+        max_heating_power_driver_w=case["max_heating_power_driver_w"],
+        max_heating_power_passenger_w=case["max_heating_power_passenger_w"],
+        fuel_heater_capacity_w=case["fuel_heater_capacity_w"],
+        ventilation_rate_per_hour=case["ventilation_rate_per_hour"],
+        ventilation_rate_heating_per_hour=case["ventilation_rate_heating_per_hour"],
+        specific_ventilation_power_wh_per_m3=case[
+            "specific_ventilation_power_wh_per_m3"
+        ],
+        ventilation_on_during_heating=case["ventilation_on_during_heating"],
+        ventilation_during_cooling=case["ventilation_during_cooling"],
+        ventilation_when_inactive=case["ventilation_when_inactive"],
+        engine_waste_heat_w=case.get("engine_waste_heat_w", 0.0),
+        heating_variation=case.get("heating_variation", 0.0),
+        heating_ventilation_variation=case.get(
+            "heating_ventilation_variation", 0.0
+        ),
+        inactive_ventilation_variation=case.get(
+            "inactive_ventilation_variation", 0.0
+        ),
+        cooling_ventilation_variation=case.get(
+            "cooling_ventilation_variation", 0.0
+        ),
+        cooling_variation=case.get("cooling_variation", 0.0),
+    )
+    return environment, inputs
 
 
-# ---------------------------------------------------------------------------
-# COP interpolation
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])
+def test_matches_official_vecto_5_1_3_oracle(case):
+    """Compare each component with output produced by official VectoCore.dll."""
+    environment, inputs = _inputs_from_oracle_case(case)
+    actual = _ssm_calculate(environment, inputs)
+    expected = GOLDEN_BY_NAME[case["name"]]
 
-class TestCOPInterpolation:
+    for field in BREAKDOWN_FIELDS:
+        assert getattr(actual, field) == pytest.approx(expected[field], abs=1e-9)
 
-    def test_returns_float_for_valid_tech(self):
-        cop = _interpolate_cop(10.0, "2stage")
-        assert isinstance(cop, float)
-        assert cop > 0
 
-    def test_clamps_below_range(self):
-        cop = _interpolate_cop(-30.0, "2stage")
-        assert cop == _interpolate_cop(-5.0, "2stage")  # first valid point for 2stage
+def test_every_oracle_case_has_exactly_one_golden_result():
+    assert [item["name"] for item in CASES] == [item["name"] for item in GOLDEN]
 
-    def test_none_for_unsupported_at_extreme(self):
-        # 2stage is None at -20°C (env id 1)
-        # but interpolation uses only non-None points, so it should
-        # return the lowest available value
-        cop = _interpolate_cop(-20.0, "2stage")
-        assert cop is not None  # extrapolates from first valid point
+
+def test_public_result_keeps_non_hvac_load_explicit():
+    environment, inputs = _inputs_from_oracle_case(CASES[2])
+    result = vecto_auxiliary_power(
+        environment=environment,
+        inputs=inputs,
+        non_hvac_baseline_kw=2.75,
+    )
+
+    assert isinstance(result, VectoAuxResult)
+    assert result.p_baseline_kw == 2.75
+    assert result.p_electrical_kw == pytest.approx(
+        result.p_hvac_electrical_kw + 2.75
+    )
+    assert result.p_hvac_mechanical_kw == 0.0
+    assert result.mode == "heating"
+
+
+def test_legacy_length_only_api_is_rejected():
+    with pytest.raises(TypeError):
+        vecto_auxiliary_power(temperature_celsius=-5.0, bus_length_m=12.0)
+
+
+def test_default_environment_is_exact_and_not_interpolated():
+    env1 = default_environmental_condition(1)
+    env2 = default_environmental_condition(2)
+
+    assert env1.temperature_celsius == -20.0
+    assert env1.solar_irradiance_wm2 == 10.0
+    assert env1.heat_pump_cop == {"R744": 1.8}
+    assert env2.heat_pump_cop["2stage"] == 1.54
+    with pytest.raises(ValueError, match="1..11"):
+        default_environmental_condition(12)
+
+
+@pytest.mark.parametrize(
+    ("heat_pump", "electric", "fuel", "expected"),
+    [
+        ("R744", False, False, 1),
+        ("R744", True, False, 2),
+        ("R744", True, True, 3),
+        ("R744", False, True, 4),
+        ("2stage", False, False, 5),
+        ("3stage", True, False, 6),
+        ("4stage", True, True, 7),
+        ("continuous", False, True, 8),
+        ("none", True, False, 9),
+        ("none", True, True, 10),
+        ("none", False, True, 11),
+        ("none", False, False, 12),
+    ],
+)
+def test_all_official_heating_distribution_cases(
+    heat_pump, electric, fuel, expected
+):
+    assert _heating_distribution_case(heat_pump, electric, fuel) == expected
+
+
+def test_input_validation_rejects_implicit_or_non_finite_values():
+    environment, inputs = _inputs_from_oracle_case(CASES[0])
+    with pytest.raises(ValueError, match="finite"):
+        VectoEnvironmentalCondition(
+            1, float("nan"), 10.0, environment.heat_pump_cop, {}
+        )
+    with pytest.raises(ValueError, match="non-negative"):
+        vecto_auxiliary_power(
+            environment=environment, inputs=inputs, non_hvac_baseline_kw=-1.0
+        )

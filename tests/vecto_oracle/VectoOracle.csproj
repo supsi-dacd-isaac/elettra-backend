@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- VECTO 5.1.3's net80 directory is supplied as a Docker build context. -->
+  <ItemGroup>
+    <Reference Include="VectoCommon">
+      <HintPath>/vecto/VectoCommon.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="VectoCore">
+      <HintPath>/vecto/VectoCore.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

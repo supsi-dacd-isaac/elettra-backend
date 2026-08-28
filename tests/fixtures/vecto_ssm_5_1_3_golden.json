@@ -1,0 +1,182 @@
+[
+  {
+    "name": "r744_fuel_hd4_env1",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 23756.0375,
+    "electrical_heat_pump_w": 5279.1194444444445,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 17817.028124999997
+  },
+  {
+    "name": "non_r744_fuel_hd8_env1",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 23756.0375,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 29695.046874999996
+  },
+  {
+    "name": "continuous_fuel_hd8_env2",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 13488.1125,
+    "electrical_heat_pump_w": 5304.313904494382,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 5058.0421875
+  },
+  {
+    "name": "continuous_cooling_env11",
+    "electrical_cooling_and_ventilation_w": 3010.4379562043796,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 0,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 0
+  },
+  {
+    "name": "r744_electric_and_fuel_hd3_env1",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 23756.0375,
+    "electrical_heat_pump_w": 5279.119444444445,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 5108.825268817205,
+    "fuel_heater_w": 11878.018750000001
+  },
+  {
+    "name": "continuous_electric_and_fuel_hd7_env1",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 23756.0375,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 5108.825268817205,
+    "fuel_heater_w": 23756.037500000002
+  },
+  {
+    "name": "mechanical_2stage_fuel_hd8_env2",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 13488.1125,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 6130.960227272727,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 5058.0421875
+  },
+  {
+    "name": "mechanical_2stage_cooling_env11",
+    "electrical_cooling_and_ventilation_w": 840.0000000000001,
+    "mechanical_cooling_w": 2378.8,
+    "required_heating_power_w": 0,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 0
+  },
+  {
+    "name": "cooling_cutoff_below_17",
+    "electrical_cooling_and_ventilation_w": 840.0000000000001,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 0,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 0
+  },
+  {
+    "name": "capacity_and_technology_limits",
+    "electrical_cooling_and_ventilation_w": 399.0000000000001,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 19610.325,
+    "electrical_heat_pump_w": 561.7977528089888,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 625
+  },
+  {
+    "name": "hd1_r744_only_env1",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 23756.0375,
+    "electrical_heat_pump_w": 13194.444444444445,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 0
+  },
+  {
+    "name": "hd2_r744_electric_env1",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 23756.0375,
+    "electrical_heat_pump_w": 6597.222222222223,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 12768.817204301075,
+    "fuel_heater_w": 0
+  },
+  {
+    "name": "hd5_non_r744_only_env2",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 13488.1125,
+    "electrical_heat_pump_w": 7577.591292134832,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 0
+  },
+  {
+    "name": "hd6_non_r744_electric_env1",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 23756.0375,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 25537.63440860215,
+    "fuel_heater_w": 0
+  },
+  {
+    "name": "hd9_electric_only_env2",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 13488.1125,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 14503.346774193547,
+    "fuel_heater_w": 0
+  },
+  {
+    "name": "hd10_electric_and_fuel_env1",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 23756.0375,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 5108.825268817205,
+    "fuel_heater_w": 23756.037500000002
+  },
+  {
+    "name": "hd11_fuel_only_env2",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 13488.1125,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 16860.140624999996
+  },
+  {
+    "name": "hd12_no_heating_env2",
+    "electrical_cooling_and_ventilation_w": 420.00000000000006,
+    "mechanical_cooling_w": 0,
+    "required_heating_power_w": 13488.1125,
+    "electrical_heat_pump_w": 0,
+    "mechanical_heat_pump_w": 0,
+    "electric_heater_w": 0,
+    "fuel_heater_w": 0
+  }
+]
