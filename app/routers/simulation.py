@@ -52,7 +52,13 @@ from app.services.elevation_profiles import (
     ensure_shift_profiles_ready,
     load_trip_elevation_dataframe,
 )
+from app.services.runtime_release import (
+    RuntimeReleaseConfigurationError,
+    enforce_configured_model,
+)
 from app.utils.trip_statistics import (
+    combine_elevation_profiles,
+    combine_trip_schedules,
     compute_global_trip_statistics_combined,
     extract_stop_to_stop_statistics_for_schedule,
     extract_route_difficulty_metrics_from_elevation
@@ -139,6 +145,11 @@ async def create_prediction_runs(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    try:
+        enforce_configured_model(request.model_name)
+    except RuntimeReleaseConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     bus_model = await db.get(BusesModels, request.bus_model_id)
     if bus_model is None:
         raise HTTPException(status_code=404, detail="Bus model not found")
@@ -705,9 +716,10 @@ async def compute_trip_statistics(
     if not request.trip_ids:
         return CombinedTripStatisticsResponse(trip_ids=[], statistics={}, error=None)
 
-    # Collect schedules and elevation dfs
-    schedules: list[pd.DataFrame] = []
-    elevation_dfs: list[pd.DataFrame] = []
+    # Keep each schedule/profile pair atomic. Independent lists can silently
+    # shift when one trip is incomplete and associate a profile with the wrong
+    # schedule.
+    trip_inputs: list[tuple[pd.DataFrame, pd.DataFrame]] = []
 
     for idx, trip_id in enumerate(request.trip_ids):
         # 1) Schedule
@@ -723,8 +735,12 @@ async def compute_trip_statistics(
             .order_by(GtfsStopsTimes.stop_sequence)
         )
         rows = result.all()
-        if rows:
-            trip_schedule_data = [{
+        if not rows:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Trip {trip_id} has no stop_times; sequence is incomplete",
+            )
+        trip_schedule_data = [{
                 'stop_id': stop.stop_id,
                 'stop_name': stop.stop_name,
                 'stop_lat': stop.stop_lat,
@@ -734,7 +750,7 @@ async def compute_trip_statistics(
                 'stop_sequence': stop_sequence,
                 'trip_index': idx
             } for (stop, arrival_time, departure_time, stop_sequence) in rows]
-            schedules.append(pd.DataFrame(trip_schedule_data))
+        schedule_df = pd.DataFrame(trip_schedule_data)
 
         # 2) Elevation (release-aware for GTFS, job-aware for auxiliary trips)
         trip = await db.get(GtfsTrips, trip_id)
@@ -743,7 +759,7 @@ async def compute_trip_statistics(
         if not trip.shape_id:
             raise HTTPException(status_code=404, detail=f"Trip {trip_id} has no shape_id")
         try:
-            elevation_dfs.append(await load_trip_elevation_dataframe(db, trip))
+            elevation_df = await load_trip_elevation_dataframe(db, trip)
         except ElevationProfileNotReadyError as exc:
             raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
         except ElevationProfileNotFoundError as exc:
@@ -752,28 +768,25 @@ async def compute_trip_statistics(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ElevationProfileFormatError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        if elevation_df is None or elevation_df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Trip {trip_id} has an empty elevation profile",
+            )
+        trip_inputs.append((schedule_df, elevation_df))
 
-    # Concatenate schedules
-    if schedules:
-        concat_schedule = pd.concat(schedules, ignore_index=True)
-    else:
-        concat_schedule = pd.DataFrame()
+    if len(trip_inputs) != len(request.trip_ids):
+        raise HTTPException(
+            status_code=500,
+            detail="Trip input cardinality changed while preparing statistics",
+        )
+    schedules = [schedule for schedule, _profile in trip_inputs]
+    elevation_dfs = [profile for _schedule, profile in trip_inputs]
+    concat_schedule = combine_trip_schedules(schedules)
+    combined_elev = combine_elevation_profiles(elevation_dfs)
 
-    # Concatenate elevation with offset
-    if elevation_dfs:
-        combined_elev_parts = []
-        offset = 0.0
-        for edf in elevation_dfs:
-            edfc = edf.copy()
-            if 'cumulative_distance_m' in edfc.columns:
-                edfc['cumulative_distance_m'] = edfc['cumulative_distance_m'] + offset
-                offset = float(edfc['cumulative_distance_m'].max())
-            combined_elev_parts.append(edfc)
-        combined_elev = pd.concat(combined_elev_parts, ignore_index=True)
-    else:
-        combined_elev = pd.DataFrame()
-
-    # Compute combined stats with tolerant error handling
+    # Core errors invalidate the whole sequence; never return an apparently
+    # successful 200 response containing partial or empty statistics.
     try:
         global_stats = compute_global_trip_statistics_combined(concat_schedule, combined_elev)
         segment_stats = extract_stop_to_stop_statistics_for_schedule(concat_schedule, combined_elev)
@@ -789,10 +802,8 @@ async def compute_trip_statistics(
             statistics=stats,
             error=None
         )
-    except Exception as e:
-        # Return 200 with error message and empty statistics as per tests expectations
-        return CombinedTripStatisticsResponse(
-            trip_ids=request.trip_ids,
-            statistics={},
-            error=str(e)
-        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to compute complete trip statistics: {exc}",
+        ) from exc

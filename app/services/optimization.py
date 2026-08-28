@@ -33,6 +33,7 @@ from simulation.optimization_model import (
     TripData,
     solve_optimization,
 )
+from app.services.runtime_release import enforce_configured_model
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,8 @@ async def ensure_predictions(
     If not found, create and execute one. Returns the list of prediction_run_ids.
     """
     from app.services.prediction import predict_shift_consumption
+
+    enforce_configured_model(str(prediction_params["model_name"]))
 
     run_ids: list[UUID] = []
     for shift_id in shift_ids:

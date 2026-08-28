@@ -9,10 +9,12 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 import logging
 
+from elettra_core import encode_categorical_features, prepare_model_feature_row
+
 logger = logging.getLogger(__name__)
 
 
-def prepare_features_from_trip_stats(
+def prepare_features_from_trip_stats_legacy(
     trip_statistics: List[Dict[str, Any]],
     bus_length_m: float,
     battery_capacity_kwh: float,
@@ -49,6 +51,7 @@ def prepare_features_from_trip_stats(
             
             # Basic trip features
             'total_distance_m': stats.get('total_distance_m', 0.0),
+            'total_horizontal_distance_m': stats.get('total_horizontal_distance_m', 0.0),
             'total_duration_minutes': stats.get('total_duration_minutes', 0.0),
             'total_number_of_stops': stats.get('total_number_of_stops', 0),
             'average_speed_kmh': stats.get('average_speed_kmh', 0.0),
@@ -74,6 +77,7 @@ def prepare_features_from_trip_stats(
             'net_elevation_change_m': stats.get('net_elevation_change_m', 0.0),
             'mean_gradient': stats.get('mean_gradient', 0.0),
             'ascent_descent_ratio': stats.get('ascent_descent_ratio', 0.0),
+            'elevation_profile_type': stats.get('elevation_profile_type', 'flat'),
             
             # Segment features - distance
             'num_segments': stats.get('num_segments', 0),
@@ -82,6 +86,7 @@ def prepare_features_from_trip_stats(
             'min_segment_distance_m': stats.get('min_segment_distance_m', 0.0),
             'max_segment_distance_m': stats.get('max_segment_distance_m', 0.0),
             'std_segment_distance_m': stats.get('std_segment_distance_m', 0.0),
+            'mean_segment_horizontal_distance_m': stats.get('mean_segment_horizontal_distance_m', 0.0),
             
             # Segment features - duration
             'mean_segment_duration_minutes': stats.get('mean_segment_duration_minutes', 0.0),
@@ -141,10 +146,47 @@ def prepare_features_from_trip_stats(
         rows.append(row)
     
     df = pd.DataFrame(rows)
+    if not df.empty:
+        df = encode_categorical_features(df)
     
     logger.info(f"Prepared features for {len(df)} trips with {len(df.columns)} columns")
     
     return df
+
+
+def prepare_features_from_trip_stats(
+    trip_statistics: List[Dict[str, Any]],
+    bus_length_m: float,
+    battery_capacity_kwh: float,
+    external_temp_celsius: float,
+    additional_params: Optional[Dict[str, Any]] = None,
+) -> pd.DataFrame:
+    """Prepare strict contract-v2 model inputs with shared train/serve logic."""
+    if additional_params:
+        raise ValueError(
+            "additional_params are not part of feature contract v2; use the explicit "
+            "legacy preparation function for a legacy model"
+        )
+    rows = []
+    trip_ids = []
+    context = {
+        "bus_length_m": bus_length_m,
+        "bus_battery_kwh": battery_capacity_kwh,
+        "avg_temp_outside_celsius": external_temp_celsius,
+    }
+    for trip_stat in trip_statistics:
+        trip_id = trip_stat.get("trip_id")
+        statistics = trip_stat.get("statistics", {}).get("statistics")
+        if not statistics:
+            raise ValueError(f"Missing canonical statistics for trip {trip_id!r}")
+        rows.append(prepare_model_feature_row(statistics, context))
+        trip_ids.append(trip_id)
+    if not rows:
+        return pd.DataFrame()
+    frame = encode_categorical_features(pd.concat(rows, ignore_index=True))
+    frame.insert(0, "trip_id", trip_ids)
+    logger.info("Prepared strict contract-v2 features for %d trips", len(frame))
+    return frame
 
 
 def validate_features(df: pd.DataFrame, required_features: List[str]) -> pd.DataFrame:
@@ -181,4 +223,3 @@ def validate_features(df: pd.DataFrame, required_features: List[str]) -> pd.Data
     logger.info(f"Validated features: {len(df.columns)} columns, {len(df)} rows")
     
     return df
-

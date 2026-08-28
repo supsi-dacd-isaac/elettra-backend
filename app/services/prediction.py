@@ -29,6 +29,8 @@ from app.utils.trip_statistics import (
     extract_stop_to_stop_statistics_for_schedule,
 )
 from app.services.elevation_profiles import load_trip_elevation_dataframe
+from app.services.runtime_release import enforce_configured_model
+from elettra_core import RAW_TRIP_FEATURE_COLUMNS
 from simulation.consumption_prediction import ConsumptionPredictor
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ _predictor_cache: dict[str, ConsumptionPredictor] = {}
 
 
 def get_predictor(model_name: str) -> ConsumptionPredictor:
+    enforce_configured_model(model_name)
     if model_name not in _predictor_cache:
         predictor = ConsumptionPredictor(
             model_name=model_name,
@@ -272,8 +275,10 @@ async def load_shift_trip_statistics(
         )
         rows = sched_result.all()
         if not rows:
-            logger.warning(f"No schedule data for trip {trip_id}, skipping")
-            continue
+            raise ValueError(
+                f"Cannot load shift {shift_id}: trip {trip_id} at sequence {seq} "
+                "has no schedule data"
+            )
 
         schedule_data = [{
             "stop_id": stop.stop_id,
@@ -287,7 +292,18 @@ async def load_shift_trip_statistics(
         schedule_df = pd.DataFrame(schedule_data)
 
         # Load elevation from MinIO
-        elevation_df = await _load_trip_elevation(db, trip_id)
+        try:
+            elevation_df = await _load_trip_elevation(db, trip_id)
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot load shift {shift_id}: elevation profile failed for "
+                f"trip {trip_id} at sequence {seq}: {exc}"
+            ) from exc
+        if elevation_df is None or elevation_df.empty:
+            raise ValueError(
+                f"Cannot load shift {shift_id}: trip {trip_id} at sequence {seq} "
+                "has no elevation profile"
+            )
 
         # Compute statistics
         try:
@@ -298,9 +314,14 @@ async def load_shift_trip_statistics(
             stats.update(global_stats)
             stats.update(segment_stats)
             stats.update(difficulty_stats)
-        except Exception as e:
-            logger.warning(f"Failed to compute statistics for trip {trip_id}: {e}")
-            continue
+            missing = [column for column in RAW_TRIP_FEATURE_COLUMNS if column not in stats]
+            if missing:
+                raise ValueError(f"core v2 statistics are missing fields: {missing}")
+        except Exception as exc:
+            raise ValueError(
+                f"Cannot load shift {shift_id}: core v2 statistics failed for "
+                f"trip {trip_id} at sequence {seq}: {exc}"
+            ) from exc
 
         trip_statistics.append({
             "trip_id": str(trip_id),
@@ -308,6 +329,11 @@ async def load_shift_trip_statistics(
             "statistics": {"statistics": stats},
         })
 
+    if len(trip_statistics) != len(structures):
+        raise RuntimeError(
+            f"Shift {shift_id} statistics cardinality changed unexpectedly: "
+            f"expected {len(structures)}, got {len(trip_statistics)}"
+        )
     return trip_statistics
 
 

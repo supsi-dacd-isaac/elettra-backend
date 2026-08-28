@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 from app.schemas.trip_status import TripStatus
+from app.services.runtime_release import default_prediction_model_name
 
 # Centralised allowed values for auxiliary heating mode.
 # "default" = standard ebus auxiliary (heat-pump based, fully electric)
@@ -18,7 +19,10 @@ class PredictionRequest(BaseModel):
         default=None,
         description="Optional reference to a yearly analysis record.",
     )
-    model_name: str = Field(examples=["greybox_qrf_production_crps_optimized_3"])
+    model_name: str = Field(
+        default_factory=default_prediction_model_name,
+        examples=["greybox_qrf_production_crps_optimized_3"],
+    )
     external_temp_celsius: float = Field(examples=[15.0])
     occupancy_percent: float = Field(default=50.0, examples=[50.0])
     auxiliary_heating_type: AuxiliaryHeatingType = Field(
@@ -82,7 +86,7 @@ class ChargingStationConfig(BaseModel):
 
 class PredictionParams(BaseModel):
     """Parameters for auto-prediction when prediction_run_ids is not given."""
-    model_name: str = Field(default="greybox_qrf_production_crps_optimized_3")
+    model_name: str = Field(default_factory=default_prediction_model_name)
     external_temp_celsius: float = Field(examples=[15.0])
     occupancy_percent: float = Field(default=50.0, examples=[50.0])
     auxiliary_heating_type: AuxiliaryHeatingType = Field(
@@ -392,4 +396,3 @@ class ShiftUpdateRequest(BaseModel):
 
 class TripStatisticsRequest(BaseModel):
     trip_ids: list[UUID]
-

@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 import logging
 
+from elettra_core import FEATURE_CONTRACT_VERSION, categorical_feature_contract
+from app.services.runtime_release import runtime_release_configuration
 from .minio_utils import download_model_from_minio, build_model_path
 from .feature_preparation import prepare_features_from_trip_stats, validate_features
 from .greybox_models import (
@@ -26,6 +28,42 @@ from .greybox_models import (
 from .greybox_sensitivity import compute_battery_sensitivity_from_metadata
 
 logger = logging.getLogger(__name__)
+
+
+def validate_model_feature_contract(metadata: Optional[Dict[str, Any]]) -> None:
+    """Reject models trained with a different feature meaning.
+
+    Existing production models predate versioned feature metadata and remain
+    usable only in compatibility mode.  Once the release/model pair is pinned,
+    metadata is mandatory and must match contract v2 exactly.
+    """
+    if not metadata or "feature_contract_version" not in metadata:
+        if runtime_release_configuration().production_v2_active:
+            raise ValueError(
+                "Production feature contract v2 requires model metadata with "
+                "feature_contract_version"
+            )
+        logger.warning(
+            "Model metadata has no feature_contract_version; accepting it as a "
+            "legacy model. Retrain it before legacy compatibility is removed."
+        )
+        return
+    model_version = str(metadata["feature_contract_version"])
+    if model_version != FEATURE_CONTRACT_VERSION:
+        raise ValueError(
+            "Model feature contract is incompatible with this runtime: "
+            f"model={model_version!r}, runtime={FEATURE_CONTRACT_VERSION!r}"
+        )
+    model_categorical_contract = metadata.get("categorical_feature_contract")
+    if model_categorical_contract is None:
+        raise ValueError(
+            "Contract-v2 model metadata has no categorical_feature_contract"
+        )
+    runtime_categorical_contract = categorical_feature_contract()
+    if model_categorical_contract != runtime_categorical_contract:
+        raise ValueError(
+            "Model categorical feature contract is incompatible with this runtime"
+        )
 
 
 class ConsumptionPredictor:
@@ -74,6 +112,7 @@ class ConsumptionPredictor:
             model_path=model_path,
             local_cache_dir=self.cache_dir
         )
+        validate_model_feature_contract(metadata)
         
         # Load model from bytes
         # Register custom classes/functions under __main__ to support models pickled from training script
@@ -127,6 +166,7 @@ class ConsumptionPredictor:
         if metadata_path:
             with open(metadata_path, 'r') as f:
                 self.metadata = json.load(f)
+            validate_model_feature_contract(self.metadata)
             
             if 'selected_features' in self.metadata:
                 self.required_features = self.metadata['selected_features']
@@ -443,4 +483,3 @@ class ConsumptionPredictor:
         logger.info(f"✓ Total predicted consumption: {results['summary']['total_consumption_kwh']:.2f} kWh")
         
         return results
-

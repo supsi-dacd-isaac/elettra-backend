@@ -6,12 +6,22 @@
 !Dockerfile
 !requirements.txt
 !main.py
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+
+!docs/
+!docs/VECTO_SSM_PROVENANCE.md
+!docs/FEATURE_EXTRACTION_CONTRACT.md
+!docs/PRODUCTION_FEATURE_V2.md
 
 !app/
 !app/**
 
 !simulation/
 !simulation/*.py
+
+!elettra_core/
+!elettra_core/*.py
 
 !config/
 !config/elettra-config.docker.yaml
