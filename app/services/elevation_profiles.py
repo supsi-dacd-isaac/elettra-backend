@@ -785,11 +785,14 @@ async def validate_release_covers_database(
     database_shapes = {str(value) for value in database_shape_values}
     release_shapes = release_profile_shape_ids(manifest)
     missing = database_shapes - release_shapes
-    if missing:
-        sample = sorted(missing)[:20]
+    unexpected = release_shapes - database_shapes
+    if missing or unexpected:
+        missing_sample = sorted(missing)[:20]
+        unexpected_sample = sorted(unexpected)[:20]
         raise ElevationProfileFormatError(
-            "Configured elevation release does not cover all live bus GTFS snapshots: "
-            f"missing={len(missing)} sample={sample}"
+            "Configured elevation release does not exactly match live bus GTFS shapes: "
+            f"missing={len(missing)} missing_sample={missing_sample} "
+            f"unexpected={len(unexpected)} unexpected_sample={unexpected_sample}"
         )
 
 

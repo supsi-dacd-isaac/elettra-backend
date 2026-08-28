@@ -710,8 +710,26 @@ async def test_release_gate_requires_union_of_live_gtfs_snapshots():
         "profile_count": 1,
         "profiles": complete_manifest["profiles"][:1],
     }
-    with pytest.raises(ElevationProfileFormatError, match="all live bus GTFS snapshots"):
+    with pytest.raises(ElevationProfileFormatError, match="exactly match live bus GTFS shapes"):
         await validate_release_covers_database(ShapeSession(), incomplete_manifest)
+
+
+@pytest.mark.asyncio
+async def test_release_gate_rejects_shapes_not_present_in_database():
+    class ShapeSession:
+        async def execute(self, _statement):
+            return FakeScalarResult(["shape-a"])
+
+    manifest = {
+        "profile_count": 2,
+        "profiles": [release_entry("shape-a"), release_entry("unexpected-shape")],
+    }
+
+    with pytest.raises(
+        ElevationProfileFormatError,
+        match=r"unexpected=1 unexpected_sample=\['unexpected-shape'\]",
+    ):
+        await validate_release_covers_database(ShapeSession(), manifest)
 
 
 @pytest.mark.asyncio
