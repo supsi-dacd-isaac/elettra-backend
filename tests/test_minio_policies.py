@@ -4,6 +4,7 @@ from pathlib import Path
 
 POLICY_DIR = Path(__file__).resolve().parents[1] / "deploy" / "minio"
 PROFILE_BUCKET = "arn:aws:s3:::elevation-profiles"
+GTFS_PROFILE_BUCKET = "arn:aws:s3:::elevation-profiles-gtfs"
 MODEL_BUCKET = "arn:aws:s3:::consumption-models"
 OBJECT_WRITE_ACTIONS = {
     "s3:PutObject",
@@ -26,6 +27,14 @@ def _actions(statements: list[dict]) -> set[str]:
         action
         for statement in statements
         for action in statement.get("Action", [])
+    }
+
+
+def _resources(statements: list[dict]) -> set[str]:
+    return {
+        resource
+        for statement in statements
+        for resource in statement.get("Resource", [])
     }
 
 
@@ -60,7 +69,7 @@ def test_backend_is_read_only_and_cannot_read_worker_namespaces():
         f"{PROFILE_BUCKET}/._staging/*",
         f"{PROFILE_BUCKET}/._health/*",
     }
-    assert {PROFILE_BUCKET, MODEL_BUCKET} <= {
+    assert {PROFILE_BUCKET, GTFS_PROFILE_BUCKET, MODEL_BUCKET} <= {
         resource for statement in allowed for resource in statement.get("Resource", [])
     }
 
@@ -88,13 +97,17 @@ def test_worker_can_manage_aux_objects_but_cannot_touch_releases():
         "s3:DeleteObject",
         "s3:AbortMultipartUpload",
     } <= _actions(release_denies)
+    assert all(
+        not resource.startswith(GTFS_PROFILE_BUCKET)
+        for resource in _resources(policy["Statement"])
+    )
 
 
 def test_publisher_is_release_scoped_manifest_last_capable_and_non_deleting():
     policy = _load("elevation-release-publisher.json")
     allowed = _statements(policy, "Allow")
     denied = _statements(policy, "Deny")
-    release_resource = f"{PROFILE_BUCKET}/releases/*"
+    release_resource = f"{GTFS_PROFILE_BUCKET}/releases/*"
 
     object_allows = [
         statement
@@ -112,4 +125,8 @@ def test_publisher_is_release_scoped_manifest_last_capable_and_non_deleting():
         "s3:DeleteObject" in statement.get("Action", [])
         and release_resource in statement.get("Resource", [])
         for statement in denied
+    )
+    assert all(
+        resource.startswith(GTFS_PROFILE_BUCKET)
+        for resource in _resources(policy["Statement"])
     )

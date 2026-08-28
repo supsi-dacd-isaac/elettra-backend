@@ -28,8 +28,14 @@ services:
       # consumption-model buckets used by backend reads.
       AWS_ACCESS_KEY_ID: ${ELEVATION_PROFILES_READ_ACCESS_KEY:?Set a read-only MinIO access key for the backend}
       AWS_SECRET_ACCESS_KEY: ${ELEVATION_PROFILES_READ_SECRET_KEY:?Set the read-only MinIO secret for the backend}
+      # Leave unset before the atomic switch so compatibility mode reads the
+      # current root namespace. Production v2 sets the dedicated GTFS bucket.
+      GTFS_ELEVATION_PROFILES_BUCKET: ${GTFS_ELEVATION_PROFILES_BUCKET:-${ELEVATION_PROFILES_BUCKET:-elevation-profiles}}
       ELEVATION_PROFILES_BUCKET: ${ELEVATION_PROFILES_BUCKET:-elevation-profiles}
       ELEVATION_PROFILES_RELEASE: ${ELEVATION_PROFILES_RELEASE:-}
+      CONSUMPTION_MODEL_RELEASE: ${CONSUMPTION_MODEL_RELEASE:-}
+      ELEVATION_AUX_PROFILE_ALGORITHM: ${ELEVATION_AUX_PROFILE_ALGORITHM:-}
+      ELEVATION_AUX_ROADS_RELEASE: ${ELEVATION_AUX_ROADS_RELEASE:-}
     ports:
       - "8000:8000"
     volumes:

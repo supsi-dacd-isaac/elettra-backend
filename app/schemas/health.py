@@ -11,6 +11,7 @@ class ServiceStatus(BaseModel):
     message: Optional[str] = None
     response_time_ms: Optional[float] = None
     last_checked: datetime
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class HealthCheckResponse(BaseModel):

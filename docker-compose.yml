@@ -41,10 +41,16 @@ services:
       # buckets. Dedicated read-only credentials avoid worker/admin key reuse.
       AWS_ACCESS_KEY_ID: ${ELEVATION_PROFILES_READ_ACCESS_KEY:-${AWS_ACCESS_KEY_ID:-minio_user}}
       AWS_SECRET_ACCESS_KEY: ${ELEVATION_PROFILES_READ_SECRET_KEY:-${AWS_SECRET_ACCESS_KEY:-minio_password}}
+      GTFS_ELEVATION_PROFILES_BUCKET: ${GTFS_ELEVATION_PROFILES_BUCKET:-${ELEVATION_PROFILES_BUCKET:-elevation-profiles}}
       ELEVATION_PROFILES_BUCKET: ${ELEVATION_PROFILES_BUCKET:-elevation-profiles}
       # Empty keeps the legacy root namespace during the compatibility rollout.
       # Set this to a completed immutable release ID to switch every GTFS read.
       ELEVATION_PROFILES_RELEASE: ${ELEVATION_PROFILES_RELEASE:-}
+      # These four pins form one fail-closed production switch. Local defaults
+      # keep compatibility mode until an immutable release/model pair exists.
+      CONSUMPTION_MODEL_RELEASE: ${CONSUMPTION_MODEL_RELEASE:-}
+      ELEVATION_AUX_PROFILE_ALGORITHM: ${ELEVATION_AUX_PROFILE_ALGORITHM:-}
+      ELEVATION_AUX_ROADS_RELEASE: ${ELEVATION_AUX_ROADS_RELEASE:-}
       # Optionally override log level at runtime
       LOG_LEVEL: INFO
       # LCA API server selection (DEV / INT / PROD)
@@ -115,6 +121,7 @@ services:
       bash -c "
       mc alias set minio http://minio:9000 $${MINIO_ADMIN_ACCESS_KEY} $${MINIO_ADMIN_SECRET_KEY} &&
       mc mb minio/${ELEVATION_PROFILES_BUCKET:-elevation-profiles} --ignore-existing &&
+      mc mb minio/${GTFS_ELEVATION_PROFILES_BUCKET:-${ELEVATION_PROFILES_BUCKET:-elevation-profiles}} --ignore-existing &&
       mc mb minio/consumption-models --ignore-existing &&
       echo 'Buckets created successfully'
       "

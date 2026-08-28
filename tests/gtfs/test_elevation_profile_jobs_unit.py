@@ -132,6 +132,107 @@ def release_manifest(release_id: str, entries: list[dict]) -> dict:
     }
 
 
+def v3_release_manifest(release_id: str, entries: list[dict]) -> dict:
+    manifest = release_manifest(release_id, entries)
+    manifest["profile_contract_version"] = 2
+    manifest["algorithm_version"] = "road-snap-v3.3-topology"
+    manifest["matcher"] = {
+        "algorithm_version": "road-snap-v3.3-topology",
+        "tolerance_m": 15.0,
+        "bbox_buffer_m": 50.0,
+        "k_candidates": 5,
+        "w_xy": 1.0,
+        "w_grade": 1.0,
+        "max_grade_pct": 12.0,
+        "hard_grade_pct": 30.0,
+        "min_grade_run_m": 1.0,
+        "w_switch": 2.0,
+        "fallback_emission": 25.0,
+        "recovery_tolerance_m": 25.0,
+        "recovery_k_candidates": 10,
+        "max_gap_samples": 5,
+        "topology_path_ratio": 4.0,
+        "topology_path_slack_m": 20.0,
+        "w_topology": 0.25,
+        "conditional_road_penalty": 20.0,
+        "bus_compatibility_policy": "swisstlm3d-bus-v1",
+        "candidate_selection_policy": "topology-strata-v1",
+        "topology_stitch_policy": "same-structure-aligned-endpoint-v2",
+        "topology_stitch_max_3d_gap_m": 2.0,
+        "topology_stitch_max_vertical_gap_m": 0.5,
+        "topology_stitch_max_alignment_angle_deg": 45.0,
+        "topology_node_precision": "XYZ millimetre",
+        "observed_distance_lower_bound": "max(declared_chainage_step,lv95_chord)",
+        "observed_distance_epsilon_m": 0.01,
+        "runtime_versions": {
+            "python": "3.12.0",
+            "packages": {"shapely": "2.1.1"},
+            "geos": "3.13.1",
+            "proj": "9.6.0",
+            "gdal": "3.10.3",
+        },
+    }
+    manifest["roads"]["required_attributes"] = [
+        "befahrbarkeit",
+        "kunstbaute",
+        "objektart",
+        "richtungsgetrennt",
+        "stufe",
+        "uuid",
+    ]
+    for entry in entries:
+        matched = entry["road_deck_points"]
+        entry["metrics"].update(
+            {
+                "matched_with_road_uuid": matched,
+                "distinct_road_uuids": 1 if matched else 0,
+                "recovery_ring_points": 0,
+                "conditional_bus_tier_points": 0,
+                "matched_by_objektart": {"4m Strasse": matched} if matched else {},
+            }
+        )
+    manifest["metrics"].update(
+        {
+            "algorithm_version": "road-snap-v3.3-topology",
+            "matched_with_road_uuid": manifest["road_deck_points"],
+            "recovery_ring_points": 0,
+            "conditional_bus_tier_points": 0,
+        }
+    )
+    return manifest
+
+
+def reset_release_cache(monkeypatch) -> None:
+    for name in (
+        "_validated_release",
+        "_validated_release_manifest",
+        "_validated_release_profiles",
+        "_validated_release_shape_ids",
+        "_validated_release_digest",
+        "_validated_release_object_identity",
+    ):
+        monkeypatch.setattr(elevation_profiles, name, None)
+
+
+def v3_profile_dataframe() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "latitude": [46.0, 46.1],
+            "longitude": [7.0, 7.1],
+            "altitude_m": [504.0, 501.0],
+            "terrain_altitude_m": [500.0, 501.0],
+            "road_deck_altitude_m": [504.0, None],
+            "road_snap_latitude": [46.00001, None],
+            "road_snap_longitude": [7.00001, None],
+            "road_snap_distance_m": [5.0, None],
+            "road_objektart": ["4m Strasse", None],
+            "road_uuid": ["{00000000-0000-0000-0000-000000000001}", None],
+            "elevation_delta_m": [4.0, None],
+            "elevation_source": ["road_deck", "dtm_fallback"],
+        }
+    )
+
+
 class FakeMinio:
     def __init__(self, objects: dict[tuple[str, str], bytes]):
         self.objects = objects
@@ -212,6 +313,199 @@ def test_release_manifest_rejects_non_road_deck_contract(monkeypatch):
         validate_configured_release(client, use_cache=False)
 
 
+def test_v3_release_manifest_accepts_complete_profile_contract(monkeypatch):
+    monkeypatch.setenv("ELEVATION_PROFILES_RELEASE", "release-v3")
+    monkeypatch.setenv("ELEVATION_PROFILES_BUCKET", "profiles")
+    reset_release_cache(monkeypatch)
+    manifest = v3_release_manifest(
+        "release-v3", [release_entry("shape-1", row_count=2)]
+    )
+    client = FakeMinio(
+        {
+            ("profiles", "releases/release-v3/release.json"): json.dumps(
+                manifest
+            ).encode()
+        }
+    )
+
+    assert manifest["algorithm_version"] == "road-snap-v3.3-topology"
+    assert (
+        manifest["matcher"]["candidate_selection_policy"]
+        == "topology-strata-v1"
+    )
+    assert manifest["matcher"]["topology_stitch_policy"] == (
+        "same-structure-aligned-endpoint-v2"
+    )
+    assert manifest["matcher"]["topology_stitch_max_3d_gap_m"] == 2.0
+    assert manifest["matcher"]["topology_stitch_max_vertical_gap_m"] == 0.5
+    assert manifest["matcher"]["topology_stitch_max_alignment_angle_deg"] == 45.0
+    assert validate_configured_release(client, use_cache=False) == manifest
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda manifest: manifest.pop("profile_contract_version"),
+            "profile_contract_version=2",
+        ),
+        (
+            lambda manifest: manifest["matcher"].update(
+                {"bus_compatibility_policy": "unknown-policy"}
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].pop(
+                "candidate_selection_policy"
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].update(
+                {"candidate_selection_policy": "nearest-only-v1"}
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].pop("topology_stitch_policy"),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].update(
+                {"topology_stitch_policy": "xy-nearest-v1"}
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].pop(
+                "topology_stitch_max_3d_gap_m"
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].pop(
+                "topology_stitch_max_vertical_gap_m"
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].pop(
+                "topology_stitch_max_alignment_angle_deg"
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].update(
+                {"topology_stitch_max_3d_gap_m": float("inf")}
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].update(
+                {"topology_stitch_max_vertical_gap_m": 0.0}
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].update(
+                {"topology_stitch_max_alignment_angle_deg": 45.001}
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["matcher"].update(
+                {"observed_distance_epsilon_m": 0.1}
+            ),
+            "topology configuration",
+        ),
+        (
+            lambda manifest: manifest["roads"].pop("required_attributes"),
+            "topology attributes",
+        ),
+        (
+            lambda manifest: manifest["profiles"][0]["metrics"].update(
+                {"matched_with_road_uuid": 0}
+            ),
+            "v3 road metrics",
+        ),
+        (
+            lambda manifest: manifest["metrics"].update(
+                {"recovery_ring_points": 1}
+            ),
+            "aggregate v3 road metrics",
+        ),
+    ],
+)
+def test_v3_release_manifest_fails_closed(monkeypatch, mutation, message):
+    monkeypatch.setenv("ELEVATION_PROFILES_RELEASE", "release-v3")
+    monkeypatch.setenv("ELEVATION_PROFILES_BUCKET", "profiles")
+    reset_release_cache(monkeypatch)
+    manifest = v3_release_manifest(
+        "release-v3", [release_entry("shape-1", row_count=2)]
+    )
+    mutation(manifest)
+    client = FakeMinio(
+        {
+            ("profiles", "releases/release-v3/release.json"): json.dumps(
+                manifest
+            ).encode()
+        }
+    )
+
+    with pytest.raises(ElevationProfileFormatError, match=message):
+        validate_configured_release(client, use_cache=False)
+
+
+@pytest.mark.parametrize("algorithm", ["road-snap-v1", "road-snap-v2-grade-safe"])
+def test_legacy_v1_v2_release_contract_remains_supported(monkeypatch, algorithm):
+    monkeypatch.setenv("ELEVATION_PROFILES_RELEASE", "release-legacy")
+    monkeypatch.setenv("ELEVATION_PROFILES_BUCKET", "profiles")
+    reset_release_cache(monkeypatch)
+    manifest = release_manifest("release-legacy", [release_entry("shape-1")])
+    manifest["algorithm_version"] = algorithm
+    manifest["matcher"]["algorithm_version"] = algorithm
+    manifest["metrics"]["algorithm_version"] = algorithm
+    client = FakeMinio(
+        {
+            ("profiles", "releases/release-legacy/release.json"): json.dumps(
+                manifest
+            ).encode()
+        }
+    )
+
+    assert validate_configured_release(client, use_cache=False) == manifest
+
+
+@pytest.mark.parametrize(
+    "algorithm",
+    [
+        "experimental-snap",
+        "road-snap-v3-topology",
+        "road-snap-v3.1-topology",
+    ],
+)
+def test_release_manifest_rejects_unknown_algorithm(monkeypatch, algorithm):
+    monkeypatch.setenv("ELEVATION_PROFILES_RELEASE", "release-unknown")
+    monkeypatch.setenv("ELEVATION_PROFILES_BUCKET", "profiles")
+    reset_release_cache(monkeypatch)
+    manifest = release_manifest("release-unknown", [release_entry("shape-1")])
+    manifest["algorithm_version"] = algorithm
+    manifest["matcher"]["algorithm_version"] = algorithm
+    manifest["metrics"]["algorithm_version"] = algorithm
+    client = FakeMinio(
+        {
+            (
+                "profiles",
+                "releases/release-unknown/release.json",
+            ): json.dumps(manifest).encode()
+        }
+    )
+
+    with pytest.raises(ElevationProfileFormatError, match="Unsupported.*algorithm"):
+        validate_configured_release(client, use_cache=False)
+
+
 def test_release_id_is_digest_pinned_for_process_lifetime(monkeypatch):
     monkeypatch.setenv("ELEVATION_PROFILES_RELEASE", "release-1")
     monkeypatch.setenv("ELEVATION_PROFILES_BUCKET", "profiles")
@@ -269,6 +563,104 @@ async def test_release_loader_reads_manifest_then_only_release_object(monkeypatc
         ("profiles", "releases/release-1/release.json"),
         ("profiles", "releases/release-1/shape-1.parquet"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_v3_release_loader_validates_profile_rows_and_metrics(monkeypatch):
+    monkeypatch.setenv("ELEVATION_PROFILES_RELEASE", "release-v3")
+    monkeypatch.setenv("ELEVATION_PROFILES_BUCKET", "profiles")
+    reset_release_cache(monkeypatch)
+    entry = release_entry("shape-1", data=b"parquet", row_count=2)
+    entry.update({"road_deck_points": 1, "dtm_fallback_points": 1})
+    entry["metrics"].update(
+        {"matched_points": 1, "fallback_points": 1}
+    )
+    manifest = v3_release_manifest("release-v3", [entry])
+    client = FakeMinio(
+        {
+            ("profiles", "releases/release-v3/release.json"): json.dumps(
+                manifest
+            ).encode(),
+            ("profiles", "releases/release-v3/shape-1.parquet"): b"parquet",
+        }
+    )
+    monkeypatch.setattr(
+        elevation_profiles.pd,
+        "read_parquet",
+        lambda _stream: v3_profile_dataframe(),
+    )
+    trip = SimpleNamespace(id=uuid4(), status="gtfs", shape_id="shape-1")
+
+    dataframe = await load_trip_elevation_dataframe(SimpleNamespace(), trip, client=client)
+
+    assert dataframe["road_uuid"].tolist() == [
+        "{00000000-0000-0000-0000-000000000001}",
+        None,
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutate_frame", "message"),
+    [
+        (
+            lambda frame: frame.assign(
+                road_uuid=["{00000000-0000-0000-0000-00000000000a}", None]
+            ),
+            "non-canonical road_uuid",
+        ),
+        (
+            lambda frame: frame.assign(
+                road_uuid=[
+                    "{00000000-0000-0000-0000-000000000001}",
+                    "{00000000-0000-0000-0000-000000000002}",
+                ]
+            ),
+            "fallback row contains road-only provenance",
+        ),
+        (
+            lambda frame: frame.assign(road_objektart=["6m Strasse", None]),
+            "do not match its release metrics",
+        ),
+        (
+            lambda frame: frame.drop(columns=["road_uuid"]),
+            "missing required columns",
+        ),
+    ],
+)
+async def test_v3_release_loader_rejects_untrusted_profile_content(
+    monkeypatch, mutate_frame, message
+):
+    monkeypatch.setenv("ELEVATION_PROFILES_RELEASE", "release-v3-invalid")
+    monkeypatch.setenv("ELEVATION_PROFILES_BUCKET", "profiles")
+    reset_release_cache(monkeypatch)
+    entry = release_entry("shape-1", data=b"parquet", row_count=2)
+    entry.update({"road_deck_points": 1, "dtm_fallback_points": 1})
+    entry["metrics"].update(
+        {"matched_points": 1, "fallback_points": 1}
+    )
+    manifest = v3_release_manifest("release-v3-invalid", [entry])
+    client = FakeMinio(
+        {
+            (
+                "profiles",
+                "releases/release-v3-invalid/release.json",
+            ): json.dumps(manifest).encode(),
+            (
+                "profiles",
+                "releases/release-v3-invalid/shape-1.parquet",
+            ): b"parquet",
+        }
+    )
+    monkeypatch.setattr(
+        elevation_profiles.pd,
+        "read_parquet",
+        lambda _stream: mutate_frame(v3_profile_dataframe()),
+    )
+    trip = SimpleNamespace(id=uuid4(), status="gtfs", shape_id="shape-1")
+
+    with pytest.raises(ElevationProfileFormatError, match=message):
+        await load_trip_elevation_dataframe(SimpleNamespace(), trip, client=client)
 
 
 @pytest.mark.asyncio

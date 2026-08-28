@@ -38,8 +38,10 @@ class _ScalarResult:
 
 
 class _ReadySession:
-    async def execute(self, statement):
+    async def execute(self, statement, _parameters=None):
         sql = str(statement)
+        if "FROM elevation_profile_jobs" in sql and "count(*) AS total" in sql:
+            return _ScalarResult(row=(984, 984, 0, 0, 0))
         if "contype = 'f'" in sql:
             return _ScalarResult(row=(False,))
         if "SELECT 1" in sql:
@@ -114,6 +116,17 @@ async def test_health_is_200_only_after_schema_and_minio_preflights(monkeypatch)
     assert response.status_code == 200
     assert payload.status == "healthy"
     assert "005/006" in payload.services["database"].message
+    assert payload.services["database"].metadata["elevation_profile_jobs"] == {
+        "total": 984,
+        "succeeded": 984,
+        "failed": 0,
+        "not_ready": 0,
+        "incompatible": 0,
+        "required_algorithm": None,
+        "required_roads_release": None,
+    }
+    assert payload.services["application"].metadata["feature_contract_version"] == "2.0.0"
+    assert payload.services["consumption_model"].metadata["model_release"] is None
 
 
 @pytest.mark.asyncio

@@ -4,17 +4,17 @@
     {
       "Effect": "Allow",
       "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
-      "Resource": ["arn:aws:s3:::elevation-profiles"]
+      "Resource": ["arn:aws:s3:::elevation-profiles-gtfs"]
     },
     {
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"],
-      "Resource": ["arn:aws:s3:::elevation-profiles/releases/*"]
+      "Resource": ["arn:aws:s3:::elevation-profiles-gtfs/releases/*"]
     },
     {
       "Effect": "Deny",
       "Action": ["s3:DeleteObject"],
-      "Resource": ["arn:aws:s3:::elevation-profiles/releases/*"]
+      "Resource": ["arn:aws:s3:::elevation-profiles-gtfs/releases/*"]
     }
   ]
 }

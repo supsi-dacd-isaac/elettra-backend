@@ -19,10 +19,19 @@ from app.database import AsyncSessionLocal, get_async_session
 from app.services.elevation_profiles import (
     configured_release,
     create_minio_client,
+    elevation_release_runtime_metadata,
     elevation_profiles_bucket,
+    gtfs_elevation_profiles_bucket,
     probe_configured_release_immutable,
     validate_configured_release,
+    validate_production_profile_contract,
     validate_release_covers_database,
+)
+from app.services.runtime_release import runtime_release_configuration
+from app.services.model_release import (
+    model_release_runtime_metadata,
+    probe_configured_model_immutable,
+    validate_configured_model_release,
 )
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -211,12 +220,57 @@ async def validate_elevation_jobs_schema(session) -> None:
         )
 
 
+async def elevation_job_health_metadata(session) -> dict[str, int | str | None]:
+    """Summarise queue readiness against the configured aux provenance pins."""
+
+    runtime = runtime_release_configuration()
+    result = await session.execute(
+        text(
+            """
+            SELECT
+                count(*) AS total,
+                count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+                count(*) FILTER (WHERE status = 'failed') AS failed,
+                count(*) FILTER (WHERE status IN ('pending', 'processing')) AS not_ready,
+                count(*) FILTER (
+                    WHERE status = 'succeeded'
+                      AND (
+                        (:algorithm IS NOT NULL AND algorithm_version IS DISTINCT FROM :algorithm)
+                        OR
+                        (:roads_release IS NOT NULL AND roads_release IS DISTINCT FROM :roads_release)
+                      )
+                ) AS incompatible
+            FROM elevation_profile_jobs
+            """
+        ),
+        {
+            "algorithm": runtime.aux_algorithm,
+            "roads_release": runtime.aux_roads_release,
+        },
+    )
+    row = result.fetchone()
+    if row is None:
+        raise RuntimeError("Unable to read elevation profile job health")
+    return {
+        "total": int(row[0]),
+        "succeeded": int(row[1]),
+        "failed": int(row[2]),
+        "not_ready": int(row[3]),
+        "incompatible": int(row[4]),
+        "required_algorithm": runtime.aux_algorithm,
+        "required_roads_release": runtime.aux_roads_release,
+    }
+
+
 async def probe_elevation_profiles_store() -> str:
     """Contact MinIO for both release and compatibility-mode deployments."""
     release_id = configured_release()
     if release_id is not None:
         await asyncio.to_thread(probe_configured_release_immutable)
-        return f"MinIO elevation release '{release_id}' is active and complete"
+        return (
+            f"MinIO GTFS elevation release '{release_id}' is active and complete "
+            f"in bucket '{gtfs_elevation_profiles_bucket()}'"
+        )
 
     bucket = elevation_profiles_bucket()
     client = create_minio_client()
@@ -239,6 +293,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"🚌 {settings.app_name} v{settings.app_version} starting...")
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"Database URL: {settings.database_url.split('@')[1] if '@' in settings.database_url else 'localhost'}")
+    runtime_release = runtime_release_configuration()
     profile_status = await probe_elevation_profiles_store()
     release_id = configured_release()
     async with AsyncSessionLocal() as release_session:
@@ -246,12 +301,19 @@ async def lifespan(app: FastAPI):
         await validate_elevation_jobs_schema(release_session)
         if release_id is not None:
             release_manifest = validate_configured_release()
+            validate_production_profile_contract(release_manifest)
             await validate_release_covers_database(release_session, release_manifest)
+            await asyncio.to_thread(
+                validate_configured_model_release, release_manifest
+            )
     if release_id is not None:
         logger.info(
-            "Elevation profiles: bucket=%s release=%s (manifest validated)",
+            "Elevation profiles: gtfs_bucket=%s aux_bucket=%s release=%s "
+            "model=%s (manifest validated)",
+            gtfs_elevation_profiles_bucket(),
             elevation_profiles_bucket(),
             release_id,
+            runtime_release.consumption_model_release,
         )
     else:
         logger.warning(
@@ -485,12 +547,14 @@ async def health_check(response: Response):
             result = await session.execute(text("SELECT 1"))
             result.fetchone()
             await validate_elevation_jobs_schema(session)
+            elevation_jobs = await elevation_job_health_metadata(session)
             response_time = (time.time() - start_time) * 1000
             services["database"] = ServiceStatus(
                 status="healthy",
                 message="Database connection and migrations 005/006 are ready",
                 response_time_ms=round(response_time, 2),
-                last_checked=timestamp
+                last_checked=timestamp,
+                metadata={"elevation_profile_jobs": elevation_jobs},
             )
             break
     except Exception as e:
@@ -498,6 +562,24 @@ async def health_check(response: Response):
             status="unhealthy",
             message=f"Database connection failed: {str(e)}",
             last_checked=timestamp
+        )
+        overall_status = "unhealthy"
+
+    try:
+        start_time = time.time()
+        await asyncio.to_thread(probe_configured_model_immutable)
+        services["consumption_model"] = ServiceStatus(
+            status="healthy",
+            message="Configured consumption model identity is stable",
+            response_time_ms=round((time.time() - start_time) * 1000, 2),
+            last_checked=timestamp,
+            metadata=model_release_runtime_metadata(),
+        )
+    except Exception as e:
+        services["consumption_model"] = ServiceStatus(
+            status="unhealthy",
+            message=f"Consumption model validation failed: {str(e)}",
+            last_checked=timestamp,
         )
         overall_status = "unhealthy"
 
@@ -512,6 +594,7 @@ async def health_check(response: Response):
             message=minio_message,
             response_time_ms=round((time.time() - start_time) * 1000, 2),
             last_checked=timestamp,
+            metadata=elevation_release_runtime_metadata(),
         )
     except Exception as e:
         services["elevation_profiles"] = ServiceStatus(
@@ -523,11 +606,21 @@ async def health_check(response: Response):
     
     # Check external services (optional - can be extended)
     # For now, we'll just check if the application is running
-    services["application"] = ServiceStatus(
-        status="healthy",
-        message="Application is running",
-        last_checked=timestamp
-    )
+    try:
+        runtime_metadata = runtime_release_configuration().metadata()
+        services["application"] = ServiceStatus(
+            status="healthy",
+            message="Application is running with a coherent release configuration",
+            last_checked=timestamp,
+            metadata=runtime_metadata,
+        )
+    except Exception as e:
+        services["application"] = ServiceStatus(
+            status="unhealthy",
+            message=f"Runtime release configuration failed: {str(e)}",
+            last_checked=timestamp,
+        )
+        overall_status = "unhealthy"
     
     # Determine overall status
     if any(service.status == "unhealthy" for service in services.values()):

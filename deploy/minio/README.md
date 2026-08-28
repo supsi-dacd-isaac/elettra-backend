@@ -26,25 +26,27 @@ release objects. Worker and publisher include `AbortMultipartUpload` so a
 failed large upload can be cleaned up.
 
 The backend is explicitly denied access to worker-only `backups/`,
-`._staging/` and `._health/` objects. It can read release objects, root-level
-auxiliary profiles and the `consumption-models` bucket. While auxiliary objects
-remain at `<shape_id>.parquet`, an IAM policy cannot distinguish them from
-legacy GTFS objects in the same root namespace; application validation is the
-remaining isolation boundary. A future `aux/` namespace would remove that
-limitation.
+`._staging/` and `._health/` objects. It reads immutable GTFS releases from
+`elevation-profiles-gtfs`, root-level auxiliary profiles from
+`elevation-profiles`, and models from `consumption-models`. The worker has no
+permissions on the GTFS bucket. The publisher has no permissions on the aux
+bucket and cannot delete release objects.
 
-The templates use the default bucket names. If
-`ELEVATION_PROFILES_BUCKET` differs, change every corresponding ARN before
-creating the policies. Enable bucket versioning/object locking and retention in
-the infrastructure layer when supported; these JSON policies do not substitute
-for storage-level retention.
+The templates use the default bucket names. If either
+`ELEVATION_PROFILES_BUCKET` or `GTFS_ELEVATION_PROFILES_BUCKET` differs, change
+every corresponding ARN before creating the policies. Enable versioning on the
+aux bucket before replacing the v1 profiles. Create the GTFS bucket with object
+locking enabled, then apply governance retention to the completed release;
+these JSON policies do not substitute for storage-level retention.
 
 Before enabling a release in production, verify all of the following:
 
 ```bash
 mc version info production/elevation-profiles
-mc retention info production/elevation-profiles
+mc version info production/elevation-profiles-gtfs
+mc retention info production/elevation-profiles-gtfs
 mc anonymous get production/elevation-profiles
+mc anonymous get production/elevation-profiles-gtfs
 mc admin policy entities production --policy elevation-backend-readonly
 mc admin policy entities production --policy elevation-worker
 mc admin policy entities production --policy elevation-release-publisher
