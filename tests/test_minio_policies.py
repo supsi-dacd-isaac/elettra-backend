@@ -6,6 +6,10 @@ POLICY_DIR = Path(__file__).resolve().parents[1] / "deploy" / "minio"
 PROFILE_BUCKET = "arn:aws:s3:::elevation-profiles"
 GTFS_PROFILE_BUCKET = "arn:aws:s3:::elevation-profiles-gtfs"
 MODEL_BUCKET = "arn:aws:s3:::consumption-models"
+GTFS_RELEASE_PREFIX = "releases/roaddeck-v3.3-20260828-db39527"
+MODEL_RELEASE_PREFIX = (
+    "models/greybox_qrf_production_core_v2_roaddeck_v3_3_20260828"
+)
 OBJECT_WRITE_ACTIONS = {
     "s3:PutObject",
     "s3:DeleteObject",
@@ -36,6 +40,16 @@ def _resources(statements: list[dict]) -> set[str]:
         for statement in statements
         for resource in statement.get("Resource", [])
     }
+
+
+def _list_prefixes(statements: list[dict]) -> list[str]:
+    list_statements = [
+        statement
+        for statement in statements
+        if "s3:ListBucket" in statement.get("Action", [])
+    ]
+    assert len(list_statements) == 1
+    return list_statements[0]["Condition"]["StringLike"]["s3:prefix"]
 
 
 def test_policy_documents_are_explicit_and_well_formed():
@@ -107,7 +121,7 @@ def test_publisher_is_release_scoped_manifest_last_capable_and_non_deleting():
     policy = _load("elevation-release-publisher.json")
     allowed = _statements(policy, "Allow")
     denied = _statements(policy, "Deny")
-    release_resource = f"{GTFS_PROFILE_BUCKET}/releases/*"
+    release_resource = f"{GTFS_PROFILE_BUCKET}/{GTFS_RELEASE_PREFIX}/*"
 
     object_allows = [
         statement
@@ -121,6 +135,10 @@ def test_publisher_is_release_scoped_manifest_last_capable_and_non_deleting():
         "s3:AbortMultipartUpload",
     } <= _actions(object_allows)
     assert "s3:DeleteObject" not in _actions(allowed)
+    assert _list_prefixes(allowed) == [
+        GTFS_RELEASE_PREFIX,
+        f"{GTFS_RELEASE_PREFIX}/*",
+    ]
     assert any(
         "s3:DeleteObject" in statement.get("Action", [])
         and release_resource in statement.get("Resource", [])
@@ -136,7 +154,7 @@ def test_model_publisher_is_models_scoped_and_non_deleting():
     policy = _load("consumption-model-publisher-v2.json")
     allowed = _statements(policy, "Allow")
     denied = _statements(policy, "Deny")
-    model_resource = f"{MODEL_BUCKET}/models/*"
+    model_resource = f"{MODEL_BUCKET}/{MODEL_RELEASE_PREFIX}/*"
 
     assert _resources(allowed) == {MODEL_BUCKET, model_resource}
     assert {
@@ -147,6 +165,10 @@ def test_model_publisher_is_models_scoped_and_non_deleting():
         "s3:AbortMultipartUpload",
     } == _actions(allowed)
     assert "s3:DeleteObject" not in _actions(allowed)
+    assert _list_prefixes(allowed) == [
+        MODEL_RELEASE_PREFIX,
+        f"{MODEL_RELEASE_PREFIX}/*",
+    ]
     assert any(
         statement.get("Action") == ["s3:DeleteObject"]
         and statement.get("Resource") == [model_resource]

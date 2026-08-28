@@ -3,18 +3,31 @@
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+      "Action": ["s3:GetBucketLocation"],
       "Resource": ["arn:aws:s3:::elevation-profiles-gtfs"]
     },
     {
       "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::elevation-profiles-gtfs"],
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "releases/roaddeck-v3.3-20260828-db39527",
+            "releases/roaddeck-v3.3-20260828-db39527/*"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"],
-      "Resource": ["arn:aws:s3:::elevation-profiles-gtfs/releases/*"]
+      "Resource": ["arn:aws:s3:::elevation-profiles-gtfs/releases/roaddeck-v3.3-20260828-db39527/*"]
     },
     {
       "Effect": "Deny",
       "Action": ["s3:DeleteObject"],
-      "Resource": ["arn:aws:s3:::elevation-profiles-gtfs/releases/*"]
+      "Resource": ["arn:aws:s3:::elevation-profiles-gtfs/releases/roaddeck-v3.3-20260828-db39527/*"]
     }
   ]
 }

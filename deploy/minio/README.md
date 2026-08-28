@@ -33,7 +33,9 @@ The backend is explicitly denied access to worker-only `backups/`,
 `elevation-profiles-gtfs`, root-level auxiliary profiles from
 `elevation-profiles`, and models from `consumption-models`. The worker has no
 permissions on the GTFS bucket. The publisher has no permissions on the aux
-bucket and cannot delete release objects.
+bucket and cannot delete release objects. Its list and object permissions are
+pinned to `releases/roaddeck-v3.3-20260828-db39527/`; publishing a later release
+requires a reviewed policy with that release's exact prefix, not a wildcard.
 
 The templates use the default bucket names. If either
 `ELEVATION_PROFILES_BUCKET` or `GTFS_ELEVATION_PROFILES_BUCKET` differs, change
@@ -42,8 +44,10 @@ aux bucket before replacing the v1 profiles. Create the GTFS bucket with object
 locking enabled, then apply governance retention to the completed release;
 these JSON policies do not substitute for storage-level retention.
 
-The model publisher can list/read `consumption-models` and get/put only below
-`models/`; it cannot delete. Give its credentials only to the explicit trainer
+The model publisher can list/read only the approved
+`models/greybox_qrf_production_core_v2_roaddeck_v3_3_20260828/` prefix and can
+get/put objects only there; it cannot delete. A later model release requires a
+new policy pinned to its exact prefix. Give its credentials only to the trainer
 `--upload-minio` invocation and revoke or disable the identity after the model
 gate. The trainer uploads the joblib, metadata, feature-importance and accepted
 gate report first, then writes `{model}_release.json` last. Backend startup

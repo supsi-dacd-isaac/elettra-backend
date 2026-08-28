@@ -3,18 +3,31 @@
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+      "Action": ["s3:GetBucketLocation"],
       "Resource": ["arn:aws:s3:::consumption-models"]
     },
     {
       "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::consumption-models"],
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "models/greybox_qrf_production_core_v2_roaddeck_v3_3_20260828",
+            "models/greybox_qrf_production_core_v2_roaddeck_v3_3_20260828/*"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"],
-      "Resource": ["arn:aws:s3:::consumption-models/models/*"]
+      "Resource": ["arn:aws:s3:::consumption-models/models/greybox_qrf_production_core_v2_roaddeck_v3_3_20260828/*"]
     },
     {
       "Effect": "Deny",
       "Action": ["s3:DeleteObject"],
-      "Resource": ["arn:aws:s3:::consumption-models/models/*"]
+      "Resource": ["arn:aws:s3:::consumption-models/models/greybox_qrf_production_core_v2_roaddeck_v3_3_20260828/*"]
     }
   ]
 }
