@@ -130,3 +130,25 @@ def test_publisher_is_release_scoped_manifest_last_capable_and_non_deleting():
         resource.startswith(GTFS_PROFILE_BUCKET)
         for resource in _resources(policy["Statement"])
     )
+
+
+def test_model_publisher_is_models_scoped_and_non_deleting():
+    policy = _load("consumption-model-publisher-v2.json")
+    allowed = _statements(policy, "Allow")
+    denied = _statements(policy, "Deny")
+    model_resource = f"{MODEL_BUCKET}/models/*"
+
+    assert _resources(allowed) == {MODEL_BUCKET, model_resource}
+    assert {
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:AbortMultipartUpload",
+    } == _actions(allowed)
+    assert "s3:DeleteObject" not in _actions(allowed)
+    assert any(
+        statement.get("Action") == ["s3:DeleteObject"]
+        and statement.get("Resource") == [model_resource]
+        for statement in denied
+    )

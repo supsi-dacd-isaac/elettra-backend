@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::consumption-models"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"],
+      "Resource": ["arn:aws:s3:::consumption-models/models/*"]
+    },
+    {
+      "Effect": "Deny",
+      "Action": ["s3:DeleteObject"],
+      "Resource": ["arn:aws:s3:::consumption-models/models/*"]
+    }
+  ]
+}

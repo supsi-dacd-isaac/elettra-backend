@@ -1,10 +1,11 @@
 # MinIO identities for elevation profiles
 
-Create three non-root identities and attach the policies in this directory:
+Create four non-root identities and attach the policies in this directory:
 
 - `elevation-backend-readonly.json` for the FastAPI service;
 - `elevation-worker.json` for the auxiliary worker;
 - `elevation-release-publisher.json` only for the offline release command.
+- `consumption-model-publisher-v2.json` only for the approved trainer upload.
 
 Example with an administrative `mc` alias named `production`:
 
@@ -15,6 +16,8 @@ mc admin policy create production elevation-worker \
   deploy/minio/elevation-worker.json
 mc admin policy create production elevation-release-publisher \
   deploy/minio/elevation-release-publisher.json
+mc admin policy create production consumption-model-publisher-v2 \
+  deploy/minio/consumption-model-publisher-v2.json
 ```
 
 Attach each policy to its dedicated user/service account using the MinIO
@@ -39,6 +42,14 @@ aux bucket before replacing the v1 profiles. Create the GTFS bucket with object
 locking enabled, then apply governance retention to the completed release;
 these JSON policies do not substitute for storage-level retention.
 
+The model publisher can list/read `consumption-models` and get/put only below
+`models/`; it cannot delete. Give its credentials only to the explicit trainer
+`--upload-minio` invocation and revoke or disable the identity after the model
+gate. The trainer uploads the joblib first and its complete metadata JSON last.
+The backend startup treats the metadata object as the commit marker and pins
+both object identities for the process lifetime. Never use MinIO root
+credentials for model training or publication.
+
 Before enabling a release in production, verify all of the following:
 
 ```bash
@@ -50,6 +61,7 @@ mc anonymous get production/elevation-profiles-gtfs
 mc admin policy entities production --policy elevation-backend-readonly
 mc admin policy entities production --policy elevation-worker
 mc admin policy entities production --policy elevation-release-publisher
+mc admin policy entities production --policy consumption-model-publisher-v2
 ```
 
 `release.json` is written last by the publisher, but IAM cannot express write

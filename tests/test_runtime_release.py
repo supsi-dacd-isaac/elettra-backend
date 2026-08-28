@@ -47,7 +47,7 @@ def test_v2_switch_requires_exact_aux_provenance_pins(monkeypatch):
     monkeypatch.setenv("ELEVATION_PROFILES_BUCKET", "mutable-aux")
     monkeypatch.setenv("GTFS_ELEVATION_PROFILES_BUCKET", "immutable-gtfs")
     monkeypatch.setenv("ELEVATION_AUX_PROFILE_ALGORITHM", "road-snap-v1")
-    monkeypatch.delenv("ELEVATION_AUX_ROADS_RELEASE", raising=False)
+    monkeypatch.setenv("ELEVATION_AUX_ROADS_RELEASE", ROADS_RELEASE)
 
     with pytest.raises(RuntimeReleaseConfigurationError, match="road-snap-v3.3"):
         runtime_release_configuration()
@@ -58,6 +58,16 @@ def test_v2_switch_requires_an_isolated_gtfs_bucket(monkeypatch):
     monkeypatch.setenv("GTFS_ELEVATION_PROFILES_BUCKET", "mutable-aux")
 
     with pytest.raises(RuntimeReleaseConfigurationError, match="dedicated"):
+        runtime_release_configuration()
+
+
+def test_aux_provenance_pins_are_atomic_in_compatibility_mode(monkeypatch):
+    monkeypatch.delenv("ELEVATION_PROFILES_RELEASE", raising=False)
+    monkeypatch.delenv("CONSUMPTION_MODEL_RELEASE", raising=False)
+    monkeypatch.setenv("ELEVATION_AUX_PROFILE_ALGORITHM", ROAD_SNAP_V3_ALGORITHM)
+    monkeypatch.delenv("ELEVATION_AUX_ROADS_RELEASE", raising=False)
+
+    with pytest.raises(RuntimeReleaseConfigurationError, match="configured or removed together"):
         runtime_release_configuration()
 
 

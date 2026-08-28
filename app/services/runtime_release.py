@@ -78,8 +78,16 @@ def runtime_release_configuration() -> RuntimeReleaseConfiguration:
             "ELEVATION_PROFILES_RELEASE and CONSUMPTION_MODEL_RELEASE must be "
             "configured or removed together"
         )
+    if (aux_algorithm is None) != (aux_roads_release is None):
+        raise RuntimeReleaseConfigurationError(
+            "ELEVATION_AUX_PROFILE_ALGORITHM and ELEVATION_AUX_ROADS_RELEASE "
+            "must be configured or removed together"
+        )
     if elevation_release is not None:
-        aux_bucket = os.getenv("ELEVATION_PROFILES_BUCKET", "elevation-profiles").strip()
+        aux_bucket = (
+            os.getenv("ELEVATION_PROFILES_BUCKET", "elevation-profiles").strip()
+            or "elevation-profiles"
+        )
         gtfs_bucket = os.getenv("GTFS_ELEVATION_PROFILES_BUCKET", "").strip()
         if not gtfs_bucket or gtfs_bucket == aux_bucket:
             raise RuntimeReleaseConfigurationError(
