@@ -45,10 +45,13 @@ these JSON policies do not substitute for storage-level retention.
 The model publisher can list/read `consumption-models` and get/put only below
 `models/`; it cannot delete. Give its credentials only to the explicit trainer
 `--upload-minio` invocation and revoke or disable the identity after the model
-gate. The trainer uploads the joblib first and its complete metadata JSON last.
-The backend startup treats the metadata object as the commit marker and pins
-both object identities for the process lifetime. Never use MinIO root
-credentials for model training or publication.
+gate. The trainer uploads the joblib, metadata, feature-importance and accepted
+gate report first, then writes `{model}_release.json` last. Backend startup
+treats only that release manifest as the commit marker. It verifies the
+declared SHA-256 and size of all four artifacts, checks metadata/manifest
+provenance, and pins the manifest digest plus every object identity for the
+process lifetime. Never use MinIO root credentials for model training or
+publication.
 
 Before enabling a release in production, verify all of the following:
 

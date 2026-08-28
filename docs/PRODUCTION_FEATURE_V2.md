@@ -19,6 +19,15 @@ contract 2. While the switch is active, prediction requests cannot select a
 different model and a succeeded auxiliary job is still rejected unless its
 algorithm and road release match both pins.
 
+The configured model is publishable only after
+`models/<model>/<model>_release.json` exists. Schema 1 must declare the pinned
+release ID, a passed acceptance decision, manifest-last immutability, and the
+exact SHA-256 and size of the joblib, metadata, feature-importance CSV and
+acceptance report. Startup hashes every artifact and checks that metadata,
+feature release, auxiliary estimator and training software agree with the
+manifest. Readiness re-hashes the manifest and rejects any changed object
+identity; `/health` exposes the pinned manifest digest and identity.
+
 GTFS release objects are read only from the GTFS bucket and versioned release
 prefix; there is no root-key fallback. Auxiliary objects retain their stable
 names in the mutable auxiliary bucket. `/health` reports the buckets, release,
