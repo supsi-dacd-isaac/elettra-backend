@@ -154,10 +154,14 @@ Calendar:
 - GET `/api/v1/gtfs-calendar/by-trip/{trip_id}` *(Note: current query uses a direct filter; underlying schema may need refinement to join via trips' service reference.)*
 
 Bus Models:
-- POST `/api/v1/bus-models/`
-- GET  `/api/v1/bus-models/`
-- GET  `/api/v1/bus-models/{model_id}`
-- PUT  `/api/v1/bus-models/{model_id}`
+- POST `/api/v1/user/bus-models/`
+- GET  `/api/v1/user/bus-models/`
+- GET  `/api/v1/user/bus-models/{model_id}`
+- PUT  `/api/v1/user/bus-models/{model_id}`
+
+New bus models require a complete physical `specs` object. Historical rows
+remain readable even if incomplete. A metadata-only PUT may omit `specs`; when
+`specs` is supplied, it replaces the stored object and must be complete.
 
 Simulation Runs:
 - POST `/api/v1/simulation-runs/`
@@ -192,12 +196,20 @@ Root:
 ## 10. Bus Model & Simulation Examples
 Create a bus model:
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/bus-models/ \
+curl -X POST http://127.0.0.1:8000/api/v1/user/bus-models/ \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{
-    "company_id": "<agency_uuid>",
+    "user_id": "<user_uuid>",
     "name": "eCitaro-12m",
-    "specs": {"battery_kwh": 350, "length_m": 12},
+    "specs": {
+      "bus_length_m": 12,
+      "empty_weight_kg": 12000,
+      "battery_pack_size_kwh": 40,
+      "battery_pack_weight_kg": 274,
+      "min_battery_packs": 6,
+      "max_battery_packs": 10,
+      "max_passengers": 80
+    },
     "manufacturer": "Mercedes"
   }'
 ```

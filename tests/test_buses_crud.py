@@ -4,6 +4,8 @@ Generates a human-readable report in tests/reports/ via report_collector fixture
 """
 
 import os
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -11,6 +13,16 @@ __report_module__ = "buses_crud"
 
 API_BASE = "/api/v1/user"
 AUTH_BASE = "/auth"
+
+VALID_BUS_MODEL_SPECS = {
+    "bus_length_m": 12,
+    "empty_weight_kg": 12_000,
+    "battery_pack_size_kwh": 40,
+    "battery_pack_weight_kg": 274,
+    "min_battery_packs": 6,
+    "max_battery_packs": 10,
+    "max_passengers": 80,
+}
 
 
 def get_auth_token(client: TestClient) -> str | None:
@@ -40,8 +52,8 @@ def ensure_bus_model(client: TestClient, token: str) -> str:
     r = client.post(
         f"{API_BASE}/bus-models/",
         json={
-            "name": "Test Model for Buses",
-            "specs": {},
+            "name": f"Test Model for Buses {uuid.uuid4().hex[:8]}",
+            "specs": VALID_BUS_MODEL_SPECS,
             "user_id": current_user_id(client, token),
         },
         headers=hdrs,
@@ -123,5 +135,3 @@ def test_bus_not_found(client: TestClient, record):
     record("bus_put_404", r.status_code == 404, f"status={r.status_code}")
     r = client.delete(f"{API_BASE}/buses/{invalid_id}", headers=hdrs)
     record("bus_del_404", r.status_code == 404, f"status={r.status_code}")
-
-

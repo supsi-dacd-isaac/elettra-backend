@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from app.database import get_async_session
 from app.schemas.database import (
-    BusesModelsCreate, BusesModelsRead, BusesModelsUpdate,
+    BusesModelsRead,
     BusesCreate, BusesRead, BusesUpdate,
     BusesManufacturersRead, BusesModelsRefsRead,
 )
@@ -19,7 +19,12 @@ from app.schemas.responses import (
 from app.schemas.pagination import (
     PaginatedResponse, PaginationParams, build_paginated_response,
 )
-from app.schemas.requests import ShiftCreateRequest, ShiftUpdateRequest
+from app.schemas.requests import (
+    BusModelCreateRequest,
+    BusModelUpdateRequest,
+    ShiftCreateRequest,
+    ShiftUpdateRequest,
+)
 from app.models import (
     Users, BusesModels, Buses, Depots, GtfsStops,
     Shifts, ShiftsStructures, GtfsTrips, GtfsRoutes, GtfsCalendar,
@@ -112,7 +117,7 @@ async def read_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_se
 
 
 @router.post("/bus-models/", response_model=BusesModelsRead)
-async def create_bus_model(bus_model: BusesModelsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def create_bus_model(bus_model: BusModelCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     # Validate user exists
     user = await db.get(Users, bus_model.user_id)
     if user is None:
@@ -124,7 +129,7 @@ async def create_bus_model(bus_model: BusesModelsCreate, db: AsyncSession = Depe
     return db_bus_model
 
 @router.put("/bus-models/{model_id}", response_model=BusesModelsRead)
-async def update_bus_model(model_id: UUID, bus_model_update: BusesModelsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def update_bus_model(model_id: UUID, bus_model_update: BusModelUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     db_bus_model = await db.get(BusesModels, model_id)
     if db_bus_model is None:
         raise HTTPException(status_code=404, detail="Bus model not found")
@@ -708,5 +713,4 @@ async def get_shift_yearly_distance(
         yearly_distance_km=info.yearly_distance_km,
         trips=trips,
     )
-
 

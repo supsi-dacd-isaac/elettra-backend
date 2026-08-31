@@ -254,12 +254,35 @@ curl -X POST http://127.0.0.1:8002/api/v1/user/bus-models/ \
   -d '{
     "user_id": "<user_uuid>",
     "name": "test_bus02",
-    "specs": {"battery_kwh": 400},
+    "specs": {
+      "bus_length_m": 12,
+      "empty_weight_kg": 12000,
+      "battery_pack_size_kwh": 40,
+      "battery_pack_weight_kg": 274,
+      "min_battery_packs": 6,
+      "max_battery_packs": 10,
+      "max_passengers": 80,
+      "max_charging_power_kw": 450
+    },
     "manufacturer": "Hess"
   }'
 ```
 
-Update:
+The seven physical fields shown above are mandatory on create and whenever a
+PUT includes `specs`. Length, empty mass, pack capacity and pack mass must be
+finite and greater than zero. Pack bounds and passenger capacity must be
+positive integers, with `min_battery_packs <= max_battery_packs`.
+`name` is trimmed and must be a non-empty string whenever it is supplied.
+`empty_weight_kg` is the vehicle mass **without traction batteries or
+passengers**. Extra economic, LCA, charging and auxiliary fields are accepted
+and retained.
+
+Existing incomplete records remain readable. To edit only their metadata,
+omit `specs` entirely. Explicit `null`, arrays and partial `specs` objects are
+rejected with HTTP 422. Supplying a valid `specs` object replaces the complete
+stored object.
+
+Metadata-only update:
 ```bash
 curl -X PUT http://127.0.0.1:8002/api/v1/user/bus-models/<model_id> \
   -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' \

@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from typing import Annotated, Any, Literal, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Literal, Optional
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 from app.schemas.trip_status import TripStatus
 from app.services.runtime_release import (
     RuntimeReleaseConfigurationError,
@@ -16,6 +24,110 @@ from app.services.runtime_release import (
 # "diesel"  = diesel-heating ebus-dh (heating shifted to diesel, cooling stays electric)
 AuxiliaryHeatingType = Literal["default", "diesel"]
 PredictionStackType = Literal["legacy", "vecto-g2", "vecto-g0-transfer"]
+
+
+PositiveFiniteFloat = Annotated[
+    StrictFloat,
+    Field(gt=0, allow_inf_nan=False),
+]
+PositiveStrictInt = Annotated[StrictInt, Field(ge=1)]
+
+
+def _trim_non_empty_bus_model_name(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ValueError("name must be a non-empty string")
+    trimmed = value.strip()
+    if not trimmed:
+        raise ValueError("name must not be empty or whitespace-only")
+    return trimmed
+
+
+def _remove_omitted_field_default(schema: dict[str, Any]) -> None:
+    """Do not advertise the internal omission sentinel as a JSON default."""
+
+    schema.pop("default", None)
+
+
+class BusModelPhysicalSpecs(BaseModel):
+    """Physical fields required when bus-model specs are written.
+
+    Read responses deliberately keep the historical permissive JSON contract:
+    old database rows may still be incomplete.  This model is therefore used
+    only by create/update requests.  Additional economic, LCA, charging and
+    auxiliary-consumption fields remain valid and are preserved verbatim.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    bus_length_m: PositiveFiniteFloat = Field(
+        description="Physical bus length in metres.",
+    )
+    empty_weight_kg: PositiveFiniteFloat = Field(
+        description=(
+            "Empty vehicle mass in kilograms, excluding the traction battery "
+            "and passengers."
+        ),
+    )
+    battery_pack_size_kwh: PositiveFiniteFloat = Field(
+        description="Usable energy of one battery pack in kWh.",
+    )
+    battery_pack_weight_kg: PositiveFiniteFloat = Field(
+        description="Mass of one battery pack in kilograms.",
+    )
+    min_battery_packs: PositiveStrictInt
+    max_battery_packs: PositiveStrictInt
+    max_passengers: PositiveStrictInt
+
+    @model_validator(mode="after")
+    def validate_battery_pack_bounds(self):
+        if self.min_battery_packs > self.max_battery_packs:
+            raise ValueError(
+                "min_battery_packs must be less than or equal to "
+                "max_battery_packs"
+            )
+        return self
+
+
+class BusModelCreateRequest(BaseModel):
+    """Create a bus model with a complete physical specification."""
+
+    name: str
+    specs: BusModelPhysicalSpecs
+    user_id: UUID
+    manufacturer: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_and_validate_name(cls, value: Any) -> str:
+        return _trim_non_empty_bus_model_name(value)
+
+
+class BusModelUpdateRequest(BaseModel):
+    """Update bus-model metadata or replace its complete specs object.
+
+    Omitting ``specs`` permits metadata-only edits to historical incomplete
+    records.  Explicit ``null`` is rejected; when supplied, the entire specs
+    object must satisfy :class:`BusModelPhysicalSpecs`.
+    """
+
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+    # A non-nullable type with an omitted default keeps PATCH-like omission
+    # semantics while making explicit JSON null invalid (and documenting the
+    # field as non-nullable in OpenAPI).
+    specs: BusModelPhysicalSpecs = Field(  # type: ignore[assignment]
+        default=None,
+        json_schema_extra=_remove_omitted_field_default,
+    )
+    user_id: Optional[UUID] = None
+    manufacturer: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_and_validate_name(cls, value: Any) -> str:
+        return _trim_non_empty_bus_model_name(value)
 
 
 def _resolve_prediction_stack_fields(model: BaseModel) -> BaseModel:

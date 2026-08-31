@@ -13,6 +13,16 @@ __report_module__ = "bus_models_crud"
 API_BASE = "/api/v1/user"
 AUTH_BASE = "/auth"
 
+VALID_BUS_MODEL_SPECS = {
+    "bus_length_m": 12,
+    "empty_weight_kg": 12_000,
+    "battery_pack_size_kwh": 40,
+    "battery_pack_weight_kg": 274,
+    "min_battery_packs": 6,
+    "max_battery_packs": 10,
+    "max_passengers": 80,
+}
+
 
 def get_auth_token(client: TestClient) -> str | None:
     email = os.getenv("TEST_LOGIN_EMAIL")
@@ -39,7 +49,7 @@ def create_bus_model(client: TestClient, token: str, name: str = "Test Model") -
     payload = {
         "name": name,
         "manufacturer": "Test Maker",
-        "specs": {"battery_kwh": 300}
+        "specs": {**VALID_BUS_MODEL_SPECS, "battery_kwh": 300}
     }
     # User id required now
     payload["user_id"] = current_user_id(client, token)
@@ -89,7 +99,7 @@ def test_create_read_update_delete_bus_model(client: TestClient, record):
     r = client.post(f"{API_BASE}/bus-models/", json={
         "name": "Test Model 1",
         "manufacturer": "Maker",
-        "specs": {"battery_kwh": 250},
+        "specs": {**VALID_BUS_MODEL_SPECS, "battery_kwh": 250},
         "description": "Initial description",
         "user_id": current_user_id(client, token)
     }, headers=hdrs)
@@ -121,6 +131,31 @@ def test_create_read_update_delete_bus_model(client: TestClient, record):
     # Read by id
     r = client.get(f"{API_BASE}/bus-models/{model_id}", headers=hdrs)
     record("bm_get", r.status_code == 200 and r.json()["id"] == model_id, f"status={r.status_code}")
+
+    # Invalid specs fail before any part of the update is applied.
+    r = client.put(
+        f"{API_BASE}/bus-models/{model_id}",
+        json={"name": "Must not be applied", "specs": {"bus_length_m": 12}},
+        headers=hdrs,
+    )
+    record("bm_invalid_specs_update", r.status_code == 422, f"status={r.status_code}")
+    r = client.get(f"{API_BASE}/bus-models/{model_id}", headers=hdrs)
+    unchanged = (
+        r.status_code == 200
+        and r.json()["name"] == "Test Model 1"
+        and r.json()["specs"] == {**VALID_BUS_MODEL_SPECS, "battery_kwh": 250}
+    )
+    record("bm_invalid_specs_update_atomic", unchanged, f"status={r.status_code}")
+
+    r = client.put(
+        f"{API_BASE}/bus-models/{model_id}",
+        json={"name": "   "},
+        headers=hdrs,
+    )
+    record("bm_invalid_name_update", r.status_code == 422, f"status={r.status_code}")
+    r = client.get(f"{API_BASE}/bus-models/{model_id}", headers=hdrs)
+    unchanged = r.status_code == 200 and r.json()["name"] == "Test Model 1"
+    record("bm_invalid_name_update_atomic", unchanged, f"status={r.status_code}")
 
     # Update
     r = client.put(f"{API_BASE}/bus-models/{model_id}", json={"name": "Updated Model 1", "description": "Updated description"}, headers=hdrs)
@@ -160,9 +195,7 @@ def test_bus_model_invalid_agency_fk(client: TestClient, record):
     bad_user = str(uuid.uuid4())
     r = client.post(f"{API_BASE}/bus-models/", json={
         "name": "Invalid FK Model",
-        "specs": {},
+        "specs": VALID_BUS_MODEL_SPECS,
         "user_id": bad_user
     }, headers=hdrs)
     record("bm_create_invalid_fk", r.status_code == 400, f"status={r.status_code}")
-
-
