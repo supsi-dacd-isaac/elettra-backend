@@ -4,6 +4,7 @@ Prediction service: runs ConsumptionPredictor for shifts stored in the DB.
 
 import logging
 import math
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -48,6 +49,109 @@ logger = logging.getLogger(__name__)
 # Model cache (singleton per model_name)
 # ---------------------------------------------------------------------------
 _predictor_cache: dict[str, ConsumptionPredictor] = {}
+
+
+@dataclass(frozen=True)
+class PhysicalBusMass:
+    bus_length_m: float
+    battery_pack_size_kwh: float
+    battery_pack_weight_kg: float
+    battery_packs: int
+    max_passengers: int
+    occupancy_percent: float
+    passenger_count: float
+    empty_weight_kg: float
+    battery_weight_kg: float
+    passenger_weight_kg: float
+    total_weight_kg: float
+
+    @property
+    def battery_capacity_kwh(self) -> float:
+        return self.battery_pack_size_kwh * self.battery_packs
+
+    @property
+    def battery_density_kg_per_kwh(self) -> float:
+        return self.battery_pack_weight_kg / self.battery_pack_size_kwh
+
+
+def physical_bus_mass(
+    specs: dict,
+    *,
+    occupancy_percent: float,
+    num_battery_packs: Optional[int] = None,
+) -> PhysicalBusMass:
+    """Resolve the authoritative runtime mass without silent fallbacks."""
+
+    required = (
+        "bus_length_m",
+        "battery_pack_size_kwh",
+        "battery_pack_weight_kg",
+        "max_battery_packs",
+        "max_passengers",
+        "empty_weight_kg",
+    )
+    missing = [name for name in required if name not in specs]
+    if missing:
+        raise ValueError(
+            "Bus model cannot provide physical prediction mass; missing specs: "
+            f"{missing}"
+        )
+
+    def finite_positive(name: str) -> float:
+        value = float(specs[name])
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"Bus model spec {name} must be finite and positive")
+        return value
+
+    bus_length_m = finite_positive("bus_length_m")
+    pack_size = finite_positive("battery_pack_size_kwh")
+    pack_weight = finite_positive("battery_pack_weight_kg")
+    empty_weight = finite_positive("empty_weight_kg")
+    max_packs_raw = float(specs["max_battery_packs"])
+    max_passengers_raw = float(specs["max_passengers"])
+    if (
+        not math.isfinite(max_packs_raw)
+        or max_packs_raw <= 0
+        or not max_packs_raw.is_integer()
+    ):
+        raise ValueError("Bus model spec max_battery_packs must be a positive integer")
+    if (
+        not math.isfinite(max_passengers_raw)
+        or max_passengers_raw < 0
+        or not max_passengers_raw.is_integer()
+    ):
+        raise ValueError("Bus model spec max_passengers must be a non-negative integer")
+    max_packs = int(max_packs_raw)
+    max_passengers = int(max_passengers_raw)
+    packs = max_packs if num_battery_packs is None else num_battery_packs
+    if isinstance(packs, bool) or not isinstance(packs, (int, np.integer)):
+        raise ValueError("num_battery_packs must be an integer")
+    packs = int(packs)
+    if not 1 <= packs <= max_packs:
+        raise ValueError(
+            f"num_battery_packs must be between 1 and {max_packs}, got {packs}"
+        )
+    occupancy = float(occupancy_percent)
+    if not math.isfinite(occupancy) or not 0 <= occupancy <= 100:
+        raise ValueError("occupancy_percent must be finite and between 0 and 100")
+
+    passenger_count = max_passengers * occupancy / 100.0
+    battery_weight = packs * pack_weight
+    passenger_weight = passenger_count * 70.0
+    total_weight = empty_weight + battery_weight + passenger_weight
+    return PhysicalBusMass(
+        bus_length_m=bus_length_m,
+        battery_pack_size_kwh=pack_size,
+        battery_pack_weight_kg=pack_weight,
+        battery_packs=packs,
+        max_passengers=max_passengers,
+        occupancy_percent=occupancy,
+        passenger_count=passenger_count,
+        empty_weight_kg=empty_weight,
+        battery_weight_kg=battery_weight,
+        passenger_weight_kg=passenger_weight,
+        total_weight_kg=total_weight,
+    )
 
 
 def _bind_prediction_run_stack(
@@ -412,21 +516,16 @@ async def predict_shift_consumption(
             raise ValueError(f"BusModel {run.bus_model_id} not found")
         specs = bus_model.specs or {}
 
-        bus_length_m = float(specs.get("bus_length_m", 18))
-        battery_pack_size_kwh = float(specs.get("battery_pack_size_kwh", 37))
-        battery_pack_weight_kg = float(specs.get("battery_pack_weight_kg", 253))
-        max_battery_packs = int(specs.get("max_battery_packs", 14))
-        max_passengers = int(specs.get("max_passengers", 120))
-        empty_weight_kg = float(specs.get("empty_weight_kg", 18000))
-
-        packs = num_battery_packs if num_battery_packs is not None else max_battery_packs
-        battery_capacity_kwh = battery_pack_size_kwh * packs
-        occupancy = float(run.occupancy_percent)
-        passenger_weight = max_passengers * (occupancy / 100.0) * 70.0
-        total_weight_kg = empty_weight_kg + packs * battery_pack_weight_kg + passenger_weight
-
-        # Actual battery pack density (kg per kWh of battery)
-        actual_pack_density = battery_pack_weight_kg / battery_pack_size_kwh
+        mass = physical_bus_mass(
+            specs,
+            occupancy_percent=float(run.occupancy_percent),
+            num_battery_packs=num_battery_packs,
+        )
+        bus_length_m = mass.bus_length_m
+        packs = mass.battery_packs
+        battery_capacity_kwh = mass.battery_capacity_kwh
+        total_weight_kg = mass.total_weight_kg
+        actual_pack_density = mass.battery_density_kg_per_kwh
 
         # Load trip statistics from DB
         trip_stats = await load_shift_trip_statistics(db, run.shift_id)
@@ -552,6 +651,14 @@ async def predict_shift_consumption(
             "bus_length_m": bus_length_m,
             "num_battery_packs": packs,
             "total_weight_kg": total_weight_kg,
+            "physical_mass": {
+                "empty_weight_kg": mass.empty_weight_kg,
+                "battery_weight_kg": mass.battery_weight_kg,
+                "passenger_count": mass.passenger_count,
+                "passenger_weight_kg": mass.passenger_weight_kg,
+                "occupancy_percent": mass.occupancy_percent,
+                "total_weight_kg": mass.total_weight_kg,
+            },
             "quantiles": quantiles,
             "greybox_params": results.get("greybox_params"),
             "prediction_stack": stack_release.stack.value,

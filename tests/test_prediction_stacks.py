@@ -23,7 +23,7 @@ from app.services.model_release import (
     ModelReleaseValidationError,
     _validate_loaded_model_artifact,
 )
-from app.services.prediction import _bind_prediction_run_stack
+from app.services.prediction import _bind_prediction_run_stack, physical_bus_mass
 from app.services.optimization import (
     _aggregate_prediction_components,
     _prediction_provenance,
@@ -82,6 +82,47 @@ def _stack_contract(stack: str) -> dict[str, str]:
         "vecto_template_release": VECTO_TEMPLATE_RELEASE,
         "vecto_template_sha256": template_release_sha256(),
     }
+
+
+def test_runtime_physical_mass_counts_requested_passengers_exactly_once():
+    specs = {
+        "bus_length_m": 13,
+        "empty_weight_kg": 10235,
+        "battery_pack_size_kwh": 46,
+        "battery_pack_weight_kg": 275,
+        "max_battery_packs": 10,
+        "max_passengers": 70,
+    }
+
+    empty = physical_bus_mass(specs, occupancy_percent=0)
+    half = physical_bus_mass(specs, occupancy_percent=50)
+    full = physical_bus_mass(specs, occupancy_percent=100)
+
+    assert empty.battery_weight_kg == 2750
+    assert empty.total_weight_kg == 12985
+    assert half.passenger_count == 35
+    assert half.passenger_weight_kg == 2450
+    assert half.total_weight_kg == 15435
+    assert full.total_weight_kg - empty.total_weight_kg == 70 * 70
+    assert half.battery_capacity_kwh == 460
+    assert half.battery_density_kg_per_kwh == pytest.approx(275 / 46)
+
+
+def test_runtime_physical_mass_fails_closed_on_missing_or_invalid_specs():
+    with pytest.raises(ValueError, match="missing specs"):
+        physical_bus_mass({}, occupancy_percent=50)
+    specs = {
+        "bus_length_m": 13,
+        "empty_weight_kg": 10235,
+        "battery_pack_size_kwh": 46,
+        "battery_pack_weight_kg": 275,
+        "max_battery_packs": 10,
+        "max_passengers": 70,
+    }
+    with pytest.raises(ValueError, match="between 0 and 100"):
+        physical_bus_mass(specs, occupancy_percent=101)
+    with pytest.raises(ValueError, match="between 1 and 10"):
+        physical_bus_mass(specs, occupancy_percent=50, num_battery_packs=11)
 
 
 def _auxiliary_estimator(stack: str) -> dict[str, str]:
@@ -304,6 +345,49 @@ def test_hybrid_wrapper_has_an_auditable_energy_identity():
     assert np.all(components.fixed_auxiliary_kwh > 0)
     quantiles = model.predict(frame, quantiles=[0.1, 0.9], aux_energy_fn=hvac_only)
     assert quantiles.shape == (2, 2)
+
+
+def test_qrf_receives_greybox_prediction_recomputed_with_runtime_mass():
+    class CapturingQrf(_FakeQrf):
+        def __init__(self):
+            self.frames = []
+
+        def predict(self, frame, quantiles=None):
+            self.frames.append(frame.copy())
+            return super().predict(frame, quantiles=quantiles)
+
+    frame = _features().iloc[[0]]
+    greybox = CappedRegenAffineGreyBox()
+    greybox.theta_ = greybox.initial_bounds()[0]
+    qrf = CapturingQrf()
+    model = HybridGreyboxQRF(
+        greybox=greybox,
+        qrf=qrf,
+        selected_features=["greybox_pred_kwh"],
+        prediction_stack="vecto-g2",
+    )
+    auxiliary = lambda value: AuxiliaryEnergyComponents.zeros(len(value))
+
+    light = model.predict_components(
+        frame,
+        aux_energy_fn=auxiliary,
+        override_mass=np.array([12_985.0]),
+    )
+    heavy = model.predict_components(
+        frame,
+        aux_energy_fn=auxiliary,
+        override_mass=np.array([17_885.0]),
+    )
+
+    qrf_light = qrf.frames[0]["greybox_pred_kwh"].iloc[0]
+    qrf_heavy = qrf.frames[1]["greybox_pred_kwh"].iloc[0]
+    assert qrf_light == pytest.approx(
+        light.mechanical_greybox_kwh[0] + light.fixed_auxiliary_kwh[0]
+    )
+    assert qrf_heavy == pytest.approx(
+        heavy.mechanical_greybox_kwh[0] + heavy.fixed_auxiliary_kwh[0]
+    )
+    assert qrf_heavy > qrf_light
 
 
 def test_predictor_normalizes_one_quantile_qrf_output():
