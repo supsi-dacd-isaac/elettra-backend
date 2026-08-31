@@ -63,8 +63,10 @@ from app.services.elevation_profiles import (
     load_trip_elevation_dataframe,
 )
 from app.services.runtime_release import (
+    LEGACY_AUXILIARY_ESTIMATOR,
+    PredictionStackRelease,
     RuntimeReleaseConfigurationError,
-    enforce_configured_model,
+    resolve_prediction_selection,
 )
 from app.utils.trip_statistics import (
     combine_elevation_profiles,
@@ -144,6 +146,31 @@ def _serialize_optimization_run_list_item(
     )
 
 
+def _assert_yearly_prediction_stack_compatible(
+    existing: list,
+    selected: PredictionStackRelease,
+    *,
+    auxiliary_heating_type: str,
+) -> None:
+    expected = (
+        selected.stack.value,
+        selected.model_release,
+        selected.auxiliary_estimator,
+        auxiliary_heating_type,
+    )
+    for row in existing:
+        stack = str(row[0] or "legacy")
+        auxiliary = row[2]
+        if auxiliary is None and stack == "legacy":
+            auxiliary = LEGACY_AUXILIARY_ESTIMATOR
+        actual = (stack, row[1], auxiliary, str(row[3] or "default"))
+        if actual != expected:
+            raise ValueError(
+                "a yearly analysis cannot mix prediction stack, model release "
+                "or auxiliary estimator/heating type"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Prediction Runs endpoints
 # ---------------------------------------------------------------------------
@@ -156,7 +183,10 @@ async def create_prediction_runs(
     current_user: Users = Depends(get_current_user),
 ):
     try:
-        enforce_configured_model(request.model_name)
+        selected_stack = resolve_prediction_selection(
+            prediction_stack=request.prediction_stack,
+            model_name=request.model_name,
+        )
     except RuntimeReleaseConfigurationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -165,9 +195,32 @@ async def create_prediction_runs(
         raise HTTPException(status_code=404, detail="Bus model not found")
 
     if request.yearly_analysis_id is not None:
-        ya = await db.get(YearlyAnalysis, request.yearly_analysis_id)
+        result = await db.execute(
+            select(YearlyAnalysis)
+            .where(YearlyAnalysis.id == request.yearly_analysis_id)
+            .with_for_update()
+        )
+        ya = result.scalar_one_or_none()
         if ya is None:
             raise HTTPException(status_code=404, detail="Yearly analysis not found")
+        result = await db.execute(
+            select(
+                PredictionRuns.prediction_stack,
+                PredictionRuns.model_name,
+                PredictionRuns.auxiliary_estimator_release,
+                PredictionRuns.auxiliary_heating_type,
+            )
+            .where(PredictionRuns.yearly_analysis_id == request.yearly_analysis_id)
+            .distinct()
+        )
+        try:
+            _assert_yearly_prediction_stack_compatible(
+                list(result.all()),
+                selected_stack,
+                auxiliary_heating_type=request.auxiliary_heating_type,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     for shift_id in request.shift_ids:
         shift = await db.get(Shifts, shift_id)
@@ -186,7 +239,9 @@ async def create_prediction_runs(
             shift_id=shift_id,
             bus_model_id=request.bus_model_id,
             yearly_analysis_id=request.yearly_analysis_id,
-            model_name=request.model_name,
+            model_name=selected_stack.model_release,
+            prediction_stack=selected_stack.stack.value,
+            auxiliary_estimator_release=selected_stack.auxiliary_estimator,
             external_temp_celsius=request.external_temp_celsius,
             auxiliary_heating_type=request.auxiliary_heating_type,
             occupancy_percent=request.occupancy_percent,
@@ -281,6 +336,7 @@ async def create_optimization_run(
         raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
 
     prediction_bus_model_ids: set[UUID] = set()
+    prediction_stack_pairs: set[tuple[str, str, str]] = set()
     if request.prediction_run_ids:
         for pred_id in request.prediction_run_ids:
             pred = await db.get(PredictionRuns, pred_id)
@@ -292,6 +348,35 @@ async def create_optimization_run(
                     detail=f"Prediction run {pred_id} is not completed (status={pred.status})",
                 )
             prediction_bus_model_ids.add(pred.bus_model_id)
+            try:
+                selected = resolve_prediction_selection(
+                    prediction_stack=getattr(pred, "prediction_stack", None) or None,
+                    model_name=pred.model_name,
+                )
+            except RuntimeReleaseConfigurationError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            stored_estimator = getattr(pred, "auxiliary_estimator_release", None)
+            legacy_unversioned = (
+                stored_estimator is None and selected.stack.value == "legacy"
+            )
+            if (
+                not legacy_unversioned
+                and stored_estimator != selected.auxiliary_estimator
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Prediction run {pred_id} auxiliary estimator does not "
+                        "match its registered prediction stack"
+                    ),
+                )
+            prediction_stack_pairs.add(
+                (
+                    selected.stack.value,
+                    selected.model_release,
+                    selected.auxiliary_estimator,
+                )
+            )
 
         if request.bus_model_id is not None:
             mismatched_model_ids = prediction_bus_model_ids - {request.bus_model_id}
@@ -304,6 +389,15 @@ async def create_optimization_run(
                         f"request bus_model_id ({request.bus_model_id}); found {found}"
                     ),
                 )
+
+        if len(prediction_stack_pairs) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "prediction_run_ids must all use the same prediction stack, "
+                    "model release and auxiliary estimator"
+                ),
+            )
 
     # `name` is a first-class column on optimization_runs; keep it out of
     # input_params (which is reserved for solver/technical inputs).

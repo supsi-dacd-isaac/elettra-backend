@@ -15,6 +15,7 @@ from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 import logging
 
 from elettra_core import FEATURE_CONTRACT_VERSION, categorical_feature_contract
+from elettra_core.greybox import HybridGreyboxQRF
 from app.services.runtime_release import runtime_release_configuration
 from .minio_utils import download_model_from_minio, build_model_path
 from .feature_preparation import prepare_features_from_trip_stats, validate_features
@@ -116,6 +117,7 @@ class ConsumptionPredictor:
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.required_features = None
         self.is_greybox = False
+        self.is_hybrid_greybox = False
         
         if model_name:
             self.load_model(model_name)
@@ -136,17 +138,47 @@ class ConsumptionPredictor:
             model_path=model_path,
             local_cache_dir=self.cache_dir
         )
-        validate_model_feature_contract(metadata)
-        
         # Load model from bytes. Models created by the executable trainer can
         # contain trusted ``__main__`` references; keep this path identical to
         # ``load_model_from_file`` used by the container compatibility gate.
         _register_legacy_pickle_symbols()
-        self.model = joblib.load(io.BytesIO(model_bytes))
+        model = joblib.load(io.BytesIO(model_bytes))
+        self.load_validated_model(model, metadata)
+
+        logger.info(f"✓ Model loaded successfully")
+
+        # Log model info if available
+        if metadata and 'evaluation_metrics' in metadata:
+            metrics = metadata['evaluation_metrics']
+            logger.info(f"  Model R² Score: {metrics.get('r2', 'N/A'):.4f}")
+            logger.info(f"  Model RMSE: {metrics.get('rmse', 'N/A'):.4f}")
+
+    def load_validated_model(
+        self,
+        model: Any,
+        metadata: Dict[str, Any],
+    ) -> None:
+        """Bind an artifact whose bytes were already release-gated.
+
+        Production uses this method with the exact in-memory object decoded by
+        the manifest-last startup preflight.  It deliberately performs no
+        second MinIO read, closing the replacement window between validation
+        and the first prediction.
+        """
+
+        validate_model_feature_contract(metadata)
+        self.model = model
         self.metadata = metadata
         # Determine model type
         try:
-            self.is_greybox = bool(metadata and metadata.get('model_type') == 'CombinedGreyboxQRF')
+            model_type = metadata.get('model_type') if metadata else None
+            self.is_hybrid_greybox = bool(
+                model_type == HybridGreyboxQRF.model_type
+                or isinstance(self.model, HybridGreyboxQRF)
+            )
+            self.is_greybox = bool(
+                model_type == 'CombinedGreyboxQRF' or self.is_hybrid_greybox
+            )
         except Exception:
             self.is_greybox = False
         
@@ -159,15 +191,6 @@ class ConsumptionPredictor:
         
         self.required_features = metadata['selected_features']
         logger.info(f"Model requires {len(self.required_features)} features")
-        
-        logger.info(f"✓ Model loaded successfully")
-        
-        # Log model info if available
-        if metadata:
-            if 'evaluation_metrics' in metadata:
-                metrics = metadata['evaluation_metrics']
-                logger.info(f"  Model R² Score: {metrics.get('r2', 'N/A'):.4f}")
-                logger.info(f"  Model RMSE: {metrics.get('rmse', 'N/A'):.4f}")
     
     def load_model_from_file(self, file_path: str, metadata_path: Optional[str] = None) -> None:
         """
@@ -189,6 +212,14 @@ class ConsumptionPredictor:
             
             if 'selected_features' in self.metadata:
                 self.required_features = self.metadata['selected_features']
+        model_type = self.metadata.get('model_type') if self.metadata else None
+        self.is_hybrid_greybox = bool(
+            model_type == HybridGreyboxQRF.model_type
+            or isinstance(self.model, HybridGreyboxQRF)
+        )
+        self.is_greybox = bool(
+            model_type == 'CombinedGreyboxQRF' or self.is_hybrid_greybox
+        )
         
         logger.info(f"✓ Model loaded from file")
     
@@ -241,6 +272,8 @@ class ConsumptionPredictor:
             
             # Validate presence of greybox required columns
             gb_required = {'bus_length_m', 'bus_battery_kwh', 'total_distance_m', 'driving_average_speed_kmh', 'total_ascent_m', 'total_descent_m', 'driving_time_minutes', 'total_duration_minutes'}
+            if self.is_hybrid_greybox:
+                gb_required.add('pct_downhill_segments')
             missing_gb = gb_required - set(df.columns)
             if missing_gb:
                 raise ValueError(f"Missing required greybox features: {missing_gb}")
@@ -280,6 +313,16 @@ class ConsumptionPredictor:
         
         if quantiles is None:
             quantiles = [0.05, 0.25, 0.5, 0.75, 0.95]
+        quantiles = [float(value) for value in quantiles]
+        if (
+            not quantiles
+            or len(quantiles) != len(set(quantiles))
+            or len(quantiles) != len({f"{value:.2f}" for value in quantiles})
+            or not all(np.isfinite(value) and 0 < value < 1 for value in quantiles)
+        ):
+            raise ValueError(
+                "quantiles must be a non-empty unique list with values in (0, 1)"
+            )
         
         logger.info(f"Making predictions for {len(features)} trips")
         
@@ -293,24 +336,57 @@ class ConsumptionPredictor:
         
         # Point prediction (median from QRF)
         logger.info(f"Predicting with features shape: {X.shape}")
-        if self.is_greybox:
+        mean_components = None
+        if self.is_hybrid_greybox:
+            median_components = self.model.predict_components(
+                X,
+                quantiles=None,
+                aux_energy_fn=aux_energy_fn,
+                override_mass=override_mass,
+            )
+            y_pred_median = median_components.total_kwh
+        elif self.is_greybox:
             y_pred_median = self.model.predict(X, aux_energy_fn=aux_energy_fn, override_mass=override_mass)
         else:
             y_pred_median = self.model.predict(X)
         
         # Mean prediction from QRF
         logger.info("Computing mean prediction")
-        if self.is_greybox:
+        if self.is_hybrid_greybox:
+            mean_components = self.model.predict_components(
+                X,
+                quantiles="mean",
+                aux_energy_fn=aux_energy_fn,
+                override_mass=override_mass,
+            )
+            y_pred_mean = mean_components.total_kwh
+        elif self.is_greybox:
             y_pred_mean = self.model.predict(X, quantiles="mean", aux_energy_fn=aux_energy_fn, override_mass=override_mass)
         else:
             y_pred_mean = self.model.predict(X, quantiles="mean")
         
         # Quantile predictions
         logger.info(f"Computing quantiles: {quantiles}")
-        if self.is_greybox:
+        if self.is_hybrid_greybox:
+            quantile_components = self.model.predict_components(
+                X,
+                quantiles=quantiles,
+                aux_energy_fn=aux_energy_fn,
+                override_mass=override_mass,
+            )
+            y_pred_quantiles = quantile_components.total_kwh
+        elif self.is_greybox:
             y_pred_quantiles = self.model.predict(X, quantiles=quantiles, aux_energy_fn=aux_energy_fn, override_mass=override_mass)
         else:
             y_pred_quantiles = self.model.predict(X, quantiles=quantiles)
+        y_pred_quantiles = np.asarray(y_pred_quantiles, dtype=float)
+        if y_pred_quantiles.ndim == 1 and len(quantiles) == 1:
+            y_pred_quantiles = y_pred_quantiles.reshape(-1, 1)
+        if y_pred_quantiles.shape != (len(X), len(quantiles)):
+            raise ValueError(
+                "Model returned an incompatible quantile prediction shape: "
+                f"{y_pred_quantiles.shape}, expected {(len(X), len(quantiles))}"
+            )
         
         # Create results DataFrame
         results = pd.DataFrame({
@@ -323,7 +399,24 @@ class ConsumptionPredictor:
             results.insert(0, 'trip_id', trip_ids)
         
         # Add drivetrain and auxiliary consumption breakdown for greybox models
-        if self.is_greybox:
+        if self.is_hybrid_greybox:
+            assert mean_components is not None
+            results['mechanical_greybox_kwh'] = mean_components.mechanical_greybox_kwh
+            results['qrf_residual_kwh'] = mean_components.qrf_residual_kwh
+            results['fixed_auxiliary_kwh'] = mean_components.fixed_auxiliary_kwh
+            results['hvac_electrical_kwh'] = mean_components.hvac_electrical_kwh
+            results['auxiliary_kwh'] = mean_components.auxiliary_kwh
+            results['drivetrain_kwh'] = mean_components.drivetrain_kwh
+            results['diesel_fuel_kwh'] = mean_components.diesel_fuel_kwh
+            results['diesel_liters'] = mean_components.diesel_liters
+            results['uncovered_thermal_kwh'] = mean_components.uncovered_thermal_kwh
+            results['drivetrain_median_kwh'] = (
+                y_pred_median - mean_components.auxiliary_kwh
+            )
+            auxiliary_kwh = mean_components.auxiliary_kwh
+            logger.info("  Drivetrain total: %.2f kWh", mean_components.drivetrain_kwh.sum())
+            logger.info("  Auxiliary total: %.2f kWh", auxiliary_kwh.sum())
+        elif self.is_greybox:
             # Get auxiliary consumption first (deterministic, based on temp and duration)
             if aux_energy_fn is not None:
                 aux_out = aux_energy_fn(X)
@@ -413,14 +506,25 @@ class ConsumptionPredictor:
         greybox_params = None
         if self.is_greybox and isinstance(self.metadata, dict):
             greybox_params = self.metadata.get("greybox_params")
+        if self.is_hybrid_greybox and not greybox_params:
+            raise ValueError(
+                "VECTO HybridGreyboxQRF metadata must contain greybox_params "
+                "for battery sensitivity"
+            )
         if self.is_greybox and greybox_params:
             try:
                 sens = compute_battery_sensitivity_from_metadata(
                     features, greybox_params,
                     battery_pack_density_override=battery_pack_density_override,
+                    override_mass=override_mass,
                 )
                 predictions["mass_sensitivity_kwh_per_kwh_batt"] = sens
             except Exception as exc:
+                if self.is_hybrid_greybox:
+                    raise ValueError(
+                        "Failed to compute required VECTO grey-box battery "
+                        f"sensitivity: {exc}"
+                    ) from exc
                 logger.warning(f"Failed to compute greybox battery sensitivity: {exc}")
         
         # Compile results
@@ -448,6 +552,19 @@ class ConsumptionPredictor:
             summary_data['mean_auxiliary_per_trip_kwh'] = float(predictions['auxiliary_kwh'].mean())
             if has_distance:
                 summary_data['auxiliary_per_km_kwh'] = float(total_auxiliary / total_km)
+
+        component_summary_keys = (
+            'mechanical_greybox_kwh',
+            'qrf_residual_kwh',
+            'fixed_auxiliary_kwh',
+            'hvac_electrical_kwh',
+            'diesel_fuel_kwh',
+            'diesel_liters',
+            'uncovered_thermal_kwh',
+        )
+        for component in component_summary_keys:
+            if component in predictions.columns:
+                summary_data[f'total_{component}'] = float(predictions[component].sum())
         
         results = {
             'shift_id': json_data.get('shift_id'),

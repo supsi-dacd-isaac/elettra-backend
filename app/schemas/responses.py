@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.database import GtfsTripsRead
 
@@ -200,21 +200,36 @@ class ScenarioDieselHeating(BaseModel):
     diesel_heater_efficiency: float
 
 
+class EnergyComponentBreakdown(BaseModel):
+    """Explicit battery/diesel component identity for a prediction aggregate."""
+
+    mechanical_greybox_kwh: float
+    qrf_residual_kwh: float
+    fixed_auxiliary_kwh: float
+    hvac_electrical_kwh: float
+    uncovered_thermal_kwh: float = 0.0
+
+
 class ScenarioEnergySummary(BaseModel):
     """Per-scenario energy data (one prediction run = one scenario)."""
     prediction_run_id: UUID
     temperature_celsius: float
     occurrences: int
     auxiliary_heating_type: str
+    prediction_stack: str = "legacy"
+    model_release: Optional[str] = None
+    auxiliary_estimator_release: Optional[str] = None
     daily_electric_kwh: float
     daily_distance_km: float
     daily_auxiliary_kwh: float
     daily_drivetrain_kwh: float
+    daily_components: Optional[EnergyComponentBreakdown] = None
     diesel_heating: Optional[ScenarioDieselHeating] = None
     annual_electric_kwh: float
     annual_distance_km: float
     annual_auxiliary_kwh: float
     annual_drivetrain_kwh: float
+    annual_components: Optional[EnergyComponentBreakdown] = None
     annual_diesel_fuel_kwh: float
     annual_diesel_liters: float
 
@@ -229,6 +244,9 @@ class YearlyEnergySummaryResponse(BaseModel):
     """Full yearly energy summary, with per-scenario breakdown and totals."""
     yearly_analysis_id: UUID
     auxiliary_heating_type: str
+    prediction_stacks: list[str] = Field(default_factory=list)
+    model_releases: list[str] = Field(default_factory=list)
+    auxiliary_estimator_releases: list[str] = Field(default_factory=list)
     scenarios: list[ScenarioEnergySummary]
     yearly_totals: dict
     yearly_diesel_heating: Optional[YearlyDieselHeatingTotals] = None

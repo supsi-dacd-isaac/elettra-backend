@@ -61,6 +61,8 @@ class _ReadySession:
                     "previous_cluster_end_time",
                     "status",
                 },
+                "prediction_runs": main._PREDICTION_STACK_COLUMNS,
+                "trip_predictions": main._TRIP_COMPONENT_COLUMNS,
             }
             return _ScalarResult(columns[parameters["table_name"]])
         if "FROM elevation_profile_jobs" in sql and "count(*) AS total" in sql:
@@ -79,6 +81,8 @@ class _ReadySession:
                 return _ScalarResult(main._HYBRID_WEATHER_COLUMNS)
             return _ScalarResult(main._ELEVATION_JOB_COLUMNS)
         if "pg_constraint" in sql:
+            if "prediction_runs" in sql:
+                return _ScalarResult([main._PREDICTION_STACK_CONSTRAINT])
             if "elevation_profile_cleanup_jobs" in sql:
                 return _ScalarResult(main._CLEANUP_JOB_CONSTRAINTS)
             return _ScalarResult(main._ELEVATION_JOB_CONSTRAINTS)
@@ -145,7 +149,7 @@ async def test_health_is_200_only_after_schema_and_minio_preflights(monkeypatch)
 
     assert response.status_code == 200
     assert payload.status == "healthy"
-    assert "005/006/007" in payload.services["database"].message
+    assert "005/006/007/008" in payload.services["database"].message
     assert payload.services["database"].metadata["elevation_profile_jobs"] == {
         "total": 984,
         "succeeded": 984,

@@ -435,6 +435,9 @@ class YearlyEmissionsAssumptions(BaseModel):
     """
 
     auxiliary_heating_type: str
+    prediction_stacks: list[str] = Field(default_factory=list)
+    model_releases: list[str] = Field(default_factory=list)
+    auxiliary_estimator_releases: list[str] = Field(default_factory=list)
     yearly_electric_kwh: float
     yearly_diesel_heating_liters: float
     yearly_diesel_heating_fuel_kwh: float

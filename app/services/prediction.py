@@ -29,7 +29,16 @@ from app.utils.trip_statistics import (
     extract_stop_to_stop_statistics_for_schedule,
 )
 from app.services.elevation_profiles import load_trip_elevation_dataframe
-from app.services.runtime_release import enforce_configured_model
+from app.services.runtime_release import (
+    PredictionStack,
+    PredictionStackRelease,
+    enforce_configured_model,
+    resolve_prediction_selection,
+    runtime_release_configuration,
+    validate_model_stack_contract,
+)
+from app.services.model_release import get_validated_model_artifact
+from app.services.vecto_auxiliary import build_vecto_auxiliary_binding
 from elettra_core import RAW_TRIP_FEATURE_COLUMNS
 from simulation.consumption_prediction import ConsumptionPredictor
 
@@ -41,13 +50,45 @@ logger = logging.getLogger(__name__)
 _predictor_cache: dict[str, ConsumptionPredictor] = {}
 
 
+def _bind_prediction_run_stack(
+    run: PredictionRuns,
+    stack_release: PredictionStackRelease,
+) -> None:
+    """Verify persisted provenance before executing a prediction.
+
+    Historical rows may predate the auxiliary-estimator column, but only the
+    legacy stack is allowed to repair that NULL.  A VECTO row is new by
+    construction and a missing estimator would make its energy semantics
+    ambiguous, so it must fail closed.
+    """
+
+    stored_estimator = getattr(run, "auxiliary_estimator_release", None)
+    if stored_estimator is None:
+        if stack_release.stack is not PredictionStack.LEGACY:
+            raise ValueError(
+                "VECTO prediction run has no persisted auxiliary estimator"
+            )
+    elif stored_estimator != stack_release.auxiliary_estimator:
+        raise ValueError(
+            "Prediction run auxiliary estimator does not match its model stack"
+        )
+    run.prediction_stack = stack_release.stack.value
+    run.auxiliary_estimator_release = stack_release.auxiliary_estimator
+
+
 def get_predictor(model_name: str) -> ConsumptionPredictor:
     enforce_configured_model(model_name)
     if model_name not in _predictor_cache:
-        predictor = ConsumptionPredictor(
-            model_name=model_name,
-            bucket_name="consumption-models",
-        )
+        runtime = runtime_release_configuration()
+        if runtime.production_v2_active:
+            model, metadata = get_validated_model_artifact(model_name)
+            predictor = ConsumptionPredictor(bucket_name="consumption-models")
+            predictor.load_validated_model(model, metadata)
+        else:
+            predictor = ConsumptionPredictor(
+                model_name=model_name,
+                bucket_name="consumption-models",
+            )
         _predictor_cache[model_name] = predictor
     return _predictor_cache[model_name]
 
@@ -397,11 +438,29 @@ async def predict_shift_consumption(
             "trip_statistics": trip_stats,
         }
 
-        # Build aux energy function
-        aux_fn = build_aux_energy_fn(specs, run.auxiliary_heating_type)
+        stack_release = resolve_prediction_selection(
+            prediction_stack=getattr(run, "prediction_stack", None) or None,
+            model_name=run.model_name,
+        )
+        _bind_prediction_run_stack(run, stack_release)
 
-        # Get predictor (cached)
+        auxiliary_context: dict[str, object] | None = None
+        if stack_release.stack is PredictionStack.LEGACY:
+            aux_fn = build_aux_energy_fn(specs, run.auxiliary_heating_type)
+        else:
+            vecto_binding = build_vecto_auxiliary_binding(
+                stack_release=stack_release,
+                bus_model_specs=specs,
+                occupancy_percent=float(run.occupancy_percent),
+                external_temp_celsius=float(run.external_temp_celsius),
+                auxiliary_heating_type=run.auxiliary_heating_type,
+            )
+            aux_fn = vecto_binding.energy_fn
+            auxiliary_context = vecto_binding.metadata()
+
+        # Get predictor (cached) and bind it to the same stack contract.
         predictor = get_predictor(run.model_name)
+        validate_model_stack_contract(stack_release, predictor.metadata)
 
         # Build override_mass array (same mass for all trips)
         n_trips = len(trip_stats)
@@ -432,12 +491,46 @@ async def predict_shift_consumption(
         # Enrich summary with auxiliary_heating_type + diesel breakdown
         summary = results.get("summary") or {}
         summary["auxiliary_heating_type"] = run.auxiliary_heating_type
+        summary["prediction_stack"] = stack_release.stack.value
+        summary["auxiliary_estimator_release"] = stack_release.auxiliary_estimator
+        if auxiliary_context is not None:
+            summary["vecto_auxiliary"] = auxiliary_context
+            diesel_fuel_kwh = float(summary.get("total_diesel_fuel_kwh", 0.0))
+            diesel_liters = float(summary.get("total_diesel_liters", 0.0))
+            if diesel_fuel_kwh or diesel_liters:
+                summary["diesel_heating"] = {
+                    "diesel_fuel_kwh": round(diesel_fuel_kwh, 4),
+                    "diesel_liters": round(diesel_liters, 4),
+                    "diesel_liters_per_km": round(
+                        diesel_liters / float(summary.get("total_distance_km", 0.0)), 6
+                    )
+                    if float(summary.get("total_distance_km", 0.0)) > 0
+                    else 0.0,
+                    "diesel_heater_efficiency": auxiliary_context[
+                        "diesel_heater_efficiency"
+                    ],
+                }
+                summary["mixed_energy_totals"] = {
+                    "battery_total_kwh": round(
+                        float(summary.get("total_consumption_kwh", 0.0)), 4
+                    ),
+                    "diesel_fuel_kwh": round(diesel_fuel_kwh, 4),
+                    "combined_final_energy_kwh": round(
+                        float(summary.get("total_consumption_kwh", 0.0))
+                        + diesel_fuel_kwh,
+                        4,
+                    ),
+                }
 
         diesel_params_entry = (
             specs.get("auxiliary_consumption_kw", {})
             .get(run.auxiliary_heating_type)
         )
-        if diesel_params_entry and _is_diesel_heating_params(diesel_params_entry):
+        if (
+            stack_release.stack is PredictionStack.LEGACY
+            and diesel_params_entry
+            and _is_diesel_heating_params(diesel_params_entry)
+        ):
             try:
                 diesel_info = compute_diesel_heating_summary(
                     bus_model_specs=specs,
@@ -461,6 +554,9 @@ async def predict_shift_consumption(
             "total_weight_kg": total_weight_kg,
             "quantiles": quantiles,
             "greybox_params": results.get("greybox_params"),
+            "prediction_stack": stack_release.stack.value,
+            "auxiliary_estimator_release": stack_release.auxiliary_estimator,
+            "auxiliary_estimator": auxiliary_context,
         })
         run.summary = _sanitize_json(results.get("summary"))
 
@@ -495,6 +591,22 @@ async def predict_shift_consumption(
                 auxiliary_kwh=_clean(pred.get("auxiliary_kwh")),
                 mass_sensitivity_kwh_per_kwh_batt=_clean(pred.get("mass_sensitivity_kwh_per_kwh_batt")),
                 quantiles=q_dict if q_dict else None,
+                component_breakdown=_sanitize_json(
+                    {
+                        key: _clean(pred.get(key))
+                        for key in (
+                            "mechanical_greybox_kwh",
+                            "qrf_residual_kwh",
+                            "fixed_auxiliary_kwh",
+                            "hvac_electrical_kwh",
+                            "diesel_fuel_kwh",
+                            "diesel_liters",
+                            "uncovered_thermal_kwh",
+                        )
+                        if pred.get(key) is not None
+                    }
+                )
+                or None,
             )
             db.add(tp)
 

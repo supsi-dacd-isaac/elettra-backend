@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -33,9 +34,62 @@ from simulation.optimization_model import (
     TripData,
     solve_optimization,
 )
-from app.services.runtime_release import enforce_configured_model
+from app.services.runtime_release import resolve_prediction_selection
 
 logger = logging.getLogger(__name__)
+
+_COMPONENT_BREAKDOWN_KEYS = (
+    "mechanical_greybox_kwh",
+    "qrf_residual_kwh",
+    "fixed_auxiliary_kwh",
+    "hvac_electrical_kwh",
+    "diesel_fuel_kwh",
+    "diesel_liters",
+    "uncovered_thermal_kwh",
+)
+
+
+def _aggregate_prediction_components(
+    breakdowns: list[dict | None], *, solver_consumption: str
+) -> dict | None:
+    """Aggregate mean prediction components without mislabelling quantiles."""
+
+    present = [value for value in breakdowns if value]
+    if not present:
+        return None
+    if len(present) != len(breakdowns):
+        raise ValueError(
+            "prediction component breakdown is only partially available"
+        )
+    totals = {key: 0.0 for key in _COMPONENT_BREAKDOWN_KEYS}
+    for value in present:
+        for key in _COMPONENT_BREAKDOWN_KEYS:
+            raw = value.get(key, 0.0)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise ValueError(f"invalid prediction component {key}")
+            totals[key] += float(raw)
+    return {
+        "basis": "mean_prediction_components",
+        "solver_consumption": solver_consumption,
+        "trip_prediction_count": len(present),
+        "totals": totals,
+    }
+
+
+async def _prediction_component_summary(
+    db: AsyncSession,
+    prediction_run_ids: list[UUID],
+    *,
+    solver_consumption: str,
+) -> dict | None:
+    result = await db.execute(
+        select(TripPredictions.component_breakdown).where(
+            TripPredictions.prediction_run_id.in_(prediction_run_ids)
+        )
+    )
+    return _aggregate_prediction_components(
+        list(result.scalars().all()), solver_consumption=solver_consumption
+    )
 
 
 def _time_str_to_minutes(time_str: str | None) -> int | None:
@@ -76,7 +130,15 @@ async def ensure_predictions(
     """
     from app.services.prediction import predict_shift_consumption
 
-    enforce_configured_model(str(prediction_params["model_name"]))
+    selected_stack = resolve_prediction_selection(
+        prediction_stack=prediction_params.get("prediction_stack"),
+        model_name=str(prediction_params["model_name"]),
+    )
+    requested_quantiles = [
+        float(value)
+        for value in prediction_params.get("quantiles", [0.05, 0.5, 0.95])
+    ]
+    requested_packs = prediction_params.get("num_battery_packs")
 
     run_ids: list[UUID] = []
     for shift_id in shift_ids:
@@ -88,6 +150,25 @@ async def ensure_predictions(
                 f"Cannot determine bus_model_id for shift {shift_id}. "
                 "Provide bus_model_id in the request or assign a bus with a model to the shift."
             )
+        resolved_bus_model = await db.get(BusesModels, resolved_model_id)
+        if resolved_bus_model is None:
+            raise ValueError(f"Bus model {resolved_model_id} no longer exists")
+        specs = resolved_bus_model.specs or {}
+        effective_packs = int(
+            requested_packs
+            if requested_packs is not None
+            else specs.get("max_battery_packs", 14)
+        )
+        expected_capacity = float(specs.get("battery_pack_size_kwh", 37)) * effective_packs
+        expected_bus_length = float(specs.get("bus_length_m", 18))
+        expected_weight = (
+            float(specs.get("empty_weight_kg", 18000))
+            + effective_packs * float(specs.get("battery_pack_weight_kg", 253))
+            + float(specs.get("max_passengers", 120))
+            * float(prediction_params["occupancy_percent"])
+            / 100.0
+            * 70.0
+        )
 
         result = await db.execute(
             select(PredictionRuns).where(
@@ -95,14 +176,57 @@ async def ensure_predictions(
                     PredictionRuns.shift_id == shift_id,
                     PredictionRuns.bus_model_id == resolved_model_id,
                     PredictionRuns.model_name == prediction_params["model_name"],
+                    PredictionRuns.prediction_stack == selected_stack.stack.value,
+                    or_(
+                        PredictionRuns.auxiliary_estimator_release
+                        == selected_stack.auxiliary_estimator,
+                        and_(
+                            selected_stack.stack.value == "legacy",
+                            PredictionRuns.auxiliary_estimator_release.is_(None),
+                        ),
+                    ),
                     PredictionRuns.external_temp_celsius == prediction_params["external_temp_celsius"],
                     PredictionRuns.occupancy_percent == prediction_params["occupancy_percent"],
                     PredictionRuns.auxiliary_heating_type == prediction_params["auxiliary_heating_type"],
                     PredictionRuns.status == "completed",
                 )
-            ).limit(1)
+            ).order_by(PredictionRuns.created_at.desc())
         )
-        existing = result.scalar_one_or_none()
+        existing = None
+        for candidate in result.scalars().all():
+            context = candidate.contextual_parameters or {}
+            context_quantiles = context.get("quantiles")
+            if not isinstance(context_quantiles, list) or [
+                float(value) for value in context_quantiles
+            ] != requested_quantiles:
+                continue
+            if context.get("num_battery_packs") != effective_packs:
+                continue
+            try:
+                context_capacity = float(context["battery_capacity_kwh"])
+                context_weight = float(context["total_weight_kg"])
+                context_bus_length = float(context["bus_length_m"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not math.isclose(
+                context_capacity,
+                expected_capacity,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ) or not math.isclose(
+                context_bus_length,
+                expected_bus_length,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ) or not math.isclose(
+                context_weight,
+                expected_weight,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ):
+                continue
+            existing = candidate
+            break
         if existing:
             logger.info("Reusing prediction run %s for shift %s", existing.id, shift_id)
             run_ids.append(existing.id)
@@ -114,6 +238,8 @@ async def ensure_predictions(
             shift_id=shift_id,
             bus_model_id=resolved_model_id,
             model_name=prediction_params["model_name"],
+            prediction_stack=selected_stack.stack.value,
+            auxiliary_estimator_release=selected_stack.auxiliary_estimator,
             external_temp_celsius=prediction_params["external_temp_celsius"],
             auxiliary_heating_type=prediction_params["auxiliary_heating_type"],
             occupancy_percent=prediction_params["occupancy_percent"],
@@ -146,12 +272,57 @@ def _get_consumption_value(pred: TripPredictions, quantile_consumption: str) -> 
     if quantile_consumption == "mean":
         return float(pred.prediction_kwh)
     if quantile_consumption == "median":
-        return float(pred.prediction_median_kwh or pred.prediction_kwh)
+        if pred.prediction_median_kwh is None:
+            raise ValueError("prediction row has no median consumption")
+        return float(pred.prediction_median_kwh)
     q_data = pred.quantiles or {}
     val = q_data.get(quantile_consumption)
     if val is not None:
         return float(val)
-    return float(pred.prediction_kwh)
+    raise ValueError(
+        f"prediction row has no requested quantile {quantile_consumption!r}"
+    )
+
+
+def _prediction_provenance(
+    prediction_runs: list[PredictionRuns],
+) -> dict[str, object]:
+    """Validate model/stack/aux identity before optimization consumes energy."""
+
+    identities: set[tuple[str, str, str]] = set()
+    for run in prediction_runs:
+        selected = resolve_prediction_selection(
+            prediction_stack=getattr(run, "prediction_stack", None) or None,
+            model_name=run.model_name,
+        )
+        stored_estimator = getattr(run, "auxiliary_estimator_release", None)
+        legacy_unversioned = (
+            stored_estimator is None and selected.stack.value == "legacy"
+        )
+        if not legacy_unversioned and stored_estimator != selected.auxiliary_estimator:
+            raise ValueError(
+                f"Prediction run {run.id} auxiliary estimator does not match "
+                "its registered prediction stack"
+            )
+        identities.add(
+            (
+                selected.stack.value,
+                selected.model_release,
+                selected.auxiliary_estimator,
+            )
+        )
+    if len(identities) != 1:
+        raise ValueError(
+            "Optimization prediction runs must share one model, stack and "
+            "auxiliary estimator"
+        )
+    stack, model, estimator = next(iter(identities))
+    return {
+        "prediction_stack": stack,
+        "model_release": model,
+        "auxiliary_estimator_release": estimator,
+        "prediction_run_ids": [str(run.id) for run in prediction_runs],
+    }
 
 
 async def prepare_optimization_input(
@@ -210,6 +381,7 @@ async def prepare_optimization_input(
         if pred_run is None:
             raise ValueError(f"Prediction run {pred_run_id} not found")
         prediction_runs.append(pred_run)
+    _prediction_provenance(prediction_runs)
 
     explicit_bus_model_id: UUID | None = optimization_run.bus_model_id
     if explicit_bus_model_id is not None:
@@ -386,6 +558,27 @@ async def run_optimization(
         else:
             prediction_run_ids = [UUID(rid) if isinstance(rid, str) else rid for rid in prediction_run_ids]
 
+        provenance_runs: list[PredictionRuns] = []
+        for prediction_run_id in prediction_run_ids:
+            prediction_run = await db.get(PredictionRuns, prediction_run_id)
+            if prediction_run is None:
+                raise ValueError(f"Prediction run {prediction_run_id} not found")
+            provenance_runs.append(prediction_run)
+        prediction_provenance = _prediction_provenance(provenance_runs)
+        quantile_consumption = str(
+            (run.input_params or {}).get("quantile_consumption", "mean")
+        )
+        prediction_components = await _prediction_component_summary(
+            db,
+            prediction_run_ids,
+            solver_consumption=quantile_consumption,
+        )
+        persisted_params = dict(run.input_params or {})
+        persisted_params["prediction_provenance"] = prediction_provenance
+        persisted_params["prediction_component_breakdown"] = prediction_components
+        run.input_params = persisted_params
+        await db.commit()
+
         # Prepare and solve
         buses, stations, opt_config = await prepare_optimization_input(
             db, run, prediction_run_ids,
@@ -408,6 +601,8 @@ async def run_optimization(
             "total_infeasibility_penalty_chf": result.total_infeasibility_penalty_chf,
             "per_bus_summary": result.per_bus_summary,
             "station_utilization": result.station_utilization,
+            "prediction_provenance": prediction_provenance,
+            "prediction_component_breakdown": prediction_components,
         }
         if result.solver_status.startswith("error"):
             run.status = "failed"

@@ -4,12 +4,52 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 from app.schemas.trip_status import TripStatus
-from app.services.runtime_release import default_prediction_model_name
+from app.services.runtime_release import (
+    RuntimeReleaseConfigurationError,
+    default_prediction_model_name,
+    default_prediction_stack_name,
+    resolve_prediction_selection,
+)
 
 # Centralised allowed values for auxiliary heating mode.
 # "default" = standard ebus auxiliary (heat-pump based, fully electric)
 # "diesel"  = diesel-heating ebus-dh (heating shifted to diesel, cooling stays electric)
 AuxiliaryHeatingType = Literal["default", "diesel"]
+PredictionStackType = Literal["legacy", "vecto-g2", "vecto-g0-transfer"]
+
+
+def _resolve_prediction_stack_fields(model: BaseModel) -> BaseModel:
+    """Resolve optional API selectors to one registered model/stack pair."""
+
+    explicit = model.model_fields_set
+    requested_stack = (
+        getattr(model, "prediction_stack") if "prediction_stack" in explicit else None
+    )
+    requested_model = getattr(model, "model_name") if "model_name" in explicit else None
+    try:
+        release = resolve_prediction_selection(
+            prediction_stack=requested_stack,
+            model_name=requested_model,
+        )
+    except RuntimeReleaseConfigurationError as exc:
+        raise ValueError(str(exc)) from exc
+    model.prediction_stack = release.stack.value
+    model.model_name = release.model_release
+    return model
+
+
+def _validated_quantiles(values: list[float]) -> list[float]:
+    normalized = [float(value) for value in values]
+    if (
+        not normalized
+        or len(normalized) != len(set(normalized))
+        or len(normalized) != len({f"{value:.2f}" for value in normalized})
+        or not all(0 < value < 1 for value in normalized)
+    ):
+        raise ValueError(
+            "quantiles must be a non-empty unique list with values in (0, 1)"
+        )
+    return normalized
 
 
 class PredictionRequest(BaseModel):
@@ -22,6 +62,14 @@ class PredictionRequest(BaseModel):
     model_name: str = Field(
         default_factory=default_prediction_model_name,
         examples=["greybox_qrf_production_crps_optimized_3"],
+    )
+    prediction_stack: PredictionStackType = Field(
+        default_factory=default_prediction_stack_name,
+        description=(
+            "Registered prediction stack. Omit it to use the server default. "
+            "When model_name is also supplied, both selectors must resolve to "
+            "the same configured release."
+        ),
     )
     external_temp_celsius: float = Field(examples=[15.0])
     occupancy_percent: float = Field(default=50.0, examples=[50.0])
@@ -36,6 +84,15 @@ class PredictionRequest(BaseModel):
     )
     quantiles: list[float] = Field(default_factory=lambda: [0.05, 0.25, 0.5, 0.75, 0.95])
     num_battery_packs: Optional[int] = Field(default=None, examples=[12])
+
+    @field_validator("quantiles")
+    @classmethod
+    def validate_quantiles(cls, values: list[float]) -> list[float]:
+        return _validated_quantiles(values)
+
+    @model_validator(mode="after")
+    def resolve_prediction_stack(self):
+        return _resolve_prediction_stack_fields(self)
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +144,9 @@ class ChargingStationConfig(BaseModel):
 class PredictionParams(BaseModel):
     """Parameters for auto-prediction when prediction_run_ids is not given."""
     model_name: str = Field(default_factory=default_prediction_model_name)
+    prediction_stack: PredictionStackType = Field(
+        default_factory=default_prediction_stack_name
+    )
     external_temp_celsius: float = Field(examples=[15.0])
     occupancy_percent: float = Field(default=50.0, examples=[50.0])
     auxiliary_heating_type: AuxiliaryHeatingType = Field(
@@ -100,6 +160,15 @@ class PredictionParams(BaseModel):
     )
     quantiles: list[float] = Field(default_factory=lambda: [0.05, 0.5, 0.95])
     num_battery_packs: Optional[int] = Field(default=None, examples=[12])
+
+    @field_validator("quantiles")
+    @classmethod
+    def validate_quantiles(cls, values: list[float]) -> list[float]:
+        return _validated_quantiles(values)
+
+    @model_validator(mode="after")
+    def resolve_prediction_stack(self):
+        return _resolve_prediction_stack_fields(self)
 
 
 _EXAMPLE_SHIFT_ID = "00000000-0000-0000-0000-000000000001"

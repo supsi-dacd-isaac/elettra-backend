@@ -19,6 +19,17 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 # Production stage
 FROM python:3.12-slim
 
+# The VECTO model contract pins the exact elettra-core source revision.  Keep
+# that identity in an image-owned file: a runtime environment variable alone
+# could claim that an image built from another revision is compatible.
+ARG ELETTRA_CORE_SOURCE_COMMIT=""
+LABEL org.opencontainers.image.revision="${ELETTRA_CORE_SOURCE_COMMIT}"
+RUN case "${ELETTRA_CORE_SOURCE_COMMIT}" in \
+      ""|[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; \
+      *) echo "ELETTRA_CORE_SOURCE_COMMIT must be empty or an exact lowercase 40-character Git SHA" >&2; exit 2 ;; \
+    esac && \
+    printf '%s\n' "${ELETTRA_CORE_SOURCE_COMMIT}" > /etc/elettra-core-image-commit
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -248,7 +248,13 @@ Planned / desirable re‑introductions or improvements:
 
 ---
 ## 14. License & Acknowledgments
-Licensed under MIT (see `LICENSE`).
+
+Elettra-authored code is licensed under MIT (see `LICENSE`). The behavioural
+VECTO transcription in `elettra_core/vecto_ssm.py` is a separately identified
+EUPL-1.2 component. See `THIRD_PARTY_NOTICES.md` and
+`LICENSES/EUPL-1.2.txt` before redistributing source, wheels or images. This
+component distinction does not by itself resolve every combined-distribution
+scenario; production publication requires the recorded project license review.
 
 Acknowledgments:
 - FastAPI & SQLAlchemy teams
@@ -368,6 +374,13 @@ The loader allows these direct env overrides (case sensitive):
 - `APP_ALLOWED_ORIGINS` (comma separated)
 - `APP_SECRET_KEY`
 - `ELEVATION_PROFILES_BUCKET` and `ELEVATION_PROFILES_RELEASE`
+- `LEGACY_CONSUMPTION_MODEL_RELEASE`, `VECTO_G2_CONSUMPTION_MODEL_RELEASE`
+  and optional `VECTO_G0_TRANSFER_MODEL_RELEASE`
+- `DEFAULT_PREDICTION_STACK` (`legacy` or `vecto-g2`) and
+  `ENABLE_EXPERIMENTAL_PREDICTION_STACKS`
+- `ELETTRA_CORE_SOURCE_COMMIT` (required exact tag commit when a VECTO stack
+  is registered; the image must have been built with the same value through
+  `--build-arg ELETTRA_CORE_SOURCE_COMMIT=<40-char-git-sha>`)
 - `ELEVATION_PROFILES_READ_ACCESS_KEY` / `ELEVATION_PROFILES_READ_SECRET_KEY`
   (mapped to the backend's MinIO identity)
 
@@ -387,7 +400,10 @@ Reload is **not** recommended for production.
 ### 15.6 Manual Image Build, Run & other commands
 (See 15.0 for preferred external DB run.)
 ```bash
-docker build -t elettra-backend .
+docker build \
+  --build-arg ELETTRA_CORE_SOURCE_COMMIT="$(git rev-parse 'elettra-core-v2.1.0^{}')" \
+  --label org.opencontainers.image.source-backend-commit="$(git rev-parse HEAD)" \
+  -t elettra-backend:"$(git rev-parse HEAD)" .
 # Preferred: use host networking with elevation data
 docker run -d \
   --network host \

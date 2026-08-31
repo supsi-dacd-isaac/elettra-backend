@@ -30,6 +30,7 @@ from app.models import (
     YearlyAnalysisWeatherRevisions,
 )
 from app.services.prediction import predict_shift_consumption
+from app.services.runtime_release import LEGACY_AUXILIARY_ESTIMATOR
 
 
 DEFAULT_CLUSTER_START = "05:00"
@@ -39,6 +40,32 @@ MAX_SERIES_DISTANCE_KM = 25.0
 
 class AnalysisWeatherResolutionError(ValueError):
     pass
+
+
+def prediction_run_provenance(
+    run: PredictionRuns,
+) -> tuple[str, str | None, str | None, str]:
+    stack = str(getattr(run, "prediction_stack", None) or "legacy")
+    model_release = getattr(run, "model_name", None)
+    auxiliary = getattr(run, "auxiliary_estimator_release", None)
+    if auxiliary is None and stack == "legacy":
+        auxiliary = LEGACY_AUXILIARY_ESTIMATOR
+    heating_type = str(getattr(run, "auxiliary_heating_type", None) or "default")
+    return stack, model_release, auxiliary, heating_type
+
+
+def require_uniform_prediction_provenance(
+    runs: list[PredictionRuns],
+) -> tuple[str, str | None, str | None, str] | None:
+    """Reject yearly aggregates that mix incompatible model semantics."""
+
+    provenances = {prediction_run_provenance(run) for run in runs}
+    if len(provenances) > 1:
+        raise ValueError(
+            "yearly aggregation cannot mix prediction stack, model release "
+            "auxiliary estimator or auxiliary heating type"
+        )
+    return next(iter(provenances), None)
 
 
 @dataclass(frozen=True)
@@ -289,6 +316,18 @@ async def _prediction_kpis(db: AsyncSession, run: PredictionRuns) -> dict[str, A
     distance = float(summary.get("total_distance_km", 0.0))
     auxiliary = float(summary.get("total_auxiliary_kwh", 0.0))
     drivetrain = float(summary.get("total_drivetrain_kwh", total_energy - auxiliary))
+    component_keys = {
+        "mechanicalGreyboxKwh": "total_mechanical_greybox_kwh",
+        "qrfResidualKwh": "total_qrf_residual_kwh",
+        "fixedAuxiliaryKwh": "total_fixed_auxiliary_kwh",
+        "hvacElectricalKwh": "total_hvac_electrical_kwh",
+        "uncoveredThermalKwh": "total_uncovered_thermal_kwh",
+    }
+    components = {
+        output_key: float(summary[source_key])
+        for output_key, source_key in component_keys.items()
+        if summary.get(source_key) is not None
+    }
     result = await db.execute(
         select(TripPredictions)
         .where(TripPredictions.prediction_run_id == run.id)
@@ -309,7 +348,7 @@ async def _prediction_kpis(db: AsyncSession, run: PredictionRuns) -> dict[str, A
         key: value - auxiliary for key, value in quantiles.items()
     }
     safe_distance = distance if distance > 0 else 1.0
-    return {
+    kpis = {
         "feasible": None,
         "quantiles": quantiles,
         "distanceKm": distance,
@@ -328,6 +367,15 @@ async def _prediction_kpis(db: AsyncSession, run: PredictionRuns) -> dict[str, A
             key: value / safe_distance for key, value in quantiles.items()
         },
     }
+    stack, model_release, auxiliary_estimator, _heating_type = (
+        prediction_run_provenance(run)
+    )
+    kpis["predictionStack"] = stack
+    kpis["modelRelease"] = model_release
+    kpis["auxiliaryEstimatorRelease"] = auxiliary_estimator
+    if components:
+        kpis["energyComponents"] = components
+    return kpis
 
 
 async def build_yearly_results(
@@ -338,11 +386,15 @@ async def build_yearly_results(
 ) -> dict[str, Any]:
     if len(scenarios) != len(runs):
         raise ValueError("one completed prediction run is required per weather scenario")
+    if any(str(getattr(run, "status", "completed")) != "completed" for run in runs):
+        raise ValueError("yearly aggregation requires completed prediction runs")
+    require_uniform_prediction_provenance(runs)
     scenario_results: list[dict[str, Any]] = []
     yearly_energy = 0.0
     yearly_auxiliary = 0.0
     yearly_drivetrain = 0.0
     yearly_distance = 0.0
+    yearly_components: dict[str, float] = {}
     for scenario, run in zip(scenarios, runs, strict=True):
         kpis = await _prediction_kpis(db, run)
         occurrences = int(scenario["occurrences"])
@@ -360,6 +412,8 @@ async def build_yearly_results(
         yearly_auxiliary += kpis["auxiliaryEnergyKwh"] * occurrences
         yearly_drivetrain += kpis["drivetrainEnergyKwh"] * occurrences
         yearly_distance += kpis["distanceKm"] * occurrences
+        for key, value in (kpis.get("energyComponents") or {}).items():
+            yearly_components[key] = yearly_components.get(key, 0.0) + value * occurrences
 
     results = dict(previous_results or {})
     results["scenarioResults"] = scenario_results
@@ -369,6 +423,8 @@ async def build_yearly_results(
         "auxiliaryEnergyKwh": yearly_auxiliary,
         "drivetrainEnergyKwh": yearly_drivetrain,
     }
+    if yearly_components:
+        results["yearlyTotals"]["energyComponents"] = yearly_components
     return results
 
 
@@ -405,9 +461,17 @@ def _assert_results_close(expected: Any, actual: Any, path: str = "results") -> 
 def _build_energy_summary_blob(
     features: Mapping[str, Any], scenarios: list[dict[str, Any]], runs: list[PredictionRuns]
 ) -> dict[str, Any]:
+    if any(str(getattr(run, "status", "completed")) != "completed" for run in runs):
+        raise ValueError("yearly aggregation requires completed prediction runs")
+    provenance = require_uniform_prediction_provenance(runs)
     global_aux_type = (features.get("config") or {}).get(
         "auxiliary_heating_type", "default"
     )
+    if provenance is not None and provenance[3] != global_aux_type:
+        raise ValueError(
+            "yearly prediction auxiliary heating type does not match the "
+            "yearly analysis configuration"
+        )
     scenario_rows: list[dict[str, Any]] = []
     totals = {
         "distance_km": 0.0,
@@ -417,28 +481,59 @@ def _build_energy_summary_blob(
     }
     diesel_fuel_kwh = 0.0
     diesel_liters = 0.0
+    component_summary_keys = {
+        "mechanical_greybox_kwh": "total_mechanical_greybox_kwh",
+        "qrf_residual_kwh": "total_qrf_residual_kwh",
+        "fixed_auxiliary_kwh": "total_fixed_auxiliary_kwh",
+        "hvac_electrical_kwh": "total_hvac_electrical_kwh",
+        "uncovered_thermal_kwh": "total_uncovered_thermal_kwh",
+    }
     for scenario, run in zip(scenarios, runs, strict=True):
+        stack, model_release, auxiliary_estimator, _heating_type = (
+            prediction_run_provenance(run)
+        )
         summary = run.summary or {}
         occurrences = int(scenario["occurrences"])
         daily_energy = float(summary.get("total_consumption_kwh", 0.0))
         daily_distance = float(summary.get("total_distance_km", 0.0))
         daily_aux = float(summary.get("total_auxiliary_kwh", 0.0))
         daily_drivetrain = float(summary.get("total_drivetrain_kwh", 0.0))
+        daily_components = {
+            key: float(summary[source])
+            for key, source in component_summary_keys.items()
+            if summary.get(source) is not None
+        }
+        annual_components = {
+            key: value * occurrences for key, value in daily_components.items()
+        }
         scenario_rows.append(
             {
                 "prediction_run_id": str(run.id),
                 "temperature_celsius": float(run.external_temp_celsius),
                 "occurrences": occurrences,
                 "auxiliary_heating_type": run.auxiliary_heating_type,
+                "prediction_stack": stack,
+                "model_release": model_release,
+                "auxiliary_estimator_release": auxiliary_estimator,
                 "daily_electric_kwh": round(daily_energy, 4),
                 "daily_distance_km": round(daily_distance, 4),
                 "daily_auxiliary_kwh": round(daily_aux, 4),
                 "daily_drivetrain_kwh": round(daily_drivetrain, 4),
+                "daily_components": {
+                    key: round(value, 4) for key, value in daily_components.items()
+                }
+                if daily_components
+                else None,
                 "diesel_heating": summary.get("diesel_heating"),
                 "annual_electric_kwh": round(daily_energy * occurrences, 4),
                 "annual_distance_km": round(daily_distance * occurrences, 4),
                 "annual_auxiliary_kwh": round(daily_aux * occurrences, 4),
                 "annual_drivetrain_kwh": round(daily_drivetrain * occurrences, 4),
+                "annual_components": {
+                    key: round(value, 4) for key, value in annual_components.items()
+                }
+                if annual_components
+                else None,
                 "annual_diesel_fuel_kwh": round(
                     float((summary.get("diesel_heating") or {}).get("diesel_fuel_kwh", 0.0))
                     * occurrences,
@@ -455,6 +550,8 @@ def _build_energy_summary_blob(
         totals["electric_kwh"] += daily_energy * occurrences
         totals["auxiliary_kwh"] += daily_aux * occurrences
         totals["drivetrain_kwh"] += daily_drivetrain * occurrences
+        for key, value in annual_components.items():
+            totals[key] = totals.get(key, 0.0) + value
         diesel = summary.get("diesel_heating") or {}
         diesel_fuel_kwh += float(diesel.get("diesel_fuel_kwh", 0.0)) * occurrences
         diesel_liters += float(diesel.get("diesel_liters", 0.0)) * occurrences
@@ -469,6 +566,11 @@ def _build_energy_summary_blob(
         totals["combined_final_energy_kwh"] = totals["electric_kwh"] + diesel_fuel_kwh
     return {
         "auxiliary_heating_type": global_aux_type,
+        "prediction_stacks": [provenance[0]] if provenance else [],
+        "model_releases": [provenance[1]] if provenance and provenance[1] else [],
+        "auxiliary_estimator_releases": (
+            [provenance[2]] if provenance and provenance[2] else []
+        ),
         "yearly_totals": {key: round(value, 4) for key, value in totals.items()},
         "yearly_diesel_heating": diesel_summary,
         "scenarios": scenario_rows,
@@ -600,6 +702,8 @@ async def recalculate_yearly_analysis(
                 bus_model_id=old_run.bus_model_id,
                 yearly_analysis_id=None,
                 model_name=old_run.model_name,
+                prediction_stack=old_run.prediction_stack,
+                auxiliary_estimator_release=old_run.auxiliary_estimator_release,
                 external_temp_celsius=scenario["temperature"],
                 auxiliary_heating_type=old_run.auxiliary_heating_type,
                 occupancy_percent=old_run.occupancy_percent,

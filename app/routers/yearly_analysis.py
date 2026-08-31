@@ -60,6 +60,8 @@ from app.services.yearly_weather_recalculation import (
     DEFAULT_CLUSTER_END,
     DEFAULT_CLUSTER_START,
     binding_for_series_id,
+    prediction_run_provenance,
+    require_uniform_prediction_provenance,
     resolve_analysis_weather_binding,
 )
 
@@ -740,10 +742,35 @@ async def _build_energy_summary(
     Returns a dict that is directly serialisable to
     ``YearlyEnergySummaryResponse``.
     """
+    unfinished = [
+        str(run.id)
+        for run in pred_runs
+        if str(getattr(run, "status", "completed")) != "completed"
+    ]
+    if unfinished:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "yearly energy aggregation requires completed prediction runs; "
+                f"unfinished={unfinished}"
+            ),
+        )
+    try:
+        provenance = require_uniform_prediction_provenance(pred_runs)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     features = ya.features or {}
     scenarios_raw = features.get("scenarios", [])
     config = features.get("config", {})
     global_aux_type = config.get("auxiliary_heating_type", "default")
+    if provenance is not None and provenance[3] != global_aux_type:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "yearly prediction auxiliary heating type does not match "
+                "the yearly analysis configuration"
+            ),
+        )
 
     occ_by_temp: dict[float, int] = {}
     for sc in scenarios_raw:
@@ -751,6 +778,22 @@ async def _build_energy_summary(
         o = sc.get("occurrences", 0)
         if t is not None:
             occ_by_temp[round(float(t), 2)] = int(o)
+    run_counts: dict[float, int] = {}
+    for run in pred_runs:
+        temperature = round(float(run.external_temp_celsius), 2)
+        run_counts[temperature] = run_counts.get(temperature, 0) + 1
+    if (
+        set(run_counts) != set(occ_by_temp)
+        or not run_counts
+        or len(set(run_counts.values())) != 1
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "yearly prediction runs do not cover every configured weather "
+                "scenario with a uniform number of shifts"
+            ),
+        )
 
     scenario_summaries: list[dict] = []
     yearly_electric_kwh = 0.0
@@ -760,8 +803,19 @@ async def _build_energy_summary(
     yearly_diesel_fuel_kwh = 0.0
     yearly_diesel_liters = 0.0
     has_any_diesel = False
+    yearly_components: dict[str, float] = {}
+    component_summary_keys = {
+        "mechanical_greybox_kwh": "total_mechanical_greybox_kwh",
+        "qrf_residual_kwh": "total_qrf_residual_kwh",
+        "fixed_auxiliary_kwh": "total_fixed_auxiliary_kwh",
+        "hvac_electrical_kwh": "total_hvac_electrical_kwh",
+        "uncovered_thermal_kwh": "total_uncovered_thermal_kwh",
+    }
 
     for pr in pred_runs:
+        stack, model_release, auxiliary_estimator, _heating_type = (
+            prediction_run_provenance(pr)
+        )
         summary = pr.summary or {}
         temp_c = float(pr.external_temp_celsius)
         occurrences = occ_by_temp.get(round(temp_c, 2), 0)
@@ -770,6 +824,14 @@ async def _build_energy_summary(
         daily_distance = float(summary.get("total_distance_km", 0))
         daily_aux = float(summary.get("total_auxiliary_kwh", 0))
         daily_dt = float(summary.get("total_drivetrain_kwh", 0))
+        daily_components = {
+            key: float(summary[source])
+            for key, source in component_summary_keys.items()
+            if summary.get(source) is not None
+        }
+        annual_components = {
+            key: value * occurrences for key, value in daily_components.items()
+        }
 
         dh = summary.get("diesel_heating")
         daily_diesel_fuel = 0.0
@@ -797,15 +859,28 @@ async def _build_energy_summary(
             "temperature_celsius": temp_c,
             "occurrences": occurrences,
             "auxiliary_heating_type": pr.auxiliary_heating_type,
+            "prediction_stack": stack,
+            "model_release": model_release,
+            "auxiliary_estimator_release": auxiliary_estimator,
             "daily_electric_kwh": round(daily_electric, 4),
             "daily_distance_km": round(daily_distance, 4),
             "daily_auxiliary_kwh": round(daily_aux, 4),
             "daily_drivetrain_kwh": round(daily_dt, 4),
+            "daily_components": {
+                key: round(value, 4) for key, value in daily_components.items()
+            }
+            if daily_components
+            else None,
             "diesel_heating": scenario_dh,
             "annual_electric_kwh": round(annual_electric, 4),
             "annual_distance_km": round(annual_distance, 4),
             "annual_auxiliary_kwh": round(annual_aux, 4),
             "annual_drivetrain_kwh": round(annual_dt, 4),
+            "annual_components": {
+                key: round(value, 4) for key, value in annual_components.items()
+            }
+            if annual_components
+            else None,
             "annual_diesel_fuel_kwh": round(annual_diesel_fuel, 4),
             "annual_diesel_liters": round(annual_diesel_liters, 4),
         })
@@ -816,6 +891,8 @@ async def _build_energy_summary(
         yearly_drivetrain_kwh += annual_dt
         yearly_diesel_fuel_kwh += annual_diesel_fuel
         yearly_diesel_liters += annual_diesel_liters
+        for key, value in annual_components.items():
+            yearly_components[key] = yearly_components.get(key, 0.0) + value
 
     yearly_totals: dict = {
         "distance_km": round(yearly_distance_km, 4),
@@ -829,6 +906,10 @@ async def _build_energy_summary(
         yearly_totals["combined_final_energy_kwh"] = round(
             yearly_electric_kwh + yearly_diesel_fuel_kwh, 4
         )
+    if yearly_components:
+        yearly_totals.update(
+            {key: round(value, 4) for key, value in yearly_components.items()}
+        )
 
     yearly_diesel_heating = None
     if has_any_diesel:
@@ -840,6 +921,11 @@ async def _build_energy_summary(
     return {
         "yearly_analysis_id": ya.id,
         "auxiliary_heating_type": global_aux_type,
+        "prediction_stacks": [provenance[0]] if provenance else [],
+        "model_releases": [provenance[1]] if provenance and provenance[1] else [],
+        "auxiliary_estimator_releases": (
+            [provenance[2]] if provenance and provenance[2] else []
+        ),
         "scenarios": scenario_summaries,
         "yearly_totals": yearly_totals,
         "yearly_diesel_heating": yearly_diesel_heating,
@@ -948,6 +1034,11 @@ async def compute_and_store_yearly_energy_summary(
 
     persistable = {
         "auxiliary_heating_type": summary_data["auxiliary_heating_type"],
+        "prediction_stacks": summary_data["prediction_stacks"],
+        "model_releases": summary_data["model_releases"],
+        "auxiliary_estimator_releases": summary_data[
+            "auxiliary_estimator_releases"
+        ],
         "yearly_totals": summary_data["yearly_totals"],
         "yearly_diesel_heating": summary_data["yearly_diesel_heating"],
         "scenarios": [
@@ -956,15 +1047,20 @@ async def compute_and_store_yearly_energy_summary(
                 "temperature_celsius": s["temperature_celsius"],
                 "occurrences": s["occurrences"],
                 "auxiliary_heating_type": s["auxiliary_heating_type"],
+                "prediction_stack": s["prediction_stack"],
+                "model_release": s["model_release"],
+                "auxiliary_estimator_release": s["auxiliary_estimator_release"],
                 "daily_electric_kwh": s["daily_electric_kwh"],
                 "daily_distance_km": s["daily_distance_km"],
                 "daily_auxiliary_kwh": s["daily_auxiliary_kwh"],
                 "daily_drivetrain_kwh": s["daily_drivetrain_kwh"],
+                "daily_components": s["daily_components"],
                 "diesel_heating": s["diesel_heating"],
                 "annual_electric_kwh": s["annual_electric_kwh"],
                 "annual_distance_km": s["annual_distance_km"],
                 "annual_auxiliary_kwh": s["annual_auxiliary_kwh"],
                 "annual_drivetrain_kwh": s["annual_drivetrain_kwh"],
+                "annual_components": s["annual_components"],
                 "annual_diesel_fuel_kwh": s["annual_diesel_fuel_kwh"],
                 "annual_diesel_liters": s["annual_diesel_liters"],
             }
@@ -1392,6 +1488,11 @@ async def get_yearly_costs(
         annual_saving_chf=round(diesel_annual - ebus_annual, 2),
         assumptions=YearlyCostAssumptions(
             energy_price_per_kwh=epk,
+            prediction_stacks=energy.get("prediction_stacks", []),
+            model_releases=energy.get("model_releases", []),
+            auxiliary_estimator_releases=energy.get(
+                "auxiliary_estimator_releases", []
+            ),
             fuel_cost_per_l=fpl,
             interest_rate=ir,
             bus_length_m=bus_length_m,
@@ -1902,6 +2003,11 @@ async def get_yearly_emissions(
         annual_saving=annual_saving,
         assumptions=YearlyEmissionsAssumptions(
             auxiliary_heating_type=aux_type,
+            prediction_stacks=energy.get("prediction_stacks", []),
+            model_releases=energy.get("model_releases", []),
+            auxiliary_estimator_releases=energy.get(
+                "auxiliary_estimator_releases", []
+            ),
             yearly_electric_kwh=round(yearly_electric_kwh, 4),
             yearly_diesel_heating_liters=round(yearly_diesel_liters, 4),
             yearly_diesel_heating_fuel_kwh=round(yearly_diesel_fuel_kwh, 4),

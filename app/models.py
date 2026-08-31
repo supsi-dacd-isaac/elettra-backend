@@ -467,6 +467,10 @@ class GtfsStopsTimes(Base):
 class PredictionRuns(Base):
     __tablename__ = 'prediction_runs'
     __table_args__ = (
+        CheckConstraint(
+            "prediction_stack IN ('legacy', 'vecto-g2', 'vecto-g0-transfer')",
+            name='prediction_runs_prediction_stack_check',
+        ),
         ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='SET NULL', name='prediction_runs_user_id_fkey'),
         ForeignKeyConstraint(['shift_id'], ['shifts.id'], ondelete='CASCADE', name='prediction_runs_shift_id_fkey'),
         ForeignKeyConstraint(['bus_model_id'], ['buses_models.id'], ondelete='RESTRICT', name='prediction_runs_bus_model_id_fkey'),
@@ -483,6 +487,10 @@ class PredictionRuns(Base):
     bus_model_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     yearly_analysis_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    prediction_stack: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'legacy'")
+    )
+    auxiliary_estimator_release: Mapped[Optional[str]] = mapped_column(Text)
     external_temp_celsius: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False)
     auxiliary_heating_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'default'"))
     occupancy_percent: Mapped[decimal.Decimal] = mapped_column(Numeric, nullable=False, server_default=text("50"))
@@ -518,6 +526,7 @@ class TripPredictions(Base):
     auxiliary_kwh: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric)
     mass_sensitivity_kwh_per_kwh_batt: Mapped[Optional[decimal.Decimal]] = mapped_column(Numeric)
     quantiles: Mapped[Optional[dict]] = mapped_column(JSONB)
+    component_breakdown: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     prediction_run: Mapped['PredictionRuns'] = relationship('PredictionRuns', back_populates='trip_predictions')
     trip: Mapped['GtfsTrips'] = relationship('GtfsTrips')

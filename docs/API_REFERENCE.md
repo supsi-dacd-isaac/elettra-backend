@@ -364,12 +364,19 @@ curl -X POST http://127.0.0.1:8002/api/v1/simulation/prediction-runs/ \
   -d '{
     "shift_ids": ["<shift_uuid>"],
     "bus_model_id": "<bus_model_uuid>",
-    "model_name": "greybox_qrf_production_crps_optimized_3",
+    "prediction_stack": "legacy",
     "external_temp_celsius": 15.0,
     "occupancy_percent": 50.0,
     "quantiles": [0.05, 0.5, 0.95]
   }'
 ```
+
+`prediction_stack` accepts `legacy`, `vecto-g2`, and (when explicitly enabled
+by the server) `vecto-g0-transfer`. It can be omitted to use the configured
+default. `model_name` remains accepted for compatibility; if both selectors
+are sent, they must identify the same registered immutable release. VECTO
+responses persist the explicit mechanical, residual-QRF, fixed-auxiliary,
+electrical-HVAC and diesel components on the prediction run and trip rows.
 
 ### 13.2 Optimization Runs
 

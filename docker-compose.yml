@@ -21,7 +21,10 @@ services:
 
   app:
     image: ${ELETTRA_BACKEND_IMAGE:-elettra-backend-app}
-    build: .
+    build:
+      context: .
+      args:
+        ELETTRA_CORE_SOURCE_COMMIT: ${ELETTRA_CORE_SOURCE_COMMIT:-}
     container_name: elettra-api
     restart: unless-stopped
     depends_on:
@@ -49,6 +52,12 @@ services:
       # These four pins form one fail-closed production switch. Local defaults
       # keep compatibility mode until an immutable release/model pair exists.
       CONSUMPTION_MODEL_RELEASE: ${CONSUMPTION_MODEL_RELEASE:-}
+      LEGACY_CONSUMPTION_MODEL_RELEASE: ${LEGACY_CONSUMPTION_MODEL_RELEASE:-}
+      VECTO_G2_CONSUMPTION_MODEL_RELEASE: ${VECTO_G2_CONSUMPTION_MODEL_RELEASE:-}
+      VECTO_G0_TRANSFER_MODEL_RELEASE: ${VECTO_G0_TRANSFER_MODEL_RELEASE:-}
+      DEFAULT_PREDICTION_STACK: ${DEFAULT_PREDICTION_STACK:-}
+      ENABLE_EXPERIMENTAL_PREDICTION_STACKS: ${ENABLE_EXPERIMENTAL_PREDICTION_STACKS:-false}
+      ELETTRA_CORE_SOURCE_COMMIT: ${ELETTRA_CORE_SOURCE_COMMIT:-}
       ELEVATION_AUX_PROFILE_ALGORITHM: ${ELEVATION_AUX_PROFILE_ALGORITHM:-}
       ELEVATION_AUX_ROADS_RELEASE: ${ELEVATION_AUX_ROADS_RELEASE:-}
       # Optionally override log level at runtime

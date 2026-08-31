@@ -357,6 +357,8 @@ CREATE TABLE public.prediction_runs (
     bus_model_id uuid NOT NULL,
     yearly_analysis_id uuid,
     model_name text NOT NULL,
+    prediction_stack text DEFAULT 'legacy' NOT NULL,
+    auxiliary_estimator_release text,
     external_temp_celsius numeric NOT NULL,
     auxiliary_heating_type text DEFAULT 'default' NOT NULL,
     occupancy_percent numeric DEFAULT 50 NOT NULL,
@@ -383,7 +385,8 @@ CREATE TABLE public.trip_predictions (
     drivetrain_kwh numeric,
     auxiliary_kwh numeric,
     mass_sensitivity_kwh_per_kwh_batt numeric,
-    quantiles jsonb
+    quantiles jsonb,
+    component_breakdown jsonb
 );
 
 -- Owner will be set automatically for table trip_predictions
@@ -769,6 +772,9 @@ ALTER TABLE ONLY public.shifts_structures
 
 ALTER TABLE ONLY public.prediction_runs
     ADD CONSTRAINT prediction_runs_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.prediction_runs
+    ADD CONSTRAINT prediction_runs_prediction_stack_check CHECK ((prediction_stack = ANY (ARRAY['legacy'::text, 'vecto-g2'::text, 'vecto-g0-transfer'::text])));
 
 
 --

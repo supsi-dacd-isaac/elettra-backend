@@ -307,6 +307,9 @@ class YearlyCostAssumptions(BaseModel):
     """Economic assumptions used for a yearly cost calculation."""
 
     energy_price_per_kwh: float
+    prediction_stacks: list[str] = Field(default_factory=list)
+    model_releases: list[str] = Field(default_factory=list)
+    auxiliary_estimator_releases: list[str] = Field(default_factory=list)
     fuel_cost_per_l: float
     interest_rate: float
     bus_length_m: float

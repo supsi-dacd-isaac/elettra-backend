@@ -8,9 +8,12 @@
 !main.py
 !LICENSE
 !THIRD_PARTY_NOTICES.md
+!LICENSES/
+!LICENSES/EUPL-1.2.txt
 
 !docs/
 !docs/VECTO_SSM_PROVENANCE.md
+!docs/VECTO_HVAC_TEMPLATES.md
 !docs/FEATURE_EXTRACTION_CONTRACT.md
 !docs/PRODUCTION_FEATURE_V2.md
 
@@ -22,6 +25,8 @@
 
 !elettra_core/
 !elettra_core/*.py
+!elettra_core/data/
+!elettra_core/data/vecto_hvac_5_1_3_r744_templates_v1.json
 
 !config/
 !config/elettra-config.docker.yaml

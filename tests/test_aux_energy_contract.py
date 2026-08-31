@@ -43,10 +43,21 @@ def test_existing_auxiliary_curve_outputs_are_frozen(heating_type, expected_kwh)
     assert function(frame).tolist() == pytest.approx(expected_kwh, abs=1e-12)
 
 
-def test_vecto_is_not_an_auxiliary_prediction_dependency():
-    """Guard the explicit release boundary: VECTO remains an offline oracle."""
-
+def test_legacy_curve_path_does_not_invoke_vecto_adapter(monkeypatch):
+    """The legacy estimator remains isolated when VECTO stacks are installed."""
     import app.services.prediction as prediction
 
-    assert "vecto" not in prediction.__dict__
-    assert "vecto_ssm" not in prediction.__dict__
+    def forbidden_adapter(**_kwargs):
+        raise AssertionError("legacy auxiliary evaluation invoked VECTO")
+
+    monkeypatch.setattr(
+        prediction, "build_vecto_auxiliary_binding", forbidden_adapter
+    )
+    frame = pd.DataFrame(
+        {
+            "avg_temp_outside_celsius": [10.0],
+            "total_duration_minutes": [60.0],
+        }
+    )
+    function = prediction.build_aux_energy_fn(FROZEN_SPECS, "default")
+    assert function(frame).tolist() == pytest.approx([8.0])

@@ -111,6 +111,9 @@ _HYBRID_WEATHER_COLUMNS = {
     "rolled_back_at",
 }
 _HYBRID_WEATHER_INDEX = "weather_temperature_series_active_coordinate_udx"
+_PREDICTION_STACK_COLUMNS = {"prediction_stack", "auxiliary_estimator_release"}
+_TRIP_COMPONENT_COLUMNS = {"component_breakdown"}
+_PREDICTION_STACK_CONSTRAINT = "prediction_runs_prediction_stack_check"
 
 
 async def validate_elevation_jobs_schema(session) -> None:
@@ -276,6 +279,8 @@ async def validate_elevation_jobs_schema(session) -> None:
             "previous_cluster_end_time",
             "status",
         },
+        "prediction_runs": _PREDICTION_STACK_COLUMNS,
+        "trip_predictions": _TRIP_COMPONENT_COLUMNS,
     }
     for table_name, required_columns in required_column_checks.items():
         result = await session.execute(
@@ -291,9 +296,26 @@ async def validate_elevation_jobs_schema(session) -> None:
         missing = sorted(required_columns - set(result.scalars().all()))
         if missing:
             raise RuntimeError(
-                f"migration 007 is missing or incomplete; {table_name} lacks "
+                f"required schema migrations are missing or incomplete; {table_name} lacks "
                 + ", ".join(missing)
             )
+
+    prediction_constraint_result = await session.execute(
+        text(
+            """
+            SELECT conname
+            FROM pg_constraint
+            WHERE conrelid = 'public.prediction_runs'::regclass
+            """
+        )
+    )
+    if _PREDICTION_STACK_CONSTRAINT not in set(
+        prediction_constraint_result.scalars().all()
+    ):
+        raise RuntimeError(
+            "migration 008 is incomplete; prediction_runs lacks constraint "
+            f"{_PREDICTION_STACK_CONSTRAINT}"
+        )
 
     weather_index_result = await session.execute(
         text(
@@ -645,7 +667,7 @@ async def health_check(response: Response):
             response_time = (time.time() - start_time) * 1000
             services["database"] = ServiceStatus(
                 status="healthy",
-                message="Database connection and migrations 005/006/007 are ready",
+                message="Database connection and migrations 005/006/007/008 are ready",
                 response_time_ms=round(response_time, 2),
                 last_checked=timestamp,
                 metadata={"elevation_profile_jobs": elevation_jobs},

@@ -102,6 +102,8 @@ class PredictionRunsCreate(BaseModel):
     bus_model_id: UUID
     yearly_analysis_id: Optional[UUID] = None
     model_name: str
+    prediction_stack: str = "legacy"
+    auxiliary_estimator_release: Optional[str] = None
     external_temp_celsius: Decimal = Field(examples=[15.0])
     auxiliary_heating_type: str = Field(
         default="default",
@@ -121,6 +123,8 @@ class PredictionRunsRead(BaseModel):
     bus_model_id: UUID
     yearly_analysis_id: Optional[UUID] = None
     model_name: str = Field(examples=["greybox_qrf_production_crps_optimized_3"])
+    prediction_stack: str = Field(examples=["legacy", "vecto-g2"])
+    auxiliary_estimator_release: Optional[str] = None
     external_temp_celsius: Decimal = Field(examples=[15.0])
     auxiliary_heating_type: str = Field(examples=["default", "diesel"])
     occupancy_percent: Decimal = Field(examples=[50.0])
@@ -158,6 +162,7 @@ class TripPredictionsRead(BaseModel):
         "0.50": 8.97,
         "0.95": 13.21,
     }])
+    component_breakdown: Optional[dict] = None
     model_config = ConfigDict(from_attributes=True)
 
 class OptimizationRunsRead(BaseModel):

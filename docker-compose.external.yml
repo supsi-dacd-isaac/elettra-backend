@@ -9,7 +9,10 @@ services:
     # Production should select the exact image digest that passed the release
     # gate instead of rebuilding a potentially dirty checkout on the host.
     image: ${ELETTRA_BACKEND_IMAGE:-elettra-backend-app}
-    build: .
+    build:
+      context: .
+      args:
+        ELETTRA_CORE_SOURCE_COMMIT: ${ELETTRA_CORE_SOURCE_COMMIT:-}
     container_name: elettra-api
     restart: unless-stopped
     environment:
@@ -34,6 +37,12 @@ services:
       ELEVATION_PROFILES_BUCKET: ${ELEVATION_PROFILES_BUCKET:-elevation-profiles}
       ELEVATION_PROFILES_RELEASE: ${ELEVATION_PROFILES_RELEASE:-}
       CONSUMPTION_MODEL_RELEASE: ${CONSUMPTION_MODEL_RELEASE:-}
+      LEGACY_CONSUMPTION_MODEL_RELEASE: ${LEGACY_CONSUMPTION_MODEL_RELEASE:-}
+      VECTO_G2_CONSUMPTION_MODEL_RELEASE: ${VECTO_G2_CONSUMPTION_MODEL_RELEASE:-}
+      VECTO_G0_TRANSFER_MODEL_RELEASE: ${VECTO_G0_TRANSFER_MODEL_RELEASE:-}
+      DEFAULT_PREDICTION_STACK: ${DEFAULT_PREDICTION_STACK:-}
+      ENABLE_EXPERIMENTAL_PREDICTION_STACKS: ${ENABLE_EXPERIMENTAL_PREDICTION_STACKS:-false}
+      ELETTRA_CORE_SOURCE_COMMIT: ${ELETTRA_CORE_SOURCE_COMMIT:-}
       ELEVATION_AUX_PROFILE_ALGORITHM: ${ELEVATION_AUX_PROFILE_ALGORITHM:-}
       ELEVATION_AUX_ROADS_RELEASE: ${ELEVATION_AUX_ROADS_RELEASE:-}
     ports:
