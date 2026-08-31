@@ -24,8 +24,9 @@ python tests/vecto_oracle/verify.py \
 Why this does not run a complete `vectocmd` job: the CLI adds a declaration,
 mission, powertrain and cycle around the SSM. Calling the official `SSMTOOL`
 library exercises exactly the subsystem transcribed by
-`app.services.vecto_ssm`, while keeping every input controlled. The release and
-CLI identity are additionally checked with `vectocmd.dll -h`.
+`elettra_core.vecto_ssm`, while keeping every input controlled. The historical
+`app.services.vecto_ssm` module is only a compatibility re-export. The release
+and CLI identity are additionally checked with `vectocmd.dll -h`.
 
 The checked-in matrix exercises every reachable official heating-distribution
 case HD1 through HD12, electrical and mechanical heat pumps, electrical and

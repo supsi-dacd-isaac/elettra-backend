@@ -13,6 +13,15 @@ from .features import (
     haversine_distance,
     parse_gtfs_hms_to_seconds,
 )
+from .greybox import (
+    GREYBOX_PRED_FEATURE,
+    GREYBOX_REQUIRED_COLUMNS,
+    AuxiliaryEnergyComponents,
+    CappedRegenAffineGreyBox,
+    HybridGreyboxQRF,
+    LinearGreyBox,
+    PredictionComponents,
+)
 from .preprocessing import (
     ELEVATION_PROFILE_BASELINE,
     ELEVATION_PROFILE_CATEGORIES,
@@ -24,8 +33,34 @@ from .preprocessing import (
     prepare_model_feature_frame,
     prepare_model_feature_row,
 )
+from .vecto_ssm import (
+    VectoAuxResult,
+    VectoEnvironmentalCondition,
+    VectoSsmInputs,
+    default_environmental_condition,
+    vecto_auxiliary_power,
+)
+from .vecto_templates import (
+    DIESEL_ENERGY_KWH_PER_L,
+    VECTO_COMPLETE,
+    VECTO_DEFAULT_GHI_WM2,
+    VECTO_ENVIRONMENT_POLICY,
+    VECTO_HVAC_ONLY,
+    VECTO_TEMPLATE_RELEASE,
+    VectoAuxiliaryContract,
+    VectoAuxiliaryHeatingType,
+    VectoHvacTemplate,
+    VectoTemplateEstimate,
+    VectoTemplateRelease,
+    environmental_condition_for_scenario,
+    load_template_release,
+    template_length_for_bus,
+    template_release_sha256,
+    vecto_ssm_source_sha256,
+    vecto_template_auxiliary_power,
+)
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 __all__ = [
     "FEATURE_CONTRACT_VERSION",
@@ -39,6 +74,13 @@ __all__ = [
     "extract_stop_to_stop_statistics_for_schedule",
     "haversine_distance",
     "parse_gtfs_hms_to_seconds",
+    "GREYBOX_PRED_FEATURE",
+    "GREYBOX_REQUIRED_COLUMNS",
+    "AuxiliaryEnergyComponents",
+    "CappedRegenAffineGreyBox",
+    "HybridGreyboxQRF",
+    "LinearGreyBox",
+    "PredictionComponents",
     "ELEVATION_PROFILE_BASELINE",
     "ELEVATION_PROFILE_CATEGORIES",
     "MODEL_CONTEXT_COLUMNS",
@@ -48,4 +90,26 @@ __all__ = [
     "encode_categorical_features",
     "prepare_model_feature_frame",
     "prepare_model_feature_row",
+    "VectoAuxResult",
+    "VectoEnvironmentalCondition",
+    "VectoSsmInputs",
+    "default_environmental_condition",
+    "vecto_auxiliary_power",
+    "DIESEL_ENERGY_KWH_PER_L",
+    "VECTO_COMPLETE",
+    "VECTO_DEFAULT_GHI_WM2",
+    "VECTO_ENVIRONMENT_POLICY",
+    "VECTO_HVAC_ONLY",
+    "VECTO_TEMPLATE_RELEASE",
+    "VectoAuxiliaryContract",
+    "VectoAuxiliaryHeatingType",
+    "VectoHvacTemplate",
+    "VectoTemplateEstimate",
+    "VectoTemplateRelease",
+    "environmental_condition_for_scenario",
+    "load_template_release",
+    "template_length_for_bus",
+    "template_release_sha256",
+    "vecto_ssm_source_sha256",
+    "vecto_template_auxiliary_power",
 ]

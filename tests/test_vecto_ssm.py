@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.vecto_ssm import (
+from elettra_core.vecto_ssm import (
     VectoAuxResult,
     VectoEnvironmentalCondition,
     VectoSsmInputs,
@@ -125,7 +125,21 @@ def test_public_result_keeps_non_hvac_load_explicit():
         result.p_hvac_electrical_kw + 2.75
     )
     assert result.p_hvac_mechanical_kw == 0.0
+    assert result.p_heating_delivered_kw <= result.p_heating_demand_kw
+    assert result.unmet_thermal_demand_kw == pytest.approx(
+        result.p_heating_demand_kw - result.p_heating_delivered_kw
+    )
     assert result.mode == "heating"
+
+
+def test_unmet_heat_is_computed_before_resource_components_are_discarded():
+    environment, inputs = _inputs_from_oracle_case(CASES[17])
+    result = vecto_auxiliary_power(environment=environment, inputs=inputs)
+
+    assert result.mode == "heating"
+    assert result.p_heating_demand_kw > 0.0
+    assert result.p_heating_delivered_kw == 0.0
+    assert result.unmet_thermal_demand_kw == result.p_heating_demand_kw
 
 
 def test_legacy_length_only_api_is_rejected():
@@ -178,3 +192,12 @@ def test_input_validation_rejects_implicit_or_non_finite_values():
         vecto_auxiliary_power(
             environment=environment, inputs=inputs, non_hvac_baseline_kw=-1.0
         )
+
+
+def test_backend_service_is_a_compatibility_reexport():
+    from app.services import vecto_ssm as compatibility
+    from elettra_core import vecto_ssm as shared
+
+    assert compatibility.VectoSsmInputs is shared.VectoSsmInputs
+    assert compatibility.vecto_auxiliary_power is shared.vecto_auxiliary_power
+    assert compatibility._ssm_calculate is shared._ssm_calculate

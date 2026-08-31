@@ -2,8 +2,9 @@
 
 `elettra_core` is the only implementation of schedule/elevation feature
 extraction used by `elettra-backend` and the offline `elettra` trainer. It is a
-small package in this repository and intentionally depends only on NumPy and
-pandas.
+small package in this repository. Its inference base depends only on NumPy and
+pandas; the `training` extra adds SciPy for fitting the shared grey-box
+estimators.
 
 ## Distance semantics
 
@@ -62,13 +63,14 @@ metadata; unmanifested legacy X/Y cannot be labelled v2.
 ## Release and consumption
 
 The Python distribution version and feature contract version follow semantic
-versioning. A feature value or meaning change increments the contract major
-version. After the backend change is merged, tag its commit
-`elettra-core-v2.0.0`; only after that tag is remotely available, `elettra`
-pins it immutably:
+versioning independently. A feature value or meaning change increments the
+contract major version. The feature contract remains `2.0.0`; the VECTO and
+stable grey-box API additions are distributed as `elettra-core` `2.1.0`.
+After the backend change is merged, tag its commit `elettra-core-v2.1.0`;
+only after that tag is remotely available, `elettra` pins it immutably:
 
 ```text
-elettra-core @ git+https://github.com/supsi-dacd-isaac/elettra-backend.git@elettra-core-v2.0.0
+elettra-core[training] @ git+https://github.com/supsi-dacd-isaac/elettra-backend.git@elettra-core-v2.1.0
 ```
 
 The integration order is therefore backend commit, backend tag and push, then
