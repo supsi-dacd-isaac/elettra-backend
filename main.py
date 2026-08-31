@@ -92,10 +92,29 @@ _CLEANUP_JOB_CONSTRAINTS = {
     "elevation_profile_cleanup_jobs_attempts_check",
 }
 _CLEANUP_JOB_INDEX = "elevation_profile_cleanup_jobs_status_available_at_idx"
+_HYBRID_WEATHER_COLUMNS = {
+    "id",
+    "latitude",
+    "longitude",
+    "requested_latitude",
+    "requested_longitude",
+    "provider",
+    "openmeteo_model",
+    "processing_version",
+    "status",
+    "pvgis_months_selected",
+    "pvgis_metadata",
+    "openmeteo_metadata",
+    "row_count",
+    "generated_at",
+    "applied_at",
+    "rolled_back_at",
+}
+_HYBRID_WEATHER_INDEX = "weather_temperature_series_active_coordinate_udx"
 
 
 async def validate_elevation_jobs_schema(session) -> None:
-    """Fail when either durable elevation migration is partially applied."""
+    """Fail when a required durable schema migration is missing or partial."""
     columns_result = await session.execute(
         text(
             """
@@ -217,6 +236,79 @@ async def validate_elevation_jobs_schema(session) -> None:
         raise RuntimeError(
             "migration 006 is incomplete; elevation_profile_cleanup_jobs lacks index "
             f"{_CLEANUP_JOB_INDEX}"
+        )
+
+    weather_columns_result = await session.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'weather_temperature_series'
+            """
+        )
+    )
+    weather_columns = set(weather_columns_result.scalars().all())
+    missing_weather_columns = sorted(_HYBRID_WEATHER_COLUMNS - weather_columns)
+    if missing_weather_columns:
+        raise RuntimeError(
+            "migration 007 is missing or incomplete; weather_temperature_series "
+            "lacks columns: " + ", ".join(missing_weather_columns)
+        )
+
+    required_column_checks = {
+        "weather_measurements": {"temp_air_original"},
+        "weather_temperature_clusters": {"temperature_series_id"},
+        "yearly_analysis": {
+            "weather_temperature_series_id",
+            "weather_cluster_k",
+            "weather_cluster_start_time",
+            "weather_cluster_end_time",
+        },
+        "yearly_analysis_weather_revisions": {
+            "id",
+            "yearly_analysis_id",
+            "previous_features",
+            "previous_prediction_run_ids",
+            "new_prediction_run_ids",
+            "previous_cluster_k",
+            "previous_cluster_start_time",
+            "previous_cluster_end_time",
+            "status",
+        },
+    }
+    for table_name, required_columns in required_column_checks.items():
+        result = await session.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = :table_name
+                """
+            ),
+            {"table_name": table_name},
+        )
+        missing = sorted(required_columns - set(result.scalars().all()))
+        if missing:
+            raise RuntimeError(
+                f"migration 007 is missing or incomplete; {table_name} lacks "
+                + ", ".join(missing)
+            )
+
+    weather_index_result = await session.execute(
+        text(
+            """
+            SELECT indexname
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'weather_temperature_series'
+            """
+        )
+    )
+    if _HYBRID_WEATHER_INDEX not in set(weather_index_result.scalars().all()):
+        raise RuntimeError(
+            "migration 007 is incomplete; weather_temperature_series lacks index "
+            f"{_HYBRID_WEATHER_INDEX}"
         )
 
 
@@ -553,7 +645,7 @@ async def health_check(response: Response):
             response_time = (time.time() - start_time) * 1000
             services["database"] = ServiceStatus(
                 status="healthy",
-                message="Database connection and migrations 005/006 are ready",
+                message="Database connection and migrations 005/006/007 are ready",
                 response_time_ms=round(response_time, 2),
                 last_checked=timestamp,
                 metadata={"elevation_profile_jobs": elevation_jobs},

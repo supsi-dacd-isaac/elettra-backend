@@ -2,6 +2,7 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 from pydantic import BaseModel, Field
 
 
@@ -21,6 +22,11 @@ class PvgisTmyResponse(BaseModel):
     longitude: float
     coerce_year: int
     generated_at: datetime
+    source: Optional[str] = None
+    temperature_provider: Optional[str] = None
+    temperature_model: Optional[str] = None
+    temperature_series_id: Optional[UUID] = None
+    processing_version: Optional[str] = None
 
 
 class PvgisTmyMetadataResponse(BaseModel):
@@ -30,6 +36,14 @@ class PvgisTmyMetadataResponse(BaseModel):
     available_in_db: bool
     records_count: int
     source: Optional[str] = None
+    temperature_provider: Optional[str] = None
+    temperature_model: Optional[str] = None
+    temperature_series_id: Optional[UUID] = None
+    processing_version: Optional[str] = None
+    requested_latitude: Optional[float] = None
+    requested_longitude: Optional[float] = None
+    openmeteo_elevation_m: Optional[float] = None
+    pvgis_months_selected: Optional[list[dict]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +87,7 @@ class WeatherClusteringResponse(BaseModel):
     start_time: str
     end_time: str
     n_days_used: Optional[int] = None
+    temperature_series_id: Optional[UUID] = None
     clusters: list[ClusterItem]
 
 

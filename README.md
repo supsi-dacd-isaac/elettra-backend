@@ -167,7 +167,7 @@ Simulation Runs:
 - GET  `/api/v1/simulation-runs/{run_id}/results` – get simulation output results, either complete or filtered by specific JSON keys (use `?keys=key1,key2,key3` to filter)
 
 Weather & PVGIS:
-- GET `/api/v1/pvgis-tmy/?latitude={lat}&longitude={lon}` – generate TMY (Typical Meteorological Year) dataset from PVGIS using latitude/longitude coordinates as query parameters. Coordinates are rounded to 3 decimal places (~111m precision) to optimize caching and reduce PVGIS API calls. The coerce_year is configured via YAML settings.
+- GET `/api/v1/simulation/pvgis-tmy/?latitude={lat}&longitude={lon}` – generate or retrieve a hybrid TMY temperature series. PVGIS selects the typical source months and supplies the non-temperature fields; Open-Meteo Archive `best_match` supplies `temperature_2m` using its terrain model. New cache coordinates are canonicalized to five decimal places and `coerce_year` is configured via YAML settings.
 
 Root:
 - GET `/` – simple status payload
@@ -412,7 +412,7 @@ docker rm elettra-api       # Remove the container
 ### 15.7 Health & Logs
 - Basic health: `curl http://localhost:8000/`
 - Dependency readiness: `curl -f http://localhost:8000/health` (returns `503`
-  until PostgreSQL migrations 005/006 and the configured MinIO namespace are
+  until PostgreSQL migrations 005/006/007 and the configured MinIO namespace are
   reachable)
 - Container logs: `docker logs -f elettra-api`
 

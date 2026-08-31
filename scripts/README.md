@@ -4,6 +4,41 @@ This directory contains utility scripts for the Elettra backend project.
 
 ## Available Scripts
 
+### `apply_hybrid_temperature_migration.sh`
+
+Applies and verifies migration 007, which adds hybrid-temperature provenance,
+rollback data and yearly-analysis weather revisions. Set
+`MIGRATION_DATABASE_URL` (or `DATABASE_URL`) before running it.
+
+### `backfill_hybrid_temperature.py`
+
+Plans, applies, recalculates and rolls back the PVGIS/Open-Meteo temperature
+revision. Run it from the repository root with the application virtualenv.
+
+```bash
+# Download and validate all current DB coordinates; this does not modify DB data.
+.venv/bin/python scripts/backfill_hybrid_temperature.py plan \
+  --bundle /secure/path/hybrid-temperature.json.gz
+
+# Apply exactly the reviewed, checksummed bundle, one transaction per coordinate.
+.venv/bin/python scripts/backfill_hybrid_temperature.py apply-weather \
+  --bundle /secure/path/hybrid-temperature.json.gz --resume
+
+# Recreate prediction runs and atomically switch completed yearly analyses.
+.venv/bin/python scripts/backfill_hybrid_temperature.py recalculate-analyses \
+  --resume --analysis-map /secure/path/analysis-map.json
+
+# Restore every original temperature, cluster configuration and revised analysis.
+.venv/bin/python scripts/backfill_hybrid_temperature.py rollback --all
+```
+
+`--analysis-map` is optional. It is a JSON object keyed by yearly-analysis UUID;
+each value supplies `latitude`, `longitude`, `k`, `start_time` and `end_time` for
+an unresolved case. When the CLI runs on the Docker host, set `MINIO_ENDPOINT`
+to the published host endpoint (for the development compose file,
+`localhost:9002`) before recalculating analyses. Inside the application network,
+the normal `minio:9000` endpoint applies.
+
 ### `prepare_init_schema.sh`
 
 **Purpose:** Convert `pg_dump` output to Docker-compatible PostgreSQL initialization script.
@@ -49,4 +84,3 @@ When adding new utility scripts to this directory:
 2. Add proper error handling: `set -e` at the beginning
 3. Document them in this README
 4. Use relative paths from project root when possible
-

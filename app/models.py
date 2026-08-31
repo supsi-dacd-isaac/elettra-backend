@@ -81,9 +81,46 @@ class GtfsStops(Base):
     gtfs_stops_times: Mapped[list['GtfsStopsTimes']] = relationship('GtfsStopsTimes', back_populates='stop')
 
 
+class WeatherTemperatureSeries(Base):
+    __tablename__ = 'weather_temperature_series'
+    __table_args__ = (
+        CheckConstraint("status IN ('applied', 'superseded', 'rolled_back')", name='weather_temperature_series_status_check'),
+        CheckConstraint('row_count = 8760', name='weather_temperature_series_row_count_check'),
+        CheckConstraint('latitude >= -90 AND latitude <= 90', name='weather_temperature_series_latitude_check'),
+        CheckConstraint('longitude >= -180 AND longitude <= 180', name='weather_temperature_series_longitude_check'),
+        PrimaryKeyConstraint('id', name='weather_temperature_series_pkey'),
+        Index(
+            'weather_temperature_series_active_coordinate_udx',
+            'latitude',
+            'longitude',
+            unique=True,
+            postgresql_where=text("status = 'applied'"),
+        ),
+        Index('weather_temperature_series_coordinate_idx', 'latitude', 'longitude', 'generated_at'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    latitude: Mapped[decimal.Decimal] = mapped_column(Numeric(8, 5), nullable=False)
+    longitude: Mapped[decimal.Decimal] = mapped_column(Numeric(9, 5), nullable=False)
+    requested_latitude: Mapped[decimal.Decimal] = mapped_column(Numeric(8, 5), nullable=False)
+    requested_longitude: Mapped[decimal.Decimal] = mapped_column(Numeric(9, 5), nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    openmeteo_model: Mapped[str] = mapped_column(Text, nullable=False)
+    processing_version: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    pvgis_months_selected: Mapped[list] = mapped_column(JSONB, nullable=False)
+    pvgis_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    openmeteo_metadata: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    generated_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+    applied_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    rolled_back_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+
+
 class WeatherTemperatureClusters(Base):
     __tablename__ = 'weather_temperature_clusters'
     __table_args__ = (
+        ForeignKeyConstraint(['temperature_series_id'], ['weather_temperature_series.id'], ondelete='SET NULL', name='weather_temperature_clusters_series_id_fkey'),
         PrimaryKeyConstraint('id', name='weather_temperature_clusters_pkey'),
         UniqueConstraint('latitude', 'longitude', 'k', 'start_time', 'end_time', 'cluster_id',
                          name='uq_weather_temp_clusters_config_cluster'),
@@ -99,6 +136,7 @@ class WeatherTemperatureClusters(Base):
     cluster_id: Mapped[int] = mapped_column(Integer, nullable=False)
     centroid_daily_avg_temp: Mapped[float] = mapped_column(REAL, nullable=False)
     occurrences: Mapped[int] = mapped_column(Integer, nullable=False)
+    temperature_series_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
 
 
@@ -122,6 +160,7 @@ class WeatherMeasurements(Base):
     latitude: Mapped[decimal.Decimal] = mapped_column(Numeric(8, 5), nullable=False)
     longitude: Mapped[decimal.Decimal] = mapped_column(Numeric(9, 5), nullable=False)
     temp_air: Mapped[Optional[float]] = mapped_column(REAL)
+    temp_air_original: Mapped[Optional[float]] = mapped_column(REAL)
     relative_humidity: Mapped[Optional[float]] = mapped_column(REAL)
     ghi: Mapped[Optional[float]] = mapped_column(REAL)
     dni: Mapped[Optional[float]] = mapped_column(REAL)
@@ -553,17 +592,52 @@ class YearlyAnalysis(Base):
     __tablename__ = 'yearly_analysis'
     __table_args__ = (
         ForeignKeyConstraint(['optimization_run_id'], ['optimization_runs.id'], ondelete='SET NULL', name='yearly_analysis_optimization_run_id_fkey'),
+        ForeignKeyConstraint(['weather_temperature_series_id'], ['weather_temperature_series.id'], ondelete='SET NULL', name='yearly_analysis_weather_temperature_series_id_fkey'),
+        CheckConstraint('weather_cluster_k IS NULL OR weather_cluster_k > 0', name='yearly_analysis_weather_cluster_k_check'),
         PrimaryKeyConstraint('id', name='yearly_analysis_pkey'),
         Index('yearly_analysis_optimization_run_id_idx', 'optimization_run_id'),
+        Index('yearly_analysis_weather_temperature_series_idx', 'weather_temperature_series_id'),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
     optimization_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True)
+    weather_temperature_series_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, nullable=True)
+    weather_cluster_k: Mapped[Optional[int]] = mapped_column(Integer)
+    weather_cluster_start_time: Mapped[Optional[str]] = mapped_column(String(5))
+    weather_cluster_end_time: Mapped[Optional[str]] = mapped_column(String(5))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     features: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
 
     optimization_run: Mapped[Optional['OptimizationRuns']] = relationship('OptimizationRuns')
+
+
+class YearlyAnalysisWeatherRevisions(Base):
+    __tablename__ = 'yearly_analysis_weather_revisions'
+    __table_args__ = (
+        ForeignKeyConstraint(['yearly_analysis_id'], ['yearly_analysis.id'], ondelete='CASCADE', name='yearly_analysis_weather_revisions_analysis_fkey'),
+        ForeignKeyConstraint(['previous_temperature_series_id'], ['weather_temperature_series.id'], ondelete='SET NULL', name='yearly_analysis_weather_revisions_previous_series_fkey'),
+        ForeignKeyConstraint(['new_temperature_series_id'], ['weather_temperature_series.id'], ondelete='SET NULL', name='yearly_analysis_weather_revisions_new_series_fkey'),
+        CheckConstraint("status IN ('pending', 'completed', 'failed', 'rolled_back')", name='yearly_analysis_weather_revisions_status_check'),
+        PrimaryKeyConstraint('id', name='yearly_analysis_weather_revisions_pkey'),
+        Index('yearly_analysis_weather_revisions_analysis_created_idx', 'yearly_analysis_id', 'created_at'),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, server_default=text('gen_random_uuid()'))
+    yearly_analysis_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    previous_temperature_series_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    new_temperature_series_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
+    previous_cluster_k: Mapped[Optional[int]] = mapped_column(Integer)
+    previous_cluster_start_time: Mapped[Optional[str]] = mapped_column(String(5))
+    previous_cluster_end_time: Mapped[Optional[str]] = mapped_column(String(5))
+    previous_features: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    previous_prediction_run_ids: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    new_prediction_run_ids: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+    completed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
+    rolled_back_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(True))
 
 
 class BusesManufacturers(Base):

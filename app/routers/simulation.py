@@ -29,7 +29,7 @@ from app.schemas.external_apis import (
     ClusterItem,
 )
 from app.models import (
-    Users, WeatherMeasurements,
+    Users,
     GtfsTrips, GtfsStops, GtfsStopsTimes,
     PredictionRuns, TripPredictions, Shifts, BusesModels,
     OptimizationRuns, YearlyAnalysis,
@@ -42,7 +42,17 @@ from app.services.weather import (
     run_kmeans_clustering,
     save_clustering,
     get_saved_clustering,
-    sanitize_weather_values,
+    get_active_temperature_series,
+    apply_hybrid_temperature_series,
+)
+from app.services.hybrid_temperature import (
+    HYBRID_PROVIDER,
+    OPENMETEO_MODEL,
+    PROCESSING_VERSION,
+    HybridTemperatureError,
+    canonical_coordinates,
+    coordinate_decimals,
+    fetch_hybrid_temperature_series,
 )
 from app.services.elevation_profiles import (
     ElevationProfileFormatError,
@@ -415,16 +425,17 @@ async def delete_optimization_run(
 
 
 # ---------------------------------------------------------------------------
-# PVGIS TMY endpoint (authenticated users only)
+# PVGIS/Open-Meteo hybrid TMY endpoint (authenticated users only)
 # ---------------------------------------------------------------------------
 @router.get(
     "/pvgis-tmy/",
     response_model=Union[PvgisTmyResponse, PvgisTmyMetadataResponse],
-    summary="PVGIS TMY data — download or check availability",
+    summary="PVGIS-selected, Open-Meteo-corrected TMY temperature",
     description=(
-        "Ensures TMY data for the requested lat/lon is available in the "
-        "database. If it is missing, the data is always fetched from PVGIS "
-        "and stored — regardless of the `download` flag.\n\n"
+        "Ensures a hybrid TMY for the requested lat/lon is available in the "
+        "database. PVGIS selects the typical months; Open-Meteo supplies "
+        "terrain-corrected temperature. Missing or legacy data is upgraded "
+        "regardless of the `download` flag.\n\n"
         "The **download** flag controls only what is returned to the client:\n\n"
         "- **download=false** (default): return lightweight metadata "
         "(availability, record count, source).\n"
@@ -438,90 +449,66 @@ async def generate_pvgis_tmy(
         False,
         description="If true, return full TMY data to the client. "
                     "If false, only return availability metadata. "
-                    "In both cases, missing data is fetched from PVGIS and stored.",
+                    "In both cases, missing or legacy data is generated and stored.",
     ),
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
     import datetime as dt_mod
-    from decimal import Decimal
     from app.core.config import get_cached_settings
 
     try:
         settings = get_cached_settings()
         coerce_year = settings.pvgis_coerce_year
 
-        lat_rounded = round(float(latitude), 2)
-        lon_rounded = round(float(longitude), 2)
-        lat_dec = Decimal(str(lat_rounded))
-        lon_dec = Decimal(str(lon_rounded))
+        canonical_lat, canonical_lon = canonical_coordinates(latitude, longitude)
+        lat_dec, lon_dec = coordinate_decimals(canonical_lat, canonical_lon)
 
         existing_count = await count_weather_records(db, lat_dec, lon_dec)
+        temperature_series = await get_active_temperature_series(db, lat_dec, lon_dec)
 
-        # ---- Always ensure data is in the DB ----
         source = "db"
-        if existing_count < 8760:
-            import pvlib
-
-            data, metadata = pvlib.iotools.get_pvgis_tmy(
-                latitude=lat_rounded,
-                longitude=lon_rounded,
+        needs_generation = (
+            existing_count != 8760
+            or temperature_series is None
+            or temperature_series.provider != HYBRID_PROVIDER
+            or temperature_series.openmeteo_model != OPENMETEO_MODEL
+            or temperature_series.processing_version != PROCESSING_VERSION
+        )
+        if needs_generation:
+            hybrid = await fetch_hybrid_temperature_series(
+                latitude=canonical_lat,
+                longitude=canonical_lon,
                 coerce_year=coerce_year,
             )
+            temperature_series, applied = await apply_hybrid_temperature_series(
+                db, hybrid, resume=True
+            )
+            source = HYBRID_PROVIDER if applied else "db"
+            existing_count = 8760
 
-            base_year = coerce_year
-            weather_measurements = []
-            for i, (_timestamp, row) in enumerate(data.iterrows()):
-                hour_of_year = i
-                day_of_year = (hour_of_year // 24) + 1
-                hour_of_day = hour_of_year % 24
-
-                dt_val = dt_mod.datetime(base_year, 1, 1) + dt_mod.timedelta(days=day_of_year - 1, hours=hour_of_day)
-                dt_utc = dt_val.replace(tzinfo=dt_mod.timezone.utc)
-
-                raw_rh = float(row['relative_humidity']) if pd.notna(row['relative_humidity']) else None
-                raw_ws = float(row['wind_speed']) if pd.notna(row['wind_speed']) else None
-                raw_wd = float(row['wind_direction']) if pd.notna(row['wind_direction']) else None
-                raw_pr = int(row['pressure']) if pd.notna(row['pressure']) else None
-
-                # Sanitize values that are subject to DB CHECK constraints
-                clean = sanitize_weather_values(
-                    pressure=raw_pr,
-                    relative_humidity=raw_rh,
-                    wind_direction=raw_wd,
-                    wind_speed=raw_ws,
-                )
-
-                weather_measurements.append(
-                    WeatherMeasurements(
-                        time_utc=dt_utc,
-                        latitude=lat_dec,
-                        longitude=lon_dec,
-                        temp_air=float(row['temp_air']) if pd.notna(row['temp_air']) else None,
-                        relative_humidity=clean["relative_humidity"],
-                        ghi=float(row['ghi']) if pd.notna(row['ghi']) else None,
-                        dni=float(row['dni']) if pd.notna(row['dni']) else None,
-                        dhi=float(row['dhi']) if pd.notna(row['dhi']) else None,
-                        ir_h=float(row['IR(h)']) if pd.notna(row['IR(h)']) else None,
-                        wind_speed=clean["wind_speed"],
-                        wind_direction=clean["wind_direction"],
-                        pressure=clean["pressure"],
-                    )
-                )
-
-            db.add_all(weather_measurements)
-            await db.commit()
-            source = "pvgis"
-            existing_count = len(weather_measurements)
+        openmeteo_elevation = None
+        for month_metadata in temperature_series.openmeteo_metadata or []:
+            if month_metadata.get("returned_elevation_m") is not None:
+                openmeteo_elevation = float(month_metadata["returned_elevation_m"])
+                break
 
         # ---- download=false: return metadata only ----
         if not download:
             return PvgisTmyMetadataResponse(
-                latitude=lat_rounded,
-                longitude=lon_rounded,
+                latitude=canonical_lat,
+                longitude=canonical_lon,
                 available_in_db=True,
                 records_count=existing_count,
                 source=source,
+                temperature_provider=temperature_series.provider,
+                temperature_model=temperature_series.openmeteo_model,
+                temperature_series_id=temperature_series.id,
+                processing_version=temperature_series.processing_version,
+                requested_latitude=float(temperature_series.requested_latitude),
+                requested_longitude=float(temperature_series.requested_longitude),
+                openmeteo_elevation_m=openmeteo_elevation,
+                pvgis_months_selected=temperature_series.pvgis_months_selected,
             )
 
         # ---- download=true: return full TMY payload ----
@@ -544,12 +531,12 @@ async def generate_pvgis_tmy(
 
         metadata_dict = {
             'inputs': {
-                'latitude': lat_rounded,
-                'longitude': lon_rounded,
-                'radiation_database': 'PVGIS-SARAH2',
-                'meteo_database': 'ERA5',
-                'year_min': coerce_year,
-                'year_max': coerce_year,
+                'latitude': canonical_lat,
+                'longitude': canonical_lon,
+                'temperature_provider': temperature_series.provider,
+                'temperature_model': temperature_series.openmeteo_model,
+                'openmeteo_elevation_m': openmeteo_elevation,
+                'processing_version': temperature_series.processing_version,
             },
             'outputs': {
                 'tmy_hourly': {
@@ -567,20 +554,40 @@ async def generate_pvgis_tmy(
                     }
                 }
             },
-            'months_selected': list(range(1, 13)),
+            'months_selected': temperature_series.pvgis_months_selected,
+            'field_provenance': {
+                'temp_air': 'Open-Meteo Archive temperature_2m at PVGIS-selected source timestamps',
+                'relative_humidity': 'PVGIS',
+                'ghi': 'PVGIS',
+                'dni': 'PVGIS',
+                'dhi': 'PVGIS',
+                'IR(h)': 'PVGIS',
+                'wind_speed': 'PVGIS',
+                'wind_direction': 'PVGIS',
+                'pressure': 'PVGIS',
+            },
         }
 
         return PvgisTmyResponse(
             data={"records": data_records},
             metadata=metadata_dict,
-            latitude=lat_rounded,
-            longitude=lon_rounded,
+            latitude=canonical_lat,
+            longitude=canonical_lon,
             coerce_year=coerce_year,
-            generated_at=dt_mod.datetime.now(),
+            generated_at=dt_mod.datetime.now(dt_mod.timezone.utc),
+            source=source,
+            temperature_provider=temperature_series.provider,
+            temperature_model=temperature_series.openmeteo_model,
+            temperature_series_id=temperature_series.id,
+            processing_version=temperature_series.processing_version,
         )
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating PVGIS TMY data: {str(e)}")
+    except HybridTemperatureError as exc:
+        raise HTTPException(status_code=502, detail=f"Hybrid TMY upstream error: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating hybrid TMY data: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +613,6 @@ async def create_weather_temperature_clusters(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    from decimal import Decimal
     from app.services.weather import _parse_time_str
 
     try:
@@ -615,16 +621,16 @@ async def create_weather_temperature_clusters(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    lat_rounded = round(float(request.latitude), 2)
-    lon_rounded = round(float(request.longitude), 2)
-    lat_dec = Decimal(str(lat_rounded))
-    lon_dec = Decimal(str(lon_rounded))
+    canonical_lat, canonical_lon = canonical_coordinates(
+        request.latitude, request.longitude
+    )
+    lat_dec, lon_dec = coordinate_decimals(canonical_lat, canonical_lon)
 
     records = await fetch_weather_records(db, lat_dec, lon_dec)
     if not records:
         raise HTTPException(
             status_code=400,
-            detail=f"No weather measurements found for lat={lat_rounded}, lon={lon_rounded}. "
+            detail=f"No weather measurements found for lat={canonical_lat}, lon={canonical_lon}. "
                    "Download TMY data first using GET /pvgis-tmy/?download=true.",
         )
 
@@ -638,16 +644,27 @@ async def create_weather_temperature_clusters(
         )
 
     clusters = run_kmeans_clustering(daily_avgs, request.k)
+    temperature_series = await get_active_temperature_series(db, lat_dec, lon_dec)
 
-    await save_clustering(db, lat_dec, lon_dec, request.k, request.start_time, request.end_time, clusters)
+    await save_clustering(
+        db,
+        lat_dec,
+        lon_dec,
+        request.k,
+        request.start_time,
+        request.end_time,
+        clusters,
+        temperature_series_id=(temperature_series.id if temperature_series else None),
+    )
 
     return WeatherClusteringResponse(
-        latitude=lat_rounded,
-        longitude=lon_rounded,
+        latitude=canonical_lat,
+        longitude=canonical_lon,
         k=request.k,
         start_time=request.start_time,
         end_time=request.end_time,
         n_days_used=n_days,
+        temperature_series_id=(temperature_series.id if temperature_series else None),
         clusters=[ClusterItem(**c) for c in clusters],
     )
 
@@ -672,28 +689,26 @@ async def get_weather_temperature_clusters(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    from decimal import Decimal
-
-    lat_rounded = round(float(latitude), 2)
-    lon_rounded = round(float(longitude), 2)
-    lat_dec = Decimal(str(lat_rounded))
-    lon_dec = Decimal(str(lon_rounded))
+    canonical_lat, canonical_lon = canonical_coordinates(latitude, longitude)
+    lat_dec, lon_dec = coordinate_decimals(canonical_lat, canonical_lon)
 
     clusters = await get_saved_clustering(db, lat_dec, lon_dec, k, start_time, end_time)
     if clusters is None:
         raise HTTPException(
             status_code=404,
-            detail=f"No saved clustering found for lat={lat_rounded}, lon={lon_rounded}, "
+            detail=f"No saved clustering found for lat={canonical_lat}, lon={canonical_lon}, "
                    f"k={k}, start_time={start_time}, end_time={end_time}. "
                    "Run POST /weather-temperature-clusters/ first.",
         )
 
+    temperature_series = await get_active_temperature_series(db, lat_dec, lon_dec)
     return WeatherClusteringResponse(
-        latitude=lat_rounded,
-        longitude=lon_rounded,
+        latitude=canonical_lat,
+        longitude=canonical_lon,
         k=k,
         start_time=start_time,
         end_time=end_time,
+        temperature_series_id=(temperature_series.id if temperature_series else None),
         clusters=[ClusterItem(**c) for c in clusters],
     )
 

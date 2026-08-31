@@ -444,6 +444,36 @@ CREATE TABLE public.variants (
 ALTER TABLE public.variants OWNER TO admin;
 
 --
+-- Name: weather_temperature_series; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.weather_temperature_series (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    latitude numeric(8,5) NOT NULL,
+    longitude numeric(9,5) NOT NULL,
+    requested_latitude numeric(8,5) NOT NULL,
+    requested_longitude numeric(9,5) NOT NULL,
+    provider text NOT NULL,
+    openmeteo_model text NOT NULL,
+    processing_version text NOT NULL,
+    status text NOT NULL,
+    pvgis_months_selected jsonb NOT NULL,
+    pvgis_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    openmeteo_metadata jsonb DEFAULT '[]'::jsonb NOT NULL,
+    row_count integer NOT NULL,
+    generated_at timestamp with time zone DEFAULT now() NOT NULL,
+    applied_at timestamp with time zone,
+    rolled_back_at timestamp with time zone,
+    CONSTRAINT weather_temperature_series_latitude_check CHECK (((latitude >= '-90'::integer) AND (latitude <= 90::integer))),
+    CONSTRAINT weather_temperature_series_longitude_check CHECK (((longitude >= '-180'::integer) AND (longitude <= 180::integer))),
+    CONSTRAINT weather_temperature_series_row_count_check CHECK ((row_count = 8760)),
+    CONSTRAINT weather_temperature_series_status_check CHECK ((status = ANY (ARRAY['applied'::text, 'superseded'::text, 'rolled_back'::text])))
+);
+
+
+ALTER TABLE public.weather_temperature_series OWNER TO admin;
+
+--
 -- Name: weather_temperature_clusters; Type: TABLE; Schema: public; Owner: admin
 --
 
@@ -457,6 +487,7 @@ CREATE TABLE public.weather_temperature_clusters (
     cluster_id integer NOT NULL,
     centroid_daily_avg_temp real NOT NULL,
     occurrences integer NOT NULL,
+    temperature_series_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT ck_wtc_lat_range CHECK (((latitude >= ('-90'::integer)::numeric) AND (latitude <= (90)::numeric))),
     CONSTRAINT ck_wtc_lon_range CHECK (((longitude >= ('-180'::integer)::numeric) AND (longitude <= (180)::numeric)))
@@ -475,6 +506,7 @@ CREATE TABLE public.weather_measurements (
     latitude numeric(8,5) NOT NULL,
     longitude numeric(9,5) NOT NULL,
     temp_air real,
+    temp_air_original real,
     relative_humidity real,
     ghi real,
     dni real,
@@ -501,13 +533,44 @@ ALTER TABLE public.weather_measurements OWNER TO admin;
 CREATE TABLE public.yearly_analysis (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     optimization_run_id uuid,
+    weather_temperature_series_id uuid,
+    weather_cluster_k integer,
+    weather_cluster_start_time character varying(5),
+    weather_cluster_end_time character varying(5),
     name text NOT NULL,
     features jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT yearly_analysis_weather_cluster_k_check CHECK (((weather_cluster_k IS NULL) OR (weather_cluster_k > 0)))
 );
 
 
 ALTER TABLE public.yearly_analysis OWNER TO admin;
+
+--
+-- Name: yearly_analysis_weather_revisions; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.yearly_analysis_weather_revisions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    yearly_analysis_id uuid NOT NULL,
+    previous_temperature_series_id uuid,
+    new_temperature_series_id uuid,
+    previous_cluster_k integer,
+    previous_cluster_start_time character varying(5),
+    previous_cluster_end_time character varying(5),
+    previous_features jsonb NOT NULL,
+    previous_prediction_run_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    new_prediction_run_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    rolled_back_at timestamp with time zone,
+    CONSTRAINT yearly_analysis_weather_revisions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text, 'failed'::text, 'rolled_back'::text])))
+);
+
+
+ALTER TABLE public.yearly_analysis_weather_revisions OWNER TO admin;
 
 --
 -- Name: buses_manufacturers; Type: TABLE; Schema: public; Owner: admin
@@ -772,6 +835,13 @@ ALTER TABLE ONLY public.variants
 ALTER TABLE ONLY public.variants
     ADD CONSTRAINT variants_route_variant_key UNIQUE (route_id, variant_num);
 
+--
+-- Name: weather_temperature_series weather_temperature_series_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.weather_temperature_series
+    ADD CONSTRAINT weather_temperature_series_pkey PRIMARY KEY (id);
+
 
 --
 -- Name: weather_temperature_clusters weather_temperature_clusters_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
@@ -803,6 +873,14 @@ ALTER TABLE ONLY public.weather_measurements
 
 ALTER TABLE ONLY public.yearly_analysis
     ADD CONSTRAINT yearly_analysis_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: yearly_analysis_weather_revisions yearly_analysis_weather_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.yearly_analysis_weather_revisions
+    ADD CONSTRAINT yearly_analysis_weather_revisions_pkey PRIMARY KEY (id);
 
 
 --
@@ -900,6 +978,20 @@ CREATE INDEX ix_weather_time_brin ON public.weather_measurements USING brin (tim
 
 
 --
+-- Name: weather_temperature_series_active_coordinate_udx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE UNIQUE INDEX weather_temperature_series_active_coordinate_udx ON public.weather_temperature_series USING btree (latitude, longitude) WHERE (status = 'applied'::text);
+
+
+--
+-- Name: weather_temperature_series_coordinate_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX weather_temperature_series_coordinate_idx ON public.weather_temperature_series USING btree (latitude, longitude, generated_at DESC);
+
+
+--
 -- Name: shifts_name_idx; Type: INDEX; Schema: public; Owner: admin
 --
 
@@ -981,6 +1073,20 @@ CREATE INDEX variants_route_id_idx ON public.variants USING btree (route_id);
 --
 
 CREATE INDEX yearly_analysis_optimization_run_id_idx ON public.yearly_analysis USING btree (optimization_run_id);
+
+
+--
+-- Name: yearly_analysis_weather_temperature_series_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX yearly_analysis_weather_temperature_series_idx ON public.yearly_analysis USING btree (weather_temperature_series_id);
+
+
+--
+-- Name: yearly_analysis_weather_revisions_analysis_created_idx; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX yearly_analysis_weather_revisions_analysis_created_idx ON public.yearly_analysis_weather_revisions USING btree (yearly_analysis_id, created_at DESC);
 
 
 --
@@ -1176,11 +1282,51 @@ ALTER TABLE ONLY public.variants
 
 
 --
+-- Name: weather_temperature_clusters weather_temperature_clusters_series_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.weather_temperature_clusters
+    ADD CONSTRAINT weather_temperature_clusters_series_id_fkey FOREIGN KEY (temperature_series_id) REFERENCES public.weather_temperature_series(id) ON DELETE SET NULL;
+
+
+--
 -- Name: yearly_analysis yearly_analysis_optimization_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
 --
 
 ALTER TABLE ONLY public.yearly_analysis
     ADD CONSTRAINT yearly_analysis_optimization_run_id_fkey FOREIGN KEY (optimization_run_id) REFERENCES public.optimization_runs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: yearly_analysis yearly_analysis_weather_temperature_series_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.yearly_analysis
+    ADD CONSTRAINT yearly_analysis_weather_temperature_series_id_fkey FOREIGN KEY (weather_temperature_series_id) REFERENCES public.weather_temperature_series(id) ON DELETE SET NULL;
+
+
+--
+-- Name: yearly_analysis_weather_revisions yearly_analysis_weather_revisions_analysis_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.yearly_analysis_weather_revisions
+    ADD CONSTRAINT yearly_analysis_weather_revisions_analysis_fkey FOREIGN KEY (yearly_analysis_id) REFERENCES public.yearly_analysis(id) ON DELETE CASCADE;
+
+
+--
+-- Name: yearly_analysis_weather_revisions yearly_analysis_weather_revisions_previous_series_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.yearly_analysis_weather_revisions
+    ADD CONSTRAINT yearly_analysis_weather_revisions_previous_series_fkey FOREIGN KEY (previous_temperature_series_id) REFERENCES public.weather_temperature_series(id) ON DELETE SET NULL;
+
+
+--
+-- Name: yearly_analysis_weather_revisions yearly_analysis_weather_revisions_new_series_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.yearly_analysis_weather_revisions
+    ADD CONSTRAINT yearly_analysis_weather_revisions_new_series_fkey FOREIGN KEY (new_temperature_series_id) REFERENCES public.weather_temperature_series(id) ON DELETE SET NULL;
 
 
 --

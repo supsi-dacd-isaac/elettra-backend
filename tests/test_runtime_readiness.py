@@ -40,6 +40,29 @@ class _ScalarResult:
 class _ReadySession:
     async def execute(self, statement, parameters=None):
         sql = str(statement)
+        if parameters and parameters.get("table_name"):
+            columns = {
+                "weather_measurements": {"temp_air_original"},
+                "weather_temperature_clusters": {"temperature_series_id"},
+                "yearly_analysis": {
+                    "weather_temperature_series_id",
+                    "weather_cluster_k",
+                    "weather_cluster_start_time",
+                    "weather_cluster_end_time",
+                },
+                "yearly_analysis_weather_revisions": {
+                    "id",
+                    "yearly_analysis_id",
+                    "previous_features",
+                    "previous_prediction_run_ids",
+                    "new_prediction_run_ids",
+                    "previous_cluster_k",
+                    "previous_cluster_start_time",
+                    "previous_cluster_end_time",
+                    "status",
+                },
+            }
+            return _ScalarResult(columns[parameters["table_name"]])
         if "FROM elevation_profile_jobs" in sql and "count(*) AS total" in sql:
             if parameters == {"algorithm": None, "roads_release": None}:
                 assert "CAST(:algorithm AS text)" in sql
@@ -52,6 +75,8 @@ class _ReadySession:
         if "information_schema.columns" in sql:
             if "elevation_profile_cleanup_jobs" in sql:
                 return _ScalarResult(main._CLEANUP_JOB_COLUMNS)
+            if "weather_temperature_series" in sql:
+                return _ScalarResult(main._HYBRID_WEATHER_COLUMNS)
             return _ScalarResult(main._ELEVATION_JOB_COLUMNS)
         if "pg_constraint" in sql:
             if "elevation_profile_cleanup_jobs" in sql:
@@ -60,6 +85,8 @@ class _ReadySession:
         if "pg_indexes" in sql:
             if "elevation_profile_cleanup_jobs" in sql:
                 return _ScalarResult([main._CLEANUP_JOB_INDEX])
+            if "weather_temperature_series" in sql:
+                return _ScalarResult([main._HYBRID_WEATHER_INDEX])
             return _ScalarResult([main._ELEVATION_JOB_INDEX])
         raise AssertionError(f"Unexpected readiness SQL: {sql}")
 
@@ -118,7 +145,7 @@ async def test_health_is_200_only_after_schema_and_minio_preflights(monkeypatch)
 
     assert response.status_code == 200
     assert payload.status == "healthy"
-    assert "005/006" in payload.services["database"].message
+    assert "005/006/007" in payload.services["database"].message
     assert payload.services["database"].metadata["elevation_profile_jobs"] == {
         "total": 984,
         "succeeded": 984,
@@ -135,10 +162,10 @@ async def test_health_is_200_only_after_schema_and_minio_preflights(monkeypatch)
 @pytest.mark.asyncio
 async def test_schema_preflight_rejects_partial_migration():
     class PartialSession(_ReadySession):
-        async def execute(self, statement):
+        async def execute(self, statement, parameters=None):
             if "information_schema.columns" in str(statement):
                 return _ScalarResult({"id", "trip_id"})
-            return await super().execute(statement)
+            return await super().execute(statement, parameters)
 
     with pytest.raises(RuntimeError, match="missing or incomplete"):
         await main.validate_elevation_jobs_schema(PartialSession())

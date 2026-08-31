@@ -6,7 +6,7 @@ import math
 import textwrap
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from uuid import UUID
 
 import httpx
@@ -55,6 +55,13 @@ from app.models import (
 )
 from app.core.auth import get_current_user
 from app.core.config import get_cached_settings
+from app.services.yearly_weather_recalculation import (
+    AnalysisWeatherResolutionError,
+    DEFAULT_CLUSTER_END,
+    DEFAULT_CLUSTER_START,
+    binding_for_series_id,
+    resolve_analysis_weather_binding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +125,197 @@ def _capital_recovery_factor(interest_rate: float, lifetime: int) -> float:
 
 def _annualize(investment: float, lifetime: int, interest_rate: float) -> float:
     return investment * _capital_recovery_factor(interest_rate, lifetime)
+
+
+def _require_number(value, field_name: str, *, positive: bool = False) -> float:
+    """Validate numeric optimization-result fields from free-form JSONB."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Linked optimization run results missing numeric field: {field_name}.",
+        )
+    number = float(value)
+    if positive and number <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Linked optimization run results field {field_name} must be > 0.",
+        )
+    if not positive and number < 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Linked optimization run results field {field_name} must be >= 0.",
+        )
+    return number
+
+
+def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
+    """Extract full battery capacity and charger investment from optimizer results.
+
+    The optimizer stores results in versionless JSONB, so this helper is strict:
+    it prefers per-bus rows and fails rather than undercounting collapsed
+    shift-level ``battery_results``.
+    """
+    if not isinstance(results, dict):
+        raise HTTPException(
+            status_code=409,
+            detail="Linked optimization run has no usable results.",
+        )
+
+    per_bus_summary = results.get("per_bus_summary")
+    battery_results = results.get("battery_results")
+    if not isinstance(per_bus_summary, list) or not per_bus_summary:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Linked optimization run results do not include per-bus summary; "
+                "cannot safely derive fleet battery CAPEX."
+            ),
+        )
+    if not isinstance(battery_results, dict) or not battery_results:
+        raise HTTPException(
+            status_code=422,
+            detail="Linked optimization run results do not include battery_results.",
+        )
+
+    optimized_battery_capacity_kwh = 0.0
+    for idx, bus_summary in enumerate(per_bus_summary):
+        if not isinstance(bus_summary, dict):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Linked optimization run per_bus_summary[{idx}] is invalid.",
+            )
+        shift_id = bus_summary.get("shift_id")
+        if not shift_id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Linked optimization run per_bus_summary[{idx}] missing shift_id.",
+            )
+        battery_row = battery_results.get(str(shift_id))
+        if not isinstance(battery_row, dict):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Linked optimization run battery_results missing entry for "
+                    f"per-bus shift_id {shift_id}."
+                ),
+            )
+        optimized_battery_capacity_kwh += _require_number(
+            battery_row.get("optimized_kwh"),
+            f"battery_results[{shift_id}].optimized_kwh",
+            positive=True,
+        )
+
+    installed_chargers = results.get("installed_chargers")
+    total_installation_raw = results.get("total_installation_cost_chf")
+    has_total_installation = total_installation_raw is not None
+    if has_total_installation:
+        installation_cost_chf = _require_number(
+            total_installation_raw,
+            "total_installation_cost_chf",
+        )
+    else:
+        installation_cost_chf = 0.0
+
+    if installed_chargers is not None:
+        if not isinstance(installed_chargers, dict):
+            raise HTTPException(
+                status_code=422,
+                detail="Linked optimization run installed_chargers field is invalid.",
+            )
+        summed_installation_cost = 0.0
+        for stop_id, charger_row in installed_chargers.items():
+            if not isinstance(charger_row, dict):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Linked optimization run installed_chargers[{stop_id}] is invalid.",
+                )
+            summed_installation_cost += _require_number(
+                charger_row.get("cost_chf"),
+                f"installed_chargers[{stop_id}].cost_chf",
+            )
+        if has_total_installation:
+            if abs(summed_installation_cost - installation_cost_chf) > 0.01:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Linked optimization run charger CAPEX fields are inconsistent: "
+                        "total_installation_cost_chf does not match installed_chargers cost sum."
+                    ),
+                )
+        else:
+            installation_cost_chf = summed_installation_cost
+    elif not has_total_installation:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Linked optimization run results missing total_installation_cost_chf "
+                "and installed_chargers."
+            ),
+        )
+
+    return {
+        "optimized_battery_capacity_kwh": optimized_battery_capacity_kwh,
+        "installation_cost_chf": installation_cost_chf,
+    }
+
+
+async def _load_optimization_run_for_capex(
+    db: AsyncSession,
+    yearly_analysis_id: UUID,
+    current_user: Users,
+) -> OptimizationRuns:
+    ya = await db.get(YearlyAnalysis, yearly_analysis_id)
+    if ya is None:
+        raise HTTPException(status_code=404, detail="Yearly analysis not found")
+    if ya.optimization_run_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "capex_source=optimization requires yearly_analysis.optimization_run_id "
+                "to be set."
+            ),
+        )
+
+    opt_run = await db.get(OptimizationRuns, ya.optimization_run_id)
+    if opt_run is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Linked optimization run not found.",
+        )
+    if str(opt_run.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="Linked optimization run is not accessible to the current user.",
+        )
+    if opt_run.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Linked optimization run must be completed (status={opt_run.status}).",
+        )
+    if not isinstance(opt_run.results, dict):
+        raise HTTPException(
+            status_code=409,
+            detail="Linked optimization run has no results.",
+        )
+
+    solver_status = opt_run.results.get("solver_status")
+    if solver_status != "optimal":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Linked optimization run solver_status must be optimal "
+                f"(solver_status={solver_status})."
+            ),
+        )
+
+    electrification_feasible = opt_run.results.get("electrification_feasible")
+    if electrification_feasible is not None and electrification_feasible is not True:
+        raise HTTPException(
+            status_code=409,
+            detail="Linked optimization run is not electrification-feasible.",
+        )
+
+    return opt_run
 
 
 # ---------------------------------------------------------------------------
@@ -349,9 +547,40 @@ async def create_yearly_analysis(
 
     obj = YearlyAnalysis(**payload.model_dump(exclude_unset=True))
     db.add(obj)
-    await db.commit()
-    await db.refresh(obj)
-    return obj
+    try:
+        await db.flush()
+        scenarios = (obj.features or {}).get("scenarios") or []
+        if scenarios:
+            k = obj.weather_cluster_k or len(scenarios)
+            start_time = obj.weather_cluster_start_time or DEFAULT_CLUSTER_START
+            end_time = obj.weather_cluster_end_time or DEFAULT_CLUSTER_END
+            if obj.weather_temperature_series_id is not None:
+                binding = await binding_for_series_id(
+                    db,
+                    obj.weather_temperature_series_id,
+                    k=k,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            else:
+                binding = await resolve_analysis_weather_binding(
+                    db,
+                    obj,
+                    owner_id=current_user.id,
+                    cluster_k=k,
+                    cluster_start_time=start_time,
+                    cluster_end_time=end_time,
+                )
+            obj.weather_temperature_series_id = binding.series.id
+            obj.weather_cluster_k = binding.k
+            obj.weather_cluster_start_time = binding.start_time
+            obj.weather_cluster_end_time = binding.end_time
+        await db.commit()
+        await db.refresh(obj)
+        return obj
+    except AnalysisWeatherResolutionError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(
@@ -438,9 +667,49 @@ async def update_yearly_analysis(
     for field, value in update_data.items():
         setattr(obj, field, value)
 
-    await db.commit()
-    await db.refresh(obj)
-    return obj
+    try:
+        scenarios = (obj.features or {}).get("scenarios") or []
+        weather_fields = {
+            "weather_temperature_series_id",
+            "weather_cluster_k",
+            "weather_cluster_start_time",
+            "weather_cluster_end_time",
+            "features",
+        }
+        if scenarios and (
+            obj.weather_temperature_series_id is None
+            or bool(weather_fields.intersection(update_data))
+        ):
+            k = obj.weather_cluster_k or len(scenarios)
+            start_time = obj.weather_cluster_start_time or DEFAULT_CLUSTER_START
+            end_time = obj.weather_cluster_end_time or DEFAULT_CLUSTER_END
+            if obj.weather_temperature_series_id is not None:
+                binding = await binding_for_series_id(
+                    db,
+                    obj.weather_temperature_series_id,
+                    k=k,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            else:
+                binding = await resolve_analysis_weather_binding(
+                    db,
+                    obj,
+                    owner_id=current_user.id,
+                    cluster_k=k,
+                    cluster_start_time=start_time,
+                    cluster_end_time=end_time,
+                )
+            obj.weather_temperature_series_id = binding.series.id
+            obj.weather_cluster_k = binding.k
+            obj.weather_cluster_start_time = binding.start_time
+            obj.weather_cluster_end_time = binding.end_time
+        await db.commit()
+        await db.refresh(obj)
+        return obj
+    except AnalysisWeatherResolutionError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.delete("/{yearly_analysis_id}")
@@ -747,8 +1016,21 @@ async def get_yearly_costs(
         False,
         description=(
             "When true, the response includes CAPEX line items and "
-            "annualised CAPEX.  Requires battery_capacity_kwh and "
-            "charger_power_kw."
+            "annualised CAPEX. With capex_source=manual (default), requires "
+            "battery_capacity_kwh and charger_power_kw. With "
+            "capex_source=optimization, derives CAPEX from the linked completed "
+            "feasible optimization run while OPEX remains based on the yearly "
+            "energy summary."
+        ),
+    ),
+    capex_source: Literal["manual", "optimization"] = Query(
+        "manual",
+        description=(
+            "CAPEX source when include_capex=true. 'manual' preserves existing "
+            "behavior and uses battery_capacity_kwh/charger_power_kw query "
+            "inputs. 'optimization' derives battery and charging-infrastructure "
+            "CAPEX from yearly_analysis.optimization_run_id and its completed "
+            "feasible optimization results. Ignored when include_capex=false."
         ),
     ),
     # --- Optional economic parameters (fall back to config defaults) ---
@@ -852,7 +1134,8 @@ async def get_yearly_costs(
     current_user: Users = Depends(get_current_user),
 ):
     # -- Validate CAPEX prerequisites -----------------------------------
-    if include_capex:
+    optimization_capex_inputs: dict[str, float] | None = None
+    if include_capex and capex_source == "manual":
         if battery_capacity_kwh is None:
             raise HTTPException(
                 status_code=422,
@@ -863,6 +1146,13 @@ async def get_yearly_costs(
                 status_code=422,
                 detail="charger_power_kw is required when include_capex=true.",
             )
+    elif include_capex and capex_source == "optimization":
+        opt_run = await _load_optimization_run_for_capex(
+            db=db,
+            yearly_analysis_id=yearly_analysis_id,
+            current_user=current_user,
+        )
+        optimization_capex_inputs = _extract_optimization_capex_inputs(opt_run.results)
 
     # -- 1. Fresh energy summary ----------------------------------------
     energy = await get_fresh_energy_summary(db, yearly_analysis_id)
@@ -954,37 +1244,72 @@ async def get_yearly_costs(
         db_b = _econ_or(diesel_bus_lin_coeff, "diesel_bus_lin_coeff")
         db_c = _econ_or(diesel_bus_const, "diesel_bus_const")
 
-        inv_battery = batt_cpk * battery_capacity_kwh
         inv_bus_body = eb_a * bus_length_m ** 2 + eb_b * bus_length_m + eb_c
-        inv_charger = ch_a * charger_power_kw + ch_b
-        inv_grid = max(gc_a * charger_power_kw + gc_b, 0.0)
 
-        ebus_capex = [
-            CapexLineItem(
-                name="Battery",
-                investment_chf=round(inv_battery, 2),
-                lifetime_years=lt_batt,
-                annualized_chf_per_year=round(_annualize(inv_battery, lt_batt, ir), 2),
-            ),
-            CapexLineItem(
-                name="Bus body (w/o battery)",
-                investment_chf=round(inv_bus_body, 2),
-                lifetime_years=lt_bus,
-                annualized_chf_per_year=round(_annualize(inv_bus_body, lt_bus, ir), 2),
-            ),
-            CapexLineItem(
-                name="Charger",
-                investment_chf=round(inv_charger, 2),
-                lifetime_years=lt_chg,
-                annualized_chf_per_year=round(_annualize(inv_charger, lt_chg, ir), 2),
-            ),
-            CapexLineItem(
-                name="Grid connection",
-                investment_chf=round(inv_grid, 2),
-                lifetime_years=lt_conn,
-                annualized_chf_per_year=round(_annualize(inv_grid, lt_conn, ir), 2),
-            ),
-        ]
+        if capex_source == "optimization":
+            if optimization_capex_inputs is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Optimization CAPEX inputs were not prepared.",
+                )
+            inv_battery = (
+                batt_cpk
+                * optimization_capex_inputs["optimized_battery_capacity_kwh"]
+            )
+            inv_charging_infrastructure = optimization_capex_inputs["installation_cost_chf"]
+            ebus_capex = [
+                CapexLineItem(
+                    name="Battery",
+                    investment_chf=round(inv_battery, 2),
+                    lifetime_years=lt_batt,
+                    annualized_chf_per_year=round(_annualize(inv_battery, lt_batt, ir), 2),
+                ),
+                CapexLineItem(
+                    name="Bus body (w/o battery)",
+                    investment_chf=round(inv_bus_body, 2),
+                    lifetime_years=lt_bus,
+                    annualized_chf_per_year=round(_annualize(inv_bus_body, lt_bus, ir), 2),
+                ),
+                CapexLineItem(
+                    name="Optimized charging infrastructure",
+                    investment_chf=round(inv_charging_infrastructure, 2),
+                    lifetime_years=lt_chg,
+                    annualized_chf_per_year=round(
+                        _annualize(inv_charging_infrastructure, lt_chg, ir), 2
+                    ),
+                ),
+            ]
+        else:
+            inv_battery = batt_cpk * battery_capacity_kwh
+            inv_charger = ch_a * charger_power_kw + ch_b
+            inv_grid = max(gc_a * charger_power_kw + gc_b, 0.0)
+
+            ebus_capex = [
+                CapexLineItem(
+                    name="Battery",
+                    investment_chf=round(inv_battery, 2),
+                    lifetime_years=lt_batt,
+                    annualized_chf_per_year=round(_annualize(inv_battery, lt_batt, ir), 2),
+                ),
+                CapexLineItem(
+                    name="Bus body (w/o battery)",
+                    investment_chf=round(inv_bus_body, 2),
+                    lifetime_years=lt_bus,
+                    annualized_chf_per_year=round(_annualize(inv_bus_body, lt_bus, ir), 2),
+                ),
+                CapexLineItem(
+                    name="Charger",
+                    investment_chf=round(inv_charger, 2),
+                    lifetime_years=lt_chg,
+                    annualized_chf_per_year=round(_annualize(inv_charger, lt_chg, ir), 2),
+                ),
+                CapexLineItem(
+                    name="Grid connection",
+                    investment_chf=round(inv_grid, 2),
+                    lifetime_years=lt_conn,
+                    annualized_chf_per_year=round(_annualize(inv_grid, lt_conn, ir), 2),
+                ),
+            ]
         ebus_total_capex = sum(c.annualized_chf_per_year for c in ebus_capex)
 
         inv_diesel = db_a * bus_length_m ** 2 + db_b * bus_length_m + db_c

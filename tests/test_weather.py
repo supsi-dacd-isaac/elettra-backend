@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.services.weather import sanitize_weather_values
+from app.services.hybrid_temperature import canonical_coordinates
 
 __report_module__ = "weather"
 
@@ -51,8 +52,8 @@ def auth_headers(token: str) -> dict:
 
 def test_pvgis_tmy_metadata_no_data(client, record):
     """download=false with coords that have no DB data → PVGIS is called,
-    data is stored, metadata returned with available_in_db=true and source='pvgis'.
-    If PVGIS rejects the coords (e.g. ocean) a 500 is acceptable."""
+    data is stored, metadata returned with hybrid provenance.
+    If an upstream rejects the coords, a 5xx is acceptable."""
     token = get_auth_token(client)
     if not token:
         pytest.skip("Unable to get authentication token")
@@ -65,15 +66,15 @@ def test_pvgis_tmy_metadata_no_data(client, record):
         headers=auth_headers(token),
     )
     try:
-        if response.status_code == 500:
+        if response.status_code >= 500:
             record("pvgis_tmy_metadata_no_data", True,
                    "PVGIS call attempted (500 likely due to network). Correct behaviour.")
             return
-        assert response.status_code == 200, f"Expected 200 or 500, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, f"Expected 200 or 5xx, got {response.status_code}: {response.text}"
         body = response.json()
         assert body["available_in_db"] is True
         assert body["records_count"] >= 8760
-        assert body["source"] in ("pvgis", "db")
+        assert body["source"] in ("pvgis-openmeteo", "db")
         assert "data" not in body
         record("pvgis_tmy_metadata_no_data", True,
                f"Data fetched from PVGIS and stored. source={body['source']}, count={body['records_count']}")
@@ -394,6 +395,59 @@ def test_clustering_unauthorized(client, record):
 
 # -----------------------------------------------------------------------
 # H) Unit tests for sanitize_weather_values()
+# -----------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+# H-bis) Tests for five-decimal weather coordinates
+# -----------------------------------------------------------------------
+
+class TestCoordinateRounding:
+    """Verify that terrain-relevant coordinate differences remain distinct."""
+
+    def test_same_bucket_positive_coords(self):
+        assert canonical_coordinates(46.001, 8.951) != canonical_coordinates(46.004, 8.951)
+
+    def test_same_bucket_longitude(self):
+        assert canonical_coordinates(46.0, 8.951) != canonical_coordinates(46.0, 8.954)
+
+    def test_different_bucket_at_boundary(self):
+        assert canonical_coordinates(46.004001, 8.95) == (46.004, 8.95)
+        assert canonical_coordinates(46.004006, 8.95) == (46.00401, 8.95)
+
+    def test_negative_coords_round_correctly(self):
+        assert canonical_coordinates(-33.864321, 8.0)[0] == -33.86432
+
+    def test_negative_longitude(self):
+        assert canonical_coordinates(46.0, -122.424321)[1] == -122.42432
+
+    def test_zero_coords(self):
+        assert canonical_coordinates(-0.000001, 0.000001) == (0.0, 0.0)
+
+    def test_rounding_boundary_crossover(self):
+        assert canonical_coordinates(46.123456, 8.654321) == (46.12346, 8.65432)
+
+    def test_decimal_consistency(self):
+        """Verify that Decimal conversion preserves the canonical key."""
+        from decimal import Decimal
+        lat_r, lon_r = canonical_coordinates(46.004001, 8.951001)
+        lat_dec = Decimal(str(lat_r))
+        lon_dec = Decimal(str(lon_r))
+        assert lat_dec == Decimal("46.004")
+        assert lon_dec == Decimal("8.951")
+
+
+def test_pvgis_tmy_coordinates_are_not_deduplicated_at_two_decimals():
+    lat_a, lon_a = 46.001, 8.951
+    lat_b, lon_b = 46.004, 8.952
+    assert canonical_coordinates(lat_a, lon_a) != canonical_coordinates(lat_b, lon_b)
+
+
+def test_pvgis_tmy_uses_five_decimal_coords():
+    assert canonical_coordinates(46.1239, 8.7991) == (46.1239, 8.7991)
+
+
+# -----------------------------------------------------------------------
+# I) Unit tests for sanitize_weather_values()
 # -----------------------------------------------------------------------
 
 class TestSanitizeWeatherValues:

@@ -215,17 +215,29 @@ class OptimizationRunsRead(BaseModel):
 
 class YearlyAnalysisCreate(BaseModel):
     optimization_run_id: Optional[UUID] = None
+    weather_temperature_series_id: Optional[UUID] = None
+    weather_cluster_k: Optional[int] = Field(default=None, ge=1)
+    weather_cluster_start_time: Optional[str] = None
+    weather_cluster_end_time: Optional[str] = None
     name: str
-    features: dict = {}
+    features: dict = Field(default_factory=dict)
 
 class YearlyAnalysisUpdate(BaseModel):
     optimization_run_id: Optional[UUID] = None
+    weather_temperature_series_id: Optional[UUID] = None
+    weather_cluster_k: Optional[int] = Field(default=None, ge=1)
+    weather_cluster_start_time: Optional[str] = None
+    weather_cluster_end_time: Optional[str] = None
     name: Optional[str] = None
     features: Optional[dict] = None
 
 class YearlyAnalysisRead(BaseModel):
     id: UUID
     optimization_run_id: Optional[UUID]
+    weather_temperature_series_id: Optional[UUID]
+    weather_cluster_k: Optional[int]
+    weather_cluster_start_time: Optional[str]
+    weather_cluster_end_time: Optional[str]
     name: str
     features: dict
     created_at: datetime
@@ -356,6 +368,7 @@ class WeatherMeasurementsCreate(BaseModel):
     latitude: Decimal
     longitude: Decimal
     temp_air: Optional[float] = None
+    temp_air_original: Optional[float] = None
     relative_humidity: Optional[float] = None
     ghi: Optional[float] = None
     dni: Optional[float] = None
@@ -371,6 +384,7 @@ class WeatherMeasurementsUpdate(BaseModel):
     latitude: Optional[Decimal] = None
     longitude: Optional[Decimal] = None
     temp_air: Optional[float] = None
+    temp_air_original: Optional[float] = None
     relative_humidity: Optional[float] = None
     ghi: Optional[float] = None
     dni: Optional[float] = None
@@ -386,6 +400,7 @@ class WeatherMeasurementsRead(BaseModel):
     latitude: Decimal
     longitude: Decimal
     temp_air: Optional[float]
+    temp_air_original: Optional[float]
     relative_humidity: Optional[float]
     ghi: Optional[float]
     dni: Optional[float]

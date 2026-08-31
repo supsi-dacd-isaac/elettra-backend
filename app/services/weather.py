@@ -7,13 +7,25 @@ from __future__ import annotations
 import datetime
 from decimal import Decimal
 from typing import Optional
+from uuid import UUID
 
 import numpy as np
-from sqlalchemy import select, func, and_, delete
+from sqlalchemy import select, func, and_, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sklearn.cluster import KMeans
 
-from app.models import WeatherMeasurements, WeatherTemperatureClusters
+from app.models import (
+    WeatherMeasurements,
+    WeatherTemperatureClusters,
+    WeatherTemperatureSeries,
+)
+from app.services.hybrid_temperature import (
+    EXPECTED_HOURS,
+    HYBRID_PROVIDER,
+    OPENMETEO_MODEL,
+    PROCESSING_VERSION,
+    HybridTemperatureSeries,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +60,227 @@ async def fetch_weather_records(
         .order_by(WeatherMeasurements.time_utc)
     )
     return list(result.scalars().all())
+
+
+async def get_active_temperature_series(
+    db: AsyncSession, latitude: Decimal, longitude: Decimal
+) -> WeatherTemperatureSeries | None:
+    result = await db.execute(
+        select(WeatherTemperatureSeries)
+        .where(
+            and_(
+                WeatherTemperatureSeries.latitude == latitude,
+                WeatherTemperatureSeries.longitude == longitude,
+                WeatherTemperatureSeries.status == "applied",
+            )
+        )
+        .order_by(WeatherTemperatureSeries.generated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_clustering_configs(
+    db: AsyncSession, latitude: Decimal, longitude: Decimal
+) -> list[tuple[int, str, str]]:
+    result = await db.execute(
+        select(
+            WeatherTemperatureClusters.k,
+            WeatherTemperatureClusters.start_time,
+            WeatherTemperatureClusters.end_time,
+        )
+        .where(
+            and_(
+                WeatherTemperatureClusters.latitude == latitude,
+                WeatherTemperatureClusters.longitude == longitude,
+            )
+        )
+        .distinct()
+        .order_by(
+            WeatherTemperatureClusters.k,
+            WeatherTemperatureClusters.start_time,
+            WeatherTemperatureClusters.end_time,
+        )
+    )
+    return [(int(k), str(start), str(end)) for k, start, end in result.all()]
+
+
+async def apply_hybrid_temperature_series(
+    db: AsyncSession,
+    hybrid: HybridTemperatureSeries,
+    *,
+    resume: bool = False,
+) -> tuple[WeatherTemperatureSeries, bool]:
+    """Atomically make *hybrid* active and rebuild existing cluster caches.
+
+    Returns ``(series_row, applied)``.  With ``resume=True`` an already active
+    series produced by the same algorithm/model is returned without rewriting
+    temperatures.
+    """
+
+    latitude = Decimal(str(hybrid.latitude))
+    longitude = Decimal(str(hybrid.longitude))
+    requested_latitude = Decimal(str(round(hybrid.requested_latitude, 5)))
+    requested_longitude = Decimal(str(round(hybrid.requested_longitude, 5)))
+    if len(hybrid.rows) != EXPECTED_HOURS:
+        raise ValueError(f"hybrid series must contain {EXPECTED_HOURS} rows")
+
+    lock_key = f"weather-temperature:{latitude}:{longitude}"
+    try:
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {"lock_key": lock_key},
+        )
+        active = await get_active_temperature_series(db, latitude, longitude)
+        if (
+            resume
+            and active is not None
+            and active.provider == HYBRID_PROVIDER
+            and active.openmeteo_model == OPENMETEO_MODEL
+            and active.processing_version == PROCESSING_VERSION
+            and active.row_count == EXPECTED_HOURS
+        ):
+            await db.commit()
+            return active, False
+
+        records = await fetch_weather_records(db, latitude, longitude)
+        if records and len(records) != EXPECTED_HOURS:
+            raise ValueError(
+                f"existing weather series at {latitude},{longitude} has "
+                f"{len(records)} rows instead of {EXPECTED_HOURS}"
+            )
+        configs = await list_clustering_configs(db, latitude, longitude)
+
+        if active is not None:
+            active.status = "superseded"
+            await db.flush()
+
+        series_row = WeatherTemperatureSeries(
+            latitude=latitude,
+            longitude=longitude,
+            requested_latitude=requested_latitude,
+            requested_longitude=requested_longitude,
+            provider=HYBRID_PROVIDER,
+            openmeteo_model=OPENMETEO_MODEL,
+            processing_version=PROCESSING_VERSION,
+            status="applied",
+            pvgis_months_selected=list(hybrid.months_selected),
+            pvgis_metadata=dict(hybrid.pvgis_metadata),
+            openmeteo_metadata=list(hybrid.openmeteo_metadata),
+            row_count=EXPECTED_HOURS,
+            applied_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        db.add(series_row)
+        await db.flush()
+
+        if records:
+            by_time = {record.time_utc: record for record in records}
+            if len(by_time) != EXPECTED_HOURS:
+                raise ValueError("existing weather series contains duplicate timestamps")
+            for row in hybrid.rows:
+                record = by_time.get(row.time_utc)
+                if record is None:
+                    raise ValueError(f"existing weather series is missing {row.time_utc}")
+                if record.temp_air_original is None:
+                    record.temp_air_original = record.temp_air
+                record.temp_air = row.temp_air
+        else:
+            new_records: list[WeatherMeasurements] = []
+            for row in hybrid.rows:
+                clean = sanitize_weather_values(
+                    pressure=row.pvgis_fields.get("pressure"),
+                    relative_humidity=row.pvgis_fields.get("relative_humidity"),
+                    wind_direction=row.pvgis_fields.get("wind_direction"),
+                    wind_speed=row.pvgis_fields.get("wind_speed"),
+                )
+                new_records.append(
+                    WeatherMeasurements(
+                        time_utc=row.time_utc,
+                        latitude=latitude,
+                        longitude=longitude,
+                        temp_air=row.temp_air,
+                        temp_air_original=row.pvgis_temp_air,
+                        relative_humidity=clean["relative_humidity"],
+                        ghi=row.pvgis_fields.get("ghi"),
+                        dni=row.pvgis_fields.get("dni"),
+                        dhi=row.pvgis_fields.get("dhi"),
+                        ir_h=row.pvgis_fields.get("ir_h"),
+                        wind_speed=clean["wind_speed"],
+                        wind_direction=clean["wind_direction"],
+                        pressure=clean["pressure"],
+                    )
+                )
+            db.add_all(new_records)
+            records = new_records
+        await db.flush()
+
+        for k, start_time, end_time in configs:
+            daily_avgs = compute_daily_avg_temps(records, start_time, end_time)
+            clusters = run_kmeans_clustering(daily_avgs, k)
+            await save_clustering(
+                db,
+                latitude,
+                longitude,
+                k,
+                start_time,
+                end_time,
+                clusters,
+                temperature_series_id=series_row.id,
+                commit=False,
+            )
+        await db.commit()
+        await db.refresh(series_row)
+        return series_row, True
+    except Exception:
+        await db.rollback()
+        raise
+
+
+async def rollback_hybrid_temperature_series(
+    db: AsyncSession, latitude: Decimal, longitude: Decimal
+) -> WeatherTemperatureSeries:
+    """Restore the pre-hybrid temperature and rebuild derived clusters."""
+
+    try:
+        lock_key = f"weather-temperature:{latitude}:{longitude}"
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {"lock_key": lock_key},
+        )
+        active = await get_active_temperature_series(db, latitude, longitude)
+        if active is None:
+            raise ValueError(f"no active hybrid series at {latitude},{longitude}")
+        records = await fetch_weather_records(db, latitude, longitude)
+        if len(records) != EXPECTED_HOURS:
+            raise ValueError("cannot rollback an incomplete weather series")
+        if any(record.temp_air_original is None for record in records):
+            raise ValueError("cannot rollback: original temperature backup is incomplete")
+        configs = await list_clustering_configs(db, latitude, longitude)
+        for record in records:
+            record.temp_air = record.temp_air_original
+        active.status = "rolled_back"
+        active.rolled_back_at = datetime.datetime.now(datetime.timezone.utc)
+        await db.flush()
+        for k, start_time, end_time in configs:
+            clusters = run_kmeans_clustering(
+                compute_daily_avg_temps(records, start_time, end_time), k
+            )
+            await save_clustering(
+                db,
+                latitude,
+                longitude,
+                k,
+                start_time,
+                end_time,
+                clusters,
+                temperature_series_id=None,
+                commit=False,
+            )
+        await db.commit()
+        return active
+    except Exception:
+        await db.rollback()
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +422,9 @@ async def save_clustering(
     start_time: str,
     end_time: str,
     clusters: list[dict],
+    *,
+    temperature_series_id: UUID | None = None,
+    commit: bool = True,
 ) -> None:
     """Delete existing rows for the same config and insert fresh ones."""
     await db.execute(
@@ -213,11 +449,13 @@ async def save_clustering(
             cluster_id=c["cluster_id"],
             centroid_daily_avg_temp=c["centroid_daily_avg_temp"],
             occurrences=c["occurrences"],
+            temperature_series_id=temperature_series_id,
         )
         for c in clusters
     ]
     db.add_all(rows)
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def get_saved_clustering(
