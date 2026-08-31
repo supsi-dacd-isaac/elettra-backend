@@ -51,6 +51,6 @@ The official DLLs and the archive are oracle inputs only and are never copied
 into the production wheel or image. The local oracle image is non-distributable
 and must not be pushed to a registry. Any release containing the Python
 transcription must include the MIT and EUPL-1.2 texts, the third-party notice,
-and a link to the exact public `elettra-core` source tag. Publication remains
-blocked until the release owner approves the repository's MIT/EUPL component
-boundary and corresponding source-availability procedure.
+and a link to the exact public `elettra-core` source tag. The SUPSI release
+owner approved the repository's `MIT AND EUPL-1.2` component boundary and
+source-availability procedure for public distribution on 2026-08-31.

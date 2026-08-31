@@ -252,9 +252,11 @@ Planned / desirable re‑introductions or improvements:
 Elettra-authored code is licensed under MIT (see `LICENSE`). The behavioural
 VECTO transcription in `elettra_core/vecto_ssm.py` is a separately identified
 EUPL-1.2 component. See `THIRD_PARTY_NOTICES.md` and
-`LICENSES/EUPL-1.2.txt` before redistributing source, wheels or images. This
-component distinction does not by itself resolve every combined-distribution
-scenario; production publication requires the recorded project license review.
+`LICENSES/EUPL-1.2.txt` before redistributing source, wheels or images. The
+combined `elettra-core` package uses the SPDX expression
+`MIT AND EUPL-1.2`; the public-distribution component boundary was approved by
+the SUPSI release owner on 2026-08-31 and is recorded in the third-party
+notice.
 
 Acknowledgments:
 - FastAPI & SQLAlchemy teams

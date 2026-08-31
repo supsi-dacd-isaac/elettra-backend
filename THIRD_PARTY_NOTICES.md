@@ -28,17 +28,16 @@ The complete upstream EUPL-1.2 text is distributed at
 copied byte-for-byte from the VECTO 5.1.3 source archive. The wheel also
 contains it as `elettra_core/licenses/EUPL-1.2.txt` together with this notice.
 
-Before distributing a build containing the transcription, the release owner
-must complete the project's license review. This notice records provenance; it
-does not assert that the MIT and EUPL-1.2 licensing obligations are compatible
-for every distribution scenario.
+The SUPSI release owner approved this component boundary for public
+distribution on 2026-08-31. The combined `elettra-core` package declares the
+SPDX expression `MIT AND EUPL-1.2`: MIT covers the Elettra-authored files and
+EUPL-1.2 covers the separately marked VECTO transcription. This project
+decision does not remove either licence's notices, source-availability or
+redistribution obligations.
 
-That review must also decide the license expression for the combined
-`elettra-core` distribution. Until then, the project metadata deliberately
-lists both license texts and this notice without claiming a combined license
-expression. A release containing the transcription must identify the exact
-public source tag that corresponds to the executable distribution. This also
-applies when the software's essential functionality is offered over a network.
+A release containing the transcription must identify the exact public source
+tag that corresponds to the executable distribution. This also applies when
+the software's essential functionality is offered over a network.
 
 The local `elettra-vecto-oracle:5.1.3` test image contains official VECTO
 assemblies and is an ephemeral, non-distributable verification artifact. It
@@ -52,6 +51,5 @@ Source: VECTO release 5.1.3, commit
 Official source archive:
 <https://code.europa.eu/vecto/vecto/-/archive/Release/v5.1.3/vecto-Release-v5.1.3.tar.gz>.
 
-Corresponding Elettra source release (available only after the release owner
-approves and publishes it):
+Corresponding Elettra source release:
 <https://github.com/supsi-dacd-isaac/elettra-backend/tree/elettra-core-v2.1.0>.

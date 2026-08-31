@@ -222,8 +222,10 @@ test inputs only and are not included in Git or the production image.
 
 The transcription is copyright the European Union and licensed under
 EUPL-1.2. See `VECTO_SSM_PROVENANCE.md`, `THIRD_PARTY_NOTICES.md` and
-`tests/vecto_oracle/README.md`. Distribution remains subject to the repository's
-third-party licence review gate.
+`tests/vecto_oracle/README.md`. The SUPSI release owner approved the documented
+MIT/EUPL component boundary for public distribution on 2026-08-31. Every
+distribution must retain both licence texts, the modification/provenance notice
+and a link to the exact public source tag.
 
 ## Troubleshooting
 
