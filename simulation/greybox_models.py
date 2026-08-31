@@ -19,6 +19,10 @@ REQUIRED_COLS = [
 ]
 
 GREYBOX_PRED_FEATURE = "greybox_pred_kwh"
+SOLARIS_LENGTHS_M = np.array([9.0, 12.0, 18.0], dtype=float)
+SOLARIS_PASSENGER_CAPACITIES = np.array(
+    [3588.0 / 68.0, 5258.0 / 68.0, 8889.0 / 68.0], dtype=float
+)
 
 
 @dataclass
@@ -180,15 +184,105 @@ class CombinedGreyboxQRF:
         qrf: RandomForestQuantileRegressor,
         selected_features: List[str],
         aux_lookup: Optional[Dict[str, Tuple[np.ndarray, np.ndarray]]] = None,
+        include_greybox_feature: bool = True,
+        greybox_feature_name: str = GREYBOX_PRED_FEATURE,
+        passenger_load_estimator: Optional[dict] = None,
     ) -> None:
         self.greybox = greybox
         self.qrf = qrf
         self.selected_features = selected_features
         self.aux_lookup = aux_lookup
+        self.include_greybox_feature = include_greybox_feature
+        self.greybox_feature_name = greybox_feature_name
+        self.passenger_load_estimator = passenger_load_estimator
 
     def _aux_energy(self, X: pd.DataFrame) -> np.ndarray:
         ser = compute_aux_energy(X, self.aux_lookup)
         return ser.to_numpy(dtype=float)
+
+    def _fallback_training_mass(self, X: pd.DataFrame) -> Optional[np.ndarray]:
+        """Reproduce training mass only when no runtime mass is supplied.
+
+        Production requests always provide ``override_mass`` from the selected
+        bus model.  This fallback exists for offline compatibility checks and
+        standalone predictions of the serialized training artifact.
+        """
+
+        estimator = getattr(self, "passenger_load_estimator", None)
+        if not isinstance(estimator, dict):
+            return None
+        config = estimator.get("config", {})
+        mapping = estimator.get("time_bin_load_factor")
+        if isinstance(mapping, dict):
+            minutes = int(config.get("time_bin_minutes", 60))
+            if minutes <= 0 or 1440 % minutes:
+                raise ValueError("Serialized passenger time-bin width is invalid")
+            if "start_time_minutes" not in X.columns:
+                raise ValueError(
+                    "start_time_minutes is required by the serialized hourly "
+                    "passenger-load fallback"
+                )
+            starts = X["start_time_minutes"].to_numpy(dtype=float)
+            if not np.isfinite(starts).all():
+                raise ValueError("start_time_minutes must be finite")
+            bins = ((starts % 1440.0) // minutes).astype(int)
+            prior = float(config.get("prior_load_factor", 0.5))
+            occupancy = np.array(
+                [float(mapping.get(str(time_bin), mapping.get(time_bin, prior))) for time_bin in bins],
+                dtype=float,
+            )
+            passenger_weight = float(config.get("passenger_weight_kg", 70.0))
+        elif estimator.get("mode") == "constant":
+            occupancy = np.full(
+                len(X), float(estimator.get("prior_load_factor", 0.5)), dtype=float
+            )
+            passenger_weight = float(estimator.get("passenger_weight_kg", 70.0))
+        else:
+            return None
+
+        if ((occupancy < 0) | (occupancy > 1)).any():
+            raise ValueError("Serialized passenger load factors must be within [0, 1]")
+        length = X["bus_length_m"].to_numpy(dtype=float)
+        battery = X["bus_battery_kwh"].to_numpy(dtype=float)
+        mass_contract = estimator.get("mass_contract", {})
+        battery_density = float(
+            mass_contract.get(
+                "battery_density_kg_per_kwh", self.greybox.battery_pack_density
+            )
+        )
+        fitted_params = getattr(self.greybox, "params_", None)
+        default_chassis_k1 = getattr(self.greybox, "chassis_mass_k1", None)
+        default_chassis_k2 = getattr(self.greybox, "chassis_mass_k2", None)
+        if default_chassis_k1 is None and fitted_params is not None:
+            default_chassis_k1 = fitted_params.k1
+        if default_chassis_k2 is None and fitted_params is not None:
+            default_chassis_k2 = fitted_params.k2
+        chassis_k1 = float(
+            mass_contract.get(
+                "chassis_k1_kg_per_m", default_chassis_k1
+            )
+        )
+        chassis_k2 = float(
+            mass_contract.get(
+                "chassis_k2_kg", default_chassis_k2
+            )
+        )
+        capacity = np.interp(
+            length,
+            SOLARIS_LENGTHS_M,
+            SOLARIS_PASSENGER_CAPACITIES,
+            left=SOLARIS_PASSENGER_CAPACITIES[0],
+            right=SOLARIS_PASSENGER_CAPACITIES[-1],
+        )
+        mass = (
+            chassis_k1 * length
+            + chassis_k2
+            + battery_density * battery
+            + capacity * occupancy * passenger_weight
+        )
+        if not np.isfinite(mass).all() or (mass <= 0).any():
+            raise ValueError("Serialized passenger mass fallback is invalid")
+        return mass
 
     def predict(
         self,
@@ -197,7 +291,10 @@ class CombinedGreyboxQRF:
         aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None,
         override_mass: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        gb_pred = self.greybox.predict(X, override_mass=override_mass)
+        effective_mass = override_mass
+        if effective_mass is None:
+            effective_mass = self._fallback_training_mass(X)
+        gb_pred = self.greybox.predict(X, override_mass=effective_mass)
         if aux_energy_fn is not None:
             aux_out = aux_energy_fn(X)
             if isinstance(aux_out, pd.Series):
@@ -235,5 +332,3 @@ class CombinedGreyboxQRF:
             res_q = self.qrf.predict(X_qrf, quantiles=quantiles)
             total_q = res_q + gb_pred[:, None] + aux[:, None]
             return total_q
-
-

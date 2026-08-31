@@ -44,6 +44,10 @@ training-mass estimate.
 The trained hourly occupancy profile is not a runtime passenger forecast. It is
 used only to keep the drivetrain coefficients on a physically consistent mass
 scale in the absence of historical APC labels. At runtime the request wins.
+The serialized legacy-compatible wrapper can reproduce that hourly profile for
+offline evaluation when no mass is supplied. This is a fallback-only contract:
+the backend always passes the bus-specific `override_mass`, and a regression
+test verifies that the explicit value takes precedence unchanged.
 
 ## Release checks
 

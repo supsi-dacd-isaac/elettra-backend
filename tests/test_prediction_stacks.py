@@ -32,6 +32,7 @@ from app.routers.simulation import _assert_yearly_prediction_stack_compatible
 from app.schemas.requests import _validated_quantiles
 from app.models import PredictionRuns
 from simulation.consumption_prediction import ConsumptionPredictor
+from simulation.greybox_models import CombinedGreyboxQRF
 from elettra_core import (
     AuxiliaryEnergyComponents,
     CappedRegenAffineGreyBox,
@@ -289,6 +290,68 @@ class _SingleQuantileQrf(_FakeQrf):
         if isinstance(quantiles, list) and len(quantiles) == 1:
             return np.full(len(frame), quantiles[0])
         return super().predict(frame, quantiles=quantiles)
+
+
+def test_legacy_wrapper_embeds_hourly_mass_but_runtime_override_wins():
+    class CapturingGreybox:
+        battery_pack_density = 6.85
+        chassis_mass_k1 = 717.5
+        chassis_mass_k2 = 3413.5
+        params_ = None
+
+        def __init__(self):
+            self.mass = None
+
+        def predict(self, frame, override_mass=None):
+            self.mass = np.asarray(override_mass, dtype=float)
+            return self.mass
+
+    class ZeroQrf:
+        def predict(self, frame, quantiles=None):
+            if isinstance(quantiles, list):
+                return np.zeros((len(frame), len(quantiles)))
+            return np.zeros(len(frame))
+
+    greybox = CapturingGreybox()
+    model = CombinedGreyboxQRF(
+        greybox=greybox,
+        qrf=ZeroQrf(),
+        selected_features=["greybox_pred_kwh"],
+        passenger_load_estimator={
+            "config": {
+                "time_bin_minutes": 60,
+                "prior_load_factor": 0.5,
+                "passenger_weight_kg": 70.0,
+            },
+            "mass_contract": {
+                "battery_density_kg_per_kwh": 6.85,
+                "chassis_k1_kg_per_m": 717.5,
+                "chassis_k2_kg": 3413.5,
+            },
+            "time_bin_load_factor": {"7": 0.25, "8": 0.75},
+        },
+    )
+    frame = pd.DataFrame(
+        {
+            "bus_length_m": [12.0, 12.0],
+            "bus_battery_kwh": [460.0, 460.0],
+            "start_time_minutes": [7 * 60 + 59, 8 * 60],
+        }
+    )
+    capacity = 5258.0 / 68.0
+    expected = (
+        717.5 * 12.0
+        + 3413.5
+        + 6.85 * 460.0
+        + capacity * np.array([0.25, 0.75]) * 70.0
+    )
+
+    assert model.predict(frame).tolist() == pytest.approx(expected.tolist())
+    runtime_mass = np.array([12_985.0, 17_885.0])
+    assert model.predict(frame, override_mass=runtime_mass).tolist() == pytest.approx(
+        runtime_mass.tolist()
+    )
+    assert greybox.mass.tolist() == runtime_mass.tolist()
 
 
 def _features() -> pd.DataFrame:
