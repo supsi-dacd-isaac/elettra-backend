@@ -43,6 +43,8 @@ from elettra_core import (
     CappedRegenAffineGreyBox,
     HybridGreyboxQRF,
     LinearGreyBox,
+    PASSENGER_MASS_KG,
+    source_tree_sha256,
 )
 from elettra_core.vecto_templates import VECTO_TEMPLATE_RELEASE, template_release_sha256
 
@@ -63,6 +65,7 @@ PASSENGER_PRIOR = {
     "hvac_weighting": "duration",
     "matching_policy": "vbz-ogd-gtfs-v1",
     "primary_secondary_distance_coverage": 0.86,
+    "passenger_mass_kg": PASSENGER_MASS_KG,
 }
 
 
@@ -79,6 +82,7 @@ def _registry(monkeypatch, *, experimental: bool = False) -> None:
     monkeypatch.setenv("DEFAULT_PREDICTION_STACK", "legacy")
     monkeypatch.setenv("ELETTRA_CORE_SOURCE_COMMIT", "c" * 40)
     monkeypatch.setenv("ELETTRA_CORE_IMAGE_COMMIT", "c" * 40)
+    monkeypatch.setenv("ELETTRA_CORE_IMAGE_TREE_SHA256", source_tree_sha256())
     monkeypatch.setenv(
         "ENABLE_EXPERIMENTAL_PREDICTION_STACKS", "true" if experimental else "false"
     )
@@ -215,6 +219,13 @@ def test_vecto_registry_rejects_image_built_from_another_core_commit(monkeypatch
     _registry(monkeypatch)
     monkeypatch.setenv("ELETTRA_CORE_IMAGE_COMMIT", "d" * 40)
     with pytest.raises(RuntimeReleaseConfigurationError, match="baked"):
+        runtime_release_configuration()
+
+
+def test_vecto_registry_rejects_image_with_another_core_source_tree(monkeypatch):
+    _registry(monkeypatch)
+    monkeypatch.setenv("ELETTRA_CORE_IMAGE_TREE_SHA256", "0" * 64)
+    with pytest.raises(RuntimeReleaseConfigurationError, match="installed elettra-core bytes"):
         runtime_release_configuration()
 
 

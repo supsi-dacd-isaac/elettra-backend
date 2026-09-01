@@ -10,9 +10,10 @@ remains supported during migration. Once the prediction registry is enabled,
 GTFS_ELEVATION_PROFILES_BUCKET=elevation-profiles-gtfs
 ELEVATION_PROFILES_BUCKET=elevation-profiles
 ELEVATION_PROFILES_RELEASE=roaddeck-v3.3-20260828-db39527
-LEGACY_CONSUMPTION_MODEL_RELEASE=greybox_qrf_production_core_v2_roaddeck_v3_3_20260828
-VECTO_G2_CONSUMPTION_MODEL_RELEASE=greybox_qrf_g2_vecto_r744_core_v2_1_20260831-r1
-VECTO_G0_TRANSFER_MODEL_RELEASE=greybox_qrf_g0_datadriven_to_vecto_core_v2_1_20260831-exp1
+LEGACY_CONSUMPTION_MODEL_RELEASE=greybox_qrf_production_core_v2_roaddeck_v3_3_physical_mass_20260831
+# Leave both VECTO variables empty until their immutable v2.2 releases pass preflight.
+VECTO_G2_CONSUMPTION_MODEL_RELEASE=
+VECTO_G0_TRANSFER_MODEL_RELEASE=
 DEFAULT_PREDICTION_STACK=legacy
 ENABLE_EXPERIMENTAL_PREDICTION_STACKS=false
 ELETTRA_CORE_SOURCE_COMMIT=<commit-pointed-to-by-elettra-core-v2.2.0>
@@ -35,6 +36,15 @@ docker build \
   --label org.opencontainers.image.source-backend-commit="$(git rev-parse HEAD)" \
   -t elettra-backend:"$(git rev-parse HEAD)" .
 ```
+The image also computes `/etc/elettra-core-image-tree-sha256` from the Python
+and JSON files it actually ships. Startup compares that digest with the
+installed package and with model metadata, so a caller-supplied Git SHA cannot
+attest unrelated bytes.
+
+After acceptance, the planned G2 registry value is
+`greybox_qrf_g2_vbz_ogd_hbefa_core_v2_2_20260901-r1`; registering it does not
+change `DEFAULT_PREDICTION_STACK=legacy`.
+
 `vecto-g0-transfer` is selectable only when the experimental flag is
 true and is never allowed as the default. A request may provide
 `prediction_stack`, `model_name`, or both; if both are present they must select
@@ -87,7 +97,8 @@ Both the metadata JSON and release JSON must carry the same core provenance:
   "elettra_core": {
     "package_version": "2.2.0",
     "tag": "elettra-core-v2.2.0",
-    "source_commit": "<40-lowercase-hex>"
+    "source_commit": "<40-lowercase-hex>",
+    "source_tree_sha256": "<64-lowercase-hex>"
   }
 }
 ```
@@ -152,7 +163,8 @@ G2 metadata and release JSON also carry the same `passenger_prior` object:
     "mass_weighting": "distance",
     "hvac_weighting": "duration",
     "matching_policy": "vbz-ogd-gtfs-v1",
-    "primary_secondary_distance_coverage": 0.8
+    "primary_secondary_distance_coverage": 0.8,
+    "passenger_mass_kg": 70.0
   }
 }
 ```
@@ -160,7 +172,8 @@ G2 metadata and release JSON also carry the same `passenger_prior` object:
 The correction must be strictly inside `(0.8, 1.2)`, matching coverage must
 be at least 80%, and the serialized artifact reference occupancy must exactly
 equal the manifest. The backend never reads OGD rows: it reconstructs the
-reference mass from the selected bus model and this scalar occupancy.
+reference mass from the selected bus model, this scalar occupancy and the
+shared 70 kg passenger-mass contract.
 
 The corresponding `auxiliary_estimator` blocks are:
 

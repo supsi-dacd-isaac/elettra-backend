@@ -14,7 +14,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping
 
-from elettra_core import FEATURE_CONTRACT_VERSION, __version__ as ELETTRA_CORE_VERSION
+from elettra_core import (
+    FEATURE_CONTRACT_VERSION,
+    PASSENGER_MASS_KG,
+    __version__ as ELETTRA_CORE_VERSION,
+    source_tree_sha256,
+)
 from elettra_core.vecto_templates import (
     VECTO_TEMPLATE_RELEASE,
     load_template_release,
@@ -27,6 +32,9 @@ LEGACY_DEFAULT_MODEL = "greybox_qrf_production_crps_optimized_3"
 RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 ELETTRA_CORE_IMAGE_COMMIT_PATH = Path("/etc/elettra-core-image-commit")
+ELETTRA_CORE_IMAGE_TREE_SHA256_PATH = Path(
+    "/etc/elettra-core-image-tree-sha256"
+)
 
 LEGACY_AUXILIARY_ESTIMATOR = "legacy-curves-v1"
 VECTO_HVAC_AUXILIARY_ESTIMATOR = VECTO_TEMPLATE_RELEASE
@@ -98,6 +106,20 @@ def _image_core_commit() -> str | None:
     return _optional_env("ELETTRA_CORE_IMAGE_COMMIT")
 
 
+def _image_core_tree_sha256() -> str | None:
+    if ELETTRA_CORE_IMAGE_TREE_SHA256_PATH.is_file():
+        try:
+            value = ELETTRA_CORE_IMAGE_TREE_SHA256_PATH.read_text(
+                encoding="ascii"
+            ).strip()
+        except OSError as exc:  # pragma: no cover - container filesystem failure
+            raise RuntimeReleaseConfigurationError(
+                "Cannot read the elettra-core source-tree hash baked into the image"
+            ) from exc
+        return value or None
+    return _optional_env("ELETTRA_CORE_IMAGE_TREE_SHA256")
+
+
 @dataclass(frozen=True)
 class PredictionStackRelease:
     stack: PredictionStack
@@ -146,6 +168,8 @@ class RuntimeReleaseConfiguration:
     experimental_prediction_stacks_enabled: bool
     elettra_core_source_commit: str | None
     elettra_core_image_commit: str | None
+    elettra_core_source_tree_sha256: str | None
+    elettra_core_image_tree_sha256: str | None
 
     @property
     def production_v2_active(self) -> bool:
@@ -166,6 +190,8 @@ class RuntimeReleaseConfiguration:
             ),
             "elettra_core_source_commit": self.elettra_core_source_commit,
             "elettra_core_image_commit": self.elettra_core_image_commit,
+            "elettra_core_source_tree_sha256": self.elettra_core_source_tree_sha256,
+            "elettra_core_image_tree_sha256": self.elettra_core_image_tree_sha256,
             "prediction_stacks": {
                 stack.value: release.metadata()
                 for stack, release in self.prediction_stacks.items()
@@ -308,6 +334,8 @@ def runtime_release_configuration() -> RuntimeReleaseConfiguration:
     effective_model_pin = default_model if registry_active else singleton_model
     core_source_commit = _optional_env("ELETTRA_CORE_SOURCE_COMMIT")
     core_image_commit = _image_core_commit()
+    core_tree_sha256 = source_tree_sha256()
+    core_image_tree_sha256 = _image_core_tree_sha256()
     has_vecto_stack = any(
         stack is not PredictionStack.LEGACY for stack in registry
     )
@@ -319,6 +347,15 @@ def runtime_release_configuration() -> RuntimeReleaseConfiguration:
             "VECTO prediction stacks require ELETTRA_CORE_SOURCE_COMMIT as "
             "the exact 40-character commit behind "
             f"elettra-core-v{ELETTRA_CORE_VERSION}"
+        )
+    if has_vecto_stack and (
+        core_image_tree_sha256 is None
+        or re.fullmatch(r"[0-9a-f]{64}", core_image_tree_sha256) is None
+        or core_image_tree_sha256 != core_tree_sha256
+    ):
+        raise RuntimeReleaseConfigurationError(
+            "VECTO prediction stacks require the installed elettra-core bytes "
+            "to match the source-tree identity baked into the backend image"
         )
     if has_vecto_stack and (
         core_image_commit is None
@@ -394,6 +431,8 @@ def runtime_release_configuration() -> RuntimeReleaseConfiguration:
         experimental_prediction_stacks_enabled=experimental_enabled,
         elettra_core_source_commit=core_source_commit,
         elettra_core_image_commit=core_image_commit,
+        elettra_core_source_tree_sha256=core_tree_sha256,
+        elettra_core_image_tree_sha256=core_image_tree_sha256,
     )
 
 
@@ -617,6 +656,7 @@ def validate_g2_passenger_prior(
         "hvac_weighting",
         "matching_policy",
         "primary_secondary_distance_coverage",
+        "passenger_mass_kg",
     }
     if not required.issubset(prior):
         raise RuntimeReleaseConfigurationError(
@@ -642,6 +682,8 @@ def validate_g2_passenger_prior(
         or prior.get("mass_weighting") != "distance"
         or prior.get("hvac_weighting") != "duration"
         or prior.get("matching_policy") != VECTO_G2_MATCHING_POLICY
+        or isinstance(prior.get("passenger_mass_kg"), bool)
+        or prior.get("passenger_mass_kg") != PASSENGER_MASS_KG
         or isinstance(coverage, bool)
         or not isinstance(coverage, (int, float))
         or not 0.8 <= float(coverage) <= 1.0

@@ -40,7 +40,7 @@ from app.services.runtime_release import (
 )
 from app.services.model_release import get_validated_model_artifact
 from app.services.vecto_auxiliary import build_vecto_auxiliary_binding
-from elettra_core import RAW_TRIP_FEATURE_COLUMNS
+from elettra_core import PASSENGER_MASS_KG, RAW_TRIP_FEATURE_COLUMNS
 from simulation.consumption_prediction import ConsumptionPredictor
 
 logger = logging.getLogger(__name__)
@@ -137,7 +137,7 @@ def physical_bus_mass(
 
     passenger_count = max_passengers * occupancy / 100.0
     battery_weight = packs * pack_weight
-    passenger_weight = passenger_count * 70.0
+    passenger_weight = passenger_count * PASSENGER_MASS_KG
     total_weight = empty_weight + battery_weight + passenger_weight
     return PhysicalBusMass(
         bus_length_m=bus_length_m,

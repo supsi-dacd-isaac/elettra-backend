@@ -53,6 +53,13 @@ WORKDIR /app
 # Copy application code
 COPY --chown=elettra:elettra . .
 
+# Bind the marker to the bytes that are actually shipped.  The Git SHA marker
+# alone is caller supplied and cannot prove that the image was built from that
+# checkout; model preflight checks both identities.
+RUN PYTHONPATH=/home/elettra/.local/lib/python3.12/site-packages:/app \
+    python -c "from elettra_core import source_tree_sha256; print(source_tree_sha256())" \
+    > /etc/elettra-core-image-tree-sha256
+
 # Create necessary directories
 RUN mkdir -p /app/data /app/logs && \
     chown -R elettra:elettra /app

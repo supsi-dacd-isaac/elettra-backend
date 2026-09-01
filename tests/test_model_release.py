@@ -27,7 +27,9 @@ from elettra_core import (
     CappedRegenAffineGreyBox,
     HybridGreyboxQRF,
     LinearGreyBox,
+    PASSENGER_MASS_KG,
     categorical_feature_contract,
+    source_tree_sha256,
 )
 from elettra_core.vecto_templates import (
     VECTO_TEMPLATE_RELEASE,
@@ -55,6 +57,7 @@ PASSENGER_PRIOR = {
     "hvac_weighting": "duration",
     "matching_policy": "vbz-ogd-gtfs-v1",
     "primary_secondary_distance_coverage": 0.86,
+    "passenger_mass_kg": PASSENGER_MASS_KG,
 }
 
 
@@ -287,6 +290,7 @@ def _vecto_release_objects(
         "package_version": "2.2.0",
         "tag": "elettra-core-v2.2.0",
         "source_commit": core_commit,
+        "source_tree_sha256": source_tree_sha256(),
     }
     metadata = _metadata()
     metadata.update(
@@ -381,6 +385,7 @@ def _configure_vecto_registry(monkeypatch):
     monkeypatch.setenv("ENABLE_EXPERIMENTAL_PREDICTION_STACKS", "true")
     monkeypatch.setenv("ELETTRA_CORE_SOURCE_COMMIT", "c" * 40)
     monkeypatch.setenv("ELETTRA_CORE_IMAGE_COMMIT", "c" * 40)
+    monkeypatch.setenv("ELETTRA_CORE_IMAGE_TREE_SHA256", source_tree_sha256())
 
 
 def _elevation_manifest():

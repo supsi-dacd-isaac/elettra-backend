@@ -17,6 +17,7 @@ from elettra_core import (
     RAW_MODEL_FEATURE_COLUMNS,
     __version__ as ELETTRA_CORE_VERSION,
     categorical_feature_contract,
+    source_tree_sha256,
 )
 from elettra_core.greybox import (
     CappedRegenAffineGreyBox,
@@ -519,7 +520,9 @@ def _validate_one_model_release(
     _validate_loaded_model_artifact(model, metadata, stack_release)
 
     core_provenance = metadata.get("elettra_core")
-    runtime_core_commit = runtime_release_configuration().elettra_core_source_commit
+    runtime_configuration = runtime_release_configuration()
+    runtime_core_commit = runtime_configuration.elettra_core_source_commit
+    runtime_core_tree_sha256 = source_tree_sha256()
     if stack_release.stack is not PredictionStack.LEGACY and (
         not isinstance(core_provenance, dict)
         or core_provenance.get("package_version") != ELETTRA_CORE_VERSION
@@ -527,11 +530,14 @@ def _validate_one_model_release(
         or not isinstance(core_provenance.get("source_commit"), str)
         or _GIT_SHA_PATTERN.fullmatch(core_provenance["source_commit"]) is None
         or core_provenance["source_commit"] != runtime_core_commit
+        or core_provenance.get("source_tree_sha256") != runtime_core_tree_sha256
+        or runtime_configuration.elettra_core_image_tree_sha256
+        != runtime_core_tree_sha256
         or release.get("elettra_core") != core_provenance
     ):
         raise ModelReleaseValidationError(
             "VECTO model metadata/manifest does not pin the runtime "
-            f"{ELETTRA_CORE_TAG} release and source commit"
+            f"{ELETTRA_CORE_TAG} release, source commit and installed source tree"
         )
 
     feature_release = metadata.get("feature_release")

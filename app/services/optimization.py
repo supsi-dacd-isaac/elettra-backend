@@ -13,6 +13,8 @@ from uuid import UUID
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from elettra_core import PASSENGER_MASS_KG
+
 from app.database import AsyncSessionLocal
 from app.models import (
     Buses,
@@ -167,7 +169,7 @@ async def ensure_predictions(
             + float(specs.get("max_passengers", 120))
             * float(prediction_params["occupancy_percent"])
             / 100.0
-            * 70.0
+            * PASSENGER_MASS_KG
         )
 
         result = await db.execute(
