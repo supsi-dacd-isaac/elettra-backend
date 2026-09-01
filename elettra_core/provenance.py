@@ -6,7 +6,9 @@ import hashlib
 from pathlib import Path
 
 
-PASSENGER_MASS_KG = 70.0
+# Solaris' physical payload convention.  This value is shared by training and
+# inference and must be declared by every OGD-anchored model artifact.
+PASSENGER_MASS_KG = 68.0
 
 
 def source_tree_sha256() -> str:

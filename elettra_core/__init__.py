@@ -63,7 +63,7 @@ from .vecto_templates import (
     vecto_template_auxiliary_power,
 )
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 __all__ = [
     "FEATURE_CONTRACT_VERSION",
