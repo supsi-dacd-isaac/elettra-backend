@@ -49,10 +49,10 @@ from elettra_core import (
 from elettra_core.vecto_templates import VECTO_TEMPLATE_RELEASE, template_release_sha256
 
 
-TRAINING_HVAC_ESTIMATOR = "vbz-ogd-vecto-hvac-training-v1"
+TRAINING_HVAC_ESTIMATOR = "vbz-man-hess-setpoints-v1"
 TRAINING_COMFORT_POLICY = {
-    "release_id": "vbz-fleet-comfort-v1",
-    "sha256": "a" * 64,
+    "release_id": TRAINING_HVAC_ESTIMATOR,
+    "sha256": "289792e25044fedfc414588e17a90d1a7729ae96680c0692cd0942020316e4e0",
     "scope": "training-only",
 }
 PASSENGER_PRIOR = {

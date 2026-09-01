@@ -41,10 +41,10 @@ MODEL = "greybox_qrf_production_core_v2_roaddeck_v3_3_20260828"
 PREFIX = f"models/{MODEL}/"
 ROADS_RELEASE = "swisstlm3d_2026-02-24"
 ROADS_SHA256 = "6a2184d107b093ad7c8ea2ba9ff1cd2768c8a81dce7a5ff12e7bcd5711408a1d"
-TRAINING_HVAC_ESTIMATOR = "vbz-ogd-vecto-hvac-training-v1"
+TRAINING_HVAC_ESTIMATOR = "vbz-man-hess-setpoints-v1"
 TRAINING_COMFORT_POLICY = {
-    "release_id": "vbz-fleet-comfort-v1",
-    "sha256": "a" * 64,
+    "release_id": TRAINING_HVAC_ESTIMATOR,
+    "sha256": "289792e25044fedfc414588e17a90d1a7729ae96680c0692cd0942020316e4e0",
     "scope": "training-only",
 }
 PASSENGER_PRIOR = {

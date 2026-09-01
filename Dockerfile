@@ -53,6 +53,14 @@ WORKDIR /app
 # Copy application code
 COPY --chown=elettra:elettra . .
 
+# A production deployment may mount its own docker-specific configuration, but
+# the immutable image must also be startable when built from a clean Git tree.
+# Keep the tracked, non-secret baseline under a distinct source name so an
+# operator's ignored config/elettra-config.docker.yaml is never overwritten in
+# the checkout.
+RUN cp /app/config/elettra-config.image.yaml /app/config/elettra-config.docker.yaml && \
+    chown elettra:elettra /app/config/elettra-config.docker.yaml
+
 # Bind the marker to the bytes that are actually shipped.  The Git SHA marker
 # alone is caller supplied and cannot prove that the image was built from that
 # checkout; model preflight checks both identities.
