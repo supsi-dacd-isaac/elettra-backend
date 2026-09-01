@@ -308,6 +308,11 @@ def _vecto_release_objects(
         metadata["passenger_prior"] = PASSENGER_PRIOR
     acceptance_value = {
         "schema_version": 1,
+        "acceptance_type": "vecto-model-release-acceptance-v1",
+        "release_id": model_name,
+        "prediction_stack": stack.value,
+        "deployment_tier": contract["deployment_tier"],
+        "decision": "passed",
         "evaluation_manifest": {"sha256": "e" * 64},
         "test_set": {
             "source_row_identity_sha256": metadata["feature_release"][
@@ -320,6 +325,8 @@ def _vecto_release_objects(
             "feature_release_manifest_sha256": metadata["feature_release"][
                 "manifest_sha256"
             ],
+            "prediction_stack": stack.value,
+            "deployment_tier": contract["deployment_tier"],
         },
     }
     acceptance = json.dumps(acceptance_value, sort_keys=True).encode()
@@ -339,6 +346,17 @@ def _vecto_release_objects(
     artifacts = {
         name.rsplit("/", 1)[-1]: _entry(data) for name, data in objects.items()
     }
+    acceptance_value["artifacts"] = {
+        "model_sha256": artifacts[f"{model_name}.joblib"]["sha256"],
+        "metadata_sha256": artifacts[f"{model_name}_metadata.json"]["sha256"],
+        "feature_importance_sha256": artifacts[
+            f"{model_name}_feature_importance.csv"
+        ]["sha256"],
+    }
+    acceptance_value["candidate"].update(acceptance_value["artifacts"])
+    acceptance = json.dumps(acceptance_value, sort_keys=True).encode()
+    objects[f"{prefix}{model_name}_acceptance.json"] = acceptance
+    artifacts[f"{model_name}_acceptance.json"] = _entry(acceptance)
     release = {
         "schema_version": 1,
         "release_id": model_name,
@@ -588,8 +606,15 @@ def test_vecto_controlled_regression_approval_binds_evaluation_hash(monkeypatch)
     objects = _vecto_release_objects(
         model_name=model_name, stack=PredictionStack.VECTO_G2
     )
+    acceptance_path = f"models/{model_name}/{model_name}_acceptance.json"
     manifest_path = f"models/{model_name}/{model_name}_release.json"
     release = json.loads(objects[manifest_path])
+    acceptance = json.loads(objects[acceptance_path])
+    acceptance["decision"] = "approved_with_documented_regression"
+    objects[acceptance_path] = json.dumps(acceptance, sort_keys=True).encode()
+    acceptance_entry = _entry(objects[acceptance_path])
+    release["artifacts"][f"{model_name}_acceptance.json"] = acceptance_entry
+    release["acceptance"].update(acceptance_entry)
     release["acceptance"]["decision"] = "approved_with_documented_regression"
     release["acceptance"]["documented_approval"] = {
         "approved_by": "release-owner",
@@ -614,6 +639,47 @@ def test_vecto_controlled_regression_approval_binds_evaluation_hash(monkeypatch)
         stack_release=stack_release,
         client=_Client(objects),
     )["model_name"] == model_name
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("decision", "approved_with_documented_regression"),
+        ("release_id", "another-release"),
+        ("prediction_stack", "vecto-g0-transfer"),
+        ("deployment_tier", "experimental"),
+    ],
+)
+def test_vecto_preflight_rejects_semantically_unbound_acceptance(
+    monkeypatch, field, value
+):
+    _configure_vecto_registry(monkeypatch)
+    model_name = "g2-release"
+    stack_release = model_release.runtime_release_configuration().prediction_stacks[
+        PredictionStack.VECTO_G2
+    ]
+    objects = _vecto_release_objects(
+        model_name=model_name, stack=PredictionStack.VECTO_G2
+    )
+    prefix = f"models/{model_name}/"
+    acceptance_path = f"{prefix}{model_name}_acceptance.json"
+    manifest_path = f"{prefix}{model_name}_release.json"
+    acceptance = json.loads(objects[acceptance_path])
+    acceptance[field] = value
+    objects[acceptance_path] = json.dumps(acceptance, sort_keys=True).encode()
+    release = json.loads(objects[manifest_path])
+    entry = _entry(objects[acceptance_path])
+    release["artifacts"][f"{model_name}_acceptance.json"] = entry
+    release["acceptance"].update(entry)
+    objects[manifest_path] = json.dumps(release).encode()
+
+    with pytest.raises(ModelReleaseValidationError, match="acceptance artifact"):
+        model_release._validate_one_model_release(
+            _elevation_manifest(),
+            model_name=model_name,
+            stack_release=stack_release,
+            client=_Client(objects),
+        )
 
 
 def test_vecto_preflight_reports_malformed_feature_release(monkeypatch):

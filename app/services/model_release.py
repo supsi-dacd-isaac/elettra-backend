@@ -42,6 +42,7 @@ from app.services.runtime_release import (
 
 MODEL_BUCKET = "consumption-models"
 MODEL_RELEASE_SCHEMA_VERSION = 1
+VECTO_ACCEPTANCE_TYPE = "vecto-model-release-acceptance-v1"
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 ELETTRA_CORE_TAG = f"elettra-core-v{ELETTRA_CORE_VERSION}"
@@ -555,10 +556,36 @@ def _validate_one_model_release(
         acceptance_candidate = acceptance_report.get("candidate")
         acceptance_test_set = acceptance_report.get("test_set")
         acceptance_evaluation = acceptance_report.get("evaluation_manifest")
+        acceptance_artifacts = acceptance_report.get("artifacts")
+        stack_contract = metadata.get("prediction_stack_contract")
+        expected_tier = (
+            stack_contract.get("deployment_tier")
+            if isinstance(stack_contract, dict)
+            else None
+        )
+        expected_acceptance_artifacts = {
+            "model_sha256": artifact_sha256["model"],
+            "metadata_sha256": artifact_sha256["metadata"],
+            "feature_importance_sha256": artifact_sha256["importance"],
+        }
         if (
             acceptance_report.get("schema_version") != 1
+            or acceptance_report.get("acceptance_type") != VECTO_ACCEPTANCE_TYPE
+            or acceptance_report.get("release_id") != model_name
+            or acceptance_report.get("decision") != acceptance_decision
+            or acceptance_report.get("prediction_stack")
+            != stack_release.stack.value
+            or acceptance_report.get("deployment_tier") != expected_tier
+            or acceptance_artifacts != expected_acceptance_artifacts
             or not isinstance(acceptance_candidate, dict)
             or acceptance_candidate.get("model_name") != model_name
+            or acceptance_candidate.get("prediction_stack")
+            != stack_release.stack.value
+            or acceptance_candidate.get("deployment_tier") != expected_tier
+            or any(
+                acceptance_candidate.get(key) != value
+                for key, value in expected_acceptance_artifacts.items()
+            )
             or acceptance_candidate.get("feature_contract_version")
             != FEATURE_CONTRACT_VERSION
             or acceptance_candidate.get("feature_release_manifest_sha256")
