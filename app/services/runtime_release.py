@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Mapping
 
-from elettra_core import FEATURE_CONTRACT_VERSION
+from elettra_core import FEATURE_CONTRACT_VERSION, __version__ as ELETTRA_CORE_VERSION
 from elettra_core.vecto_templates import (
     VECTO_TEMPLATE_RELEASE,
     load_template_release,
@@ -29,8 +29,11 @@ GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 ELETTRA_CORE_IMAGE_COMMIT_PATH = Path("/etc/elettra-core-image-commit")
 
 LEGACY_AUXILIARY_ESTIMATOR = "legacy-curves-v1"
-VECTO_HVAC_AUXILIARY_ESTIMATOR = "vecto-hvac-5.1.3-r744-templates-v1"
-VECTO_COMPLETE_AUXILIARY_ESTIMATOR = "vecto-complete-5.1.3-r744-templates-v1"
+VECTO_HVAC_AUXILIARY_ESTIMATOR = VECTO_TEMPLATE_RELEASE
+VECTO_COMPLETE_AUXILIARY_ESTIMATOR = "vecto-complete-5.1.3-r744-templates-v2"
+VECTO_G2_TRANSFER_POLICY = "fleet-setpoints-to-vecto-default-v1"
+VECTO_G2_PASSENGER_PRIOR_SOURCE = "vbz-ogd"
+VECTO_G2_MATCHING_POLICY = "vbz-ogd-gtfs-v1"
 DATA_DRIVEN_AUXILIARY_LOOKUP_SHA256 = (
     "8ae333170a856adcd938b5a259f21cc5a216743a8eb0c34c5542fb0e6532cfb9"
 )
@@ -314,7 +317,8 @@ def runtime_release_configuration() -> RuntimeReleaseConfiguration:
     ):
         raise RuntimeReleaseConfigurationError(
             "VECTO prediction stacks require ELETTRA_CORE_SOURCE_COMMIT as "
-            "the exact 40-character commit behind elettra-core-v2.1.0"
+            "the exact 40-character commit behind "
+            f"elettra-core-v{ELETTRA_CORE_VERSION}"
         )
     if has_vecto_stack and (
         core_image_commit is None
@@ -485,6 +489,37 @@ def validate_model_stack_contract(
         if release.stack is PredictionStack.VECTO_G0_TRANSFER
         else release.auxiliary_estimator
     )
+    training_comfort_policy: Mapping[str, object] | None = None
+    if release.stack is PredictionStack.VECTO_G2:
+        candidate = contract.get("training_auxiliary_estimator")
+        if (
+            not isinstance(candidate, str)
+            or RELEASE_ID_PATTERN.fullmatch(candidate) is None
+            or candidate == release.auxiliary_estimator
+        ):
+            raise RuntimeReleaseConfigurationError(
+                "vecto-g2 requires a distinct, versioned training auxiliary estimator"
+            )
+        expected_training = candidate
+        training_comfort_policy = contract.get("training_comfort_policy")
+        if (
+            not isinstance(training_comfort_policy, Mapping)
+            or set(training_comfort_policy) != {"release_id", "sha256", "scope"}
+            or not isinstance(training_comfort_policy.get("release_id"), str)
+            or RELEASE_ID_PATTERN.fullmatch(
+                str(training_comfort_policy.get("release_id"))
+            )
+            is None
+            or not isinstance(training_comfort_policy.get("sha256"), str)
+            or re.fullmatch(
+                r"[0-9a-f]{64}", str(training_comfort_policy.get("sha256"))
+            )
+            is None
+            or training_comfort_policy.get("scope") != "training-only"
+        ):
+            raise RuntimeReleaseConfigurationError(
+                "vecto-g2 requires an immutable training-only comfort policy"
+            )
     expected = {
         "stack": release.stack.value,
         "deployment_tier": release.deployment_tier,
@@ -493,7 +528,13 @@ def validate_model_stack_contract(
         "fixed_auxiliary_owner": release.fixed_auxiliary_owner,
     }
     if release.stack is PredictionStack.VECTO_G2:
-        expected["auxiliary_contract"] = "vecto-hvac-only"
+        expected.update(
+            {
+                "auxiliary_contract": "vecto-hvac-only",
+                "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+                "training_comfort_policy": training_comfort_policy,
+            }
+        )
     elif release.stack is PredictionStack.VECTO_G0_TRANSFER:
         expected.update(
             {
@@ -538,6 +579,13 @@ def validate_model_stack_contract(
             "vecto_template_release": VECTO_TEMPLATE_RELEASE,
             "vecto_template_sha256": template_release_sha256(),
         }
+        if release.stack is PredictionStack.VECTO_G2:
+            expected_auxiliary.update(
+                {
+                    "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+                    "training_comfort_policy": training_comfort_policy,
+                }
+            )
         if release.stack is PredictionStack.VECTO_G0_TRANSFER:
             expected_auxiliary["training_sha256"] = (
                 DATA_DRIVEN_AUXILIARY_LOOKUP_SHA256
@@ -547,3 +595,58 @@ def validate_model_stack_contract(
                 f"Model {release.model_release!r} has an incompatible "
                 "auxiliary_estimator declaration"
             )
+    if release.stack is PredictionStack.VECTO_G2:
+        validate_g2_passenger_prior(metadata)
+
+
+def validate_g2_passenger_prior(
+    metadata: Mapping[str, object] | None,
+) -> Mapping[str, object]:
+    prior = metadata.get("passenger_prior") if metadata else None
+    if not isinstance(prior, Mapping):
+        raise RuntimeReleaseConfigurationError(
+            "vecto-g2 metadata must declare passenger_prior"
+        )
+    required = {
+        "source",
+        "release_id",
+        "sha256",
+        "correction_factor_s",
+        "qrf_reference_occupancy_percent",
+        "mass_weighting",
+        "hvac_weighting",
+        "matching_policy",
+        "primary_secondary_distance_coverage",
+    }
+    if not required.issubset(prior):
+        raise RuntimeReleaseConfigurationError(
+            "vecto-g2 passenger_prior is incomplete"
+        )
+    release_id = prior.get("release_id")
+    digest = prior.get("sha256")
+    correction = prior.get("correction_factor_s")
+    reference = prior.get("qrf_reference_occupancy_percent")
+    coverage = prior.get("primary_secondary_distance_coverage")
+    if (
+        prior.get("source") != VECTO_G2_PASSENGER_PRIOR_SOURCE
+        or not isinstance(release_id, str)
+        or RELEASE_ID_PATTERN.fullmatch(release_id) is None
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        or isinstance(correction, bool)
+        or not isinstance(correction, (int, float))
+        or not 0.8 < float(correction) < 1.2
+        or isinstance(reference, bool)
+        or not isinstance(reference, (int, float))
+        or not 0 <= float(reference) <= 100
+        or prior.get("mass_weighting") != "distance"
+        or prior.get("hvac_weighting") != "duration"
+        or prior.get("matching_policy") != VECTO_G2_MATCHING_POLICY
+        or isinstance(coverage, bool)
+        or not isinstance(coverage, (int, float))
+        or not 0.8 <= float(coverage) <= 1.0
+    ):
+        raise RuntimeReleaseConfigurationError(
+            "vecto-g2 passenger_prior violates the VBZ OGD deployment contract"
+        )
+    return prior

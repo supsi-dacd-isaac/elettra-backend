@@ -15,7 +15,7 @@ VECTO_G2_CONSUMPTION_MODEL_RELEASE=greybox_qrf_g2_vecto_r744_core_v2_1_20260831-
 VECTO_G0_TRANSFER_MODEL_RELEASE=greybox_qrf_g0_datadriven_to_vecto_core_v2_1_20260831-exp1
 DEFAULT_PREDICTION_STACK=legacy
 ENABLE_EXPERIMENTAL_PREDICTION_STACKS=false
-ELETTRA_CORE_SOURCE_COMMIT=<commit-pointed-to-by-elettra-core-v2.1.0>
+ELETTRA_CORE_SOURCE_COMMIT=<commit-pointed-to-by-elettra-core-v2.2.0>
 ELEVATION_AUX_PROFILE_ALGORITHM=road-snap-v3.3-topology
 ELEVATION_AUX_ROADS_RELEASE=swisstlm3d_2026-02-24
 ```
@@ -24,14 +24,14 @@ Startup fails for a partial profile/model configuration, mixed singleton and
 registry variables, a missing legacy release, a default stack without a model,
 an experimental default, missing auxiliary pins, or an incompatible GTFS
 manifest. Registering any VECTO stack also requires the exact 40-character
-commit named by `elettra-core-v2.1.0`; model provenance must match it.
+commit named by `elettra-core-v2.2.0`; model provenance must match it.
 The same commit is embedded at image build time in
 `/etc/elettra-core-image-commit`. Startup requires the deployment pin, model
 metadata and image-owned revision to be identical; build with:
 
 ```bash
 docker build \
-  --build-arg ELETTRA_CORE_SOURCE_COMMIT="$(git rev-parse 'elettra-core-v2.1.0^{}')" \
+  --build-arg ELETTRA_CORE_SOURCE_COMMIT="$(git rev-parse 'elettra-core-v2.2.0^{}')" \
   --label org.opencontainers.image.source-backend-commit="$(git rev-parse HEAD)" \
   -t elettra-backend:"$(git rev-parse HEAD)" .
 ```
@@ -85,8 +85,8 @@ Both the metadata JSON and release JSON must carry the same core provenance:
 ```json
 {
   "elettra_core": {
-    "package_version": "2.1.0",
-    "tag": "elettra-core-v2.1.0",
+    "package_version": "2.2.0",
+    "tag": "elettra-core-v2.2.0",
     "source_commit": "<40-lowercase-hex>"
   }
 }
@@ -99,12 +99,18 @@ The G2 metadata and release manifest both require this exact block:
   "prediction_stack_contract": {
     "stack": "vecto-g2",
     "deployment_tier": "production",
-    "training_auxiliary_estimator": "vecto-hvac-5.1.3-r744-templates-v1",
-    "inference_auxiliary_estimator": "vecto-hvac-5.1.3-r744-templates-v1",
+    "training_auxiliary_estimator": "<versioned-training-estimator>",
+    "inference_auxiliary_estimator": "vecto-hvac-5.1.3-r744-templates-v2",
     "fixed_auxiliary_owner": "model",
     "auxiliary_contract": "vecto-hvac-only",
-    "vecto_template_release": "vecto-hvac-5.1.3-r744-templates-v1",
-    "vecto_template_sha256": "982e4bc7fa65053dcfef943b8cc7fe60de64c834fc82bd4425e8ce0a36b5e5d2"
+    "transfer_policy": "fleet-setpoints-to-vecto-default-v1",
+    "training_comfort_policy": {
+      "release_id": "<versioned-comfort-policy>",
+      "sha256": "<64-lowercase-hex>",
+      "scope": "training-only"
+    },
+    "vecto_template_release": "vecto-hvac-5.1.3-r744-templates-v2",
+    "vecto_template_sha256": "68dae71d01f93f372d04471f0604b483ab629aa606edb7ac2dcf75cca0541c51"
   }
 }
 ```
@@ -118,11 +124,11 @@ The G0 transfer metadata and release manifest require:
     "deployment_tier": "experimental",
     "training_auxiliary_estimator": "data-driven-by-bus",
     "training_auxiliary_estimator_sha256": "8ae333170a856adcd938b5a259f21cc5a216743a8eb0c34c5542fb0e6532cfb9",
-    "inference_auxiliary_estimator": "vecto-complete-5.1.3-r744-templates-v1",
+    "inference_auxiliary_estimator": "vecto-complete-5.1.3-r744-templates-v2",
     "fixed_auxiliary_owner": "template",
     "auxiliary_contract": "vecto-complete",
-    "vecto_template_release": "vecto-hvac-5.1.3-r744-templates-v1",
-    "vecto_template_sha256": "982e4bc7fa65053dcfef943b8cc7fe60de64c834fc82bd4425e8ce0a36b5e5d2"
+    "vecto_template_release": "vecto-hvac-5.1.3-r744-templates-v2",
+    "vecto_template_sha256": "68dae71d01f93f372d04471f0604b483ab629aa606edb7ac2dcf75cca0541c51"
   }
 }
 ```
@@ -133,26 +139,55 @@ list servable by feature contract v2. Manufacturer/bus identifiers and
 `bus_battery_kwh` are forbidden QRF inputs. The fitted QRF
 `feature_names_in_` must equal that list in the same order.
 
+G2 metadata and release JSON also carry the same `passenger_prior` object:
+
+```json
+{
+  "passenger_prior": {
+    "source": "vbz-ogd",
+    "release_id": "<versioned-prior>",
+    "sha256": "<64-lowercase-hex>",
+    "correction_factor_s": 1.0,
+    "qrf_reference_occupancy_percent": 20.0,
+    "mass_weighting": "distance",
+    "hvac_weighting": "duration",
+    "matching_policy": "vbz-ogd-gtfs-v1",
+    "primary_secondary_distance_coverage": 0.8
+  }
+}
+```
+
+The correction must be strictly inside `(0.8, 1.2)`, matching coverage must
+be at least 80%, and the serialized artifact reference occupancy must exactly
+equal the manifest. The backend never reads OGD rows: it reconstructs the
+reference mass from the selected bus model and this scalar occupancy.
+
 The corresponding `auxiliary_estimator` blocks are:
 
 ```json
 {
   "vecto-g2": {
-    "training": "vecto-hvac-5.1.3-r744-templates-v1",
-    "inference": "vecto-hvac-5.1.3-r744-templates-v1",
+    "training": "<versioned-training-estimator>",
+    "inference": "vecto-hvac-5.1.3-r744-templates-v2",
     "fixed_auxiliary_owner": "model",
     "auxiliary_contract": "vecto-hvac-only",
-    "vecto_template_release": "vecto-hvac-5.1.3-r744-templates-v1",
-    "vecto_template_sha256": "982e4bc7fa65053dcfef943b8cc7fe60de64c834fc82bd4425e8ce0a36b5e5d2"
+    "transfer_policy": "fleet-setpoints-to-vecto-default-v1",
+    "training_comfort_policy": {
+      "release_id": "<versioned-comfort-policy>",
+      "sha256": "<64-lowercase-hex>",
+      "scope": "training-only"
+    },
+    "vecto_template_release": "vecto-hvac-5.1.3-r744-templates-v2",
+    "vecto_template_sha256": "68dae71d01f93f372d04471f0604b483ab629aa606edb7ac2dcf75cca0541c51"
   },
   "vecto-g0-transfer": {
     "training": "data-driven-by-bus",
     "training_sha256": "8ae333170a856adcd938b5a259f21cc5a216743a8eb0c34c5542fb0e6532cfb9",
-    "inference": "vecto-complete-5.1.3-r744-templates-v1",
+    "inference": "vecto-complete-5.1.3-r744-templates-v2",
     "fixed_auxiliary_owner": "template",
     "auxiliary_contract": "vecto-complete",
-    "vecto_template_release": "vecto-hvac-5.1.3-r744-templates-v1",
-    "vecto_template_sha256": "982e4bc7fa65053dcfef943b8cc7fe60de64c834fc82bd4425e8ce0a36b5e5d2"
+    "vecto_template_release": "vecto-hvac-5.1.3-r744-templates-v2",
+    "vecto_template_sha256": "68dae71d01f93f372d04471f0604b483ab629aa606edb7ac2dcf75cca0541c51"
   }
 }
 ```
@@ -160,7 +195,7 @@ The corresponding `auxiliary_estimator` blocks are:
 The remaining release schema is: schema version 1; exact release
 ID; feature and categorical contracts; matching `feature_release`,
 `prediction_stack_contract`, `auxiliary_estimator`, `training_software` and
-`elettra_core` blocks; exactly
+`elettra_core` blocks (plus matching `passenger_prior` for G2); exactly
 four hashed artifacts (joblib, metadata, feature importance and acceptance);
 and an immutable manifest-last publication block. Acceptance is either
 `passed` or `approved_with_documented_regression`. The latter also requires

@@ -293,6 +293,7 @@ class ConsumptionPredictor:
         quantiles: Optional[List[float]] = None,
         aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None,
         override_mass: Optional[np.ndarray] = None,
+        qrf_reference_mass: Optional[np.ndarray] = None,
     ) -> pd.DataFrame:
         """
         Make consumption predictions with uncertainty quantification.
@@ -343,6 +344,7 @@ class ConsumptionPredictor:
                 quantiles=None,
                 aux_energy_fn=aux_energy_fn,
                 override_mass=override_mass,
+                qrf_reference_mass=qrf_reference_mass,
             )
             y_pred_median = median_components.total_kwh
         elif self.is_greybox:
@@ -358,6 +360,7 @@ class ConsumptionPredictor:
                 quantiles="mean",
                 aux_energy_fn=aux_energy_fn,
                 override_mass=override_mass,
+                qrf_reference_mass=qrf_reference_mass,
             )
             y_pred_mean = mean_components.total_kwh
         elif self.is_greybox:
@@ -373,6 +376,7 @@ class ConsumptionPredictor:
                 quantiles=quantiles,
                 aux_energy_fn=aux_energy_fn,
                 override_mass=override_mass,
+                qrf_reference_mass=qrf_reference_mass,
             )
             y_pred_quantiles = quantile_components.total_kwh
         elif self.is_greybox:
@@ -464,6 +468,7 @@ class ConsumptionPredictor:
         quantiles: Optional[List[float]] = None,
         aux_energy_fn: Optional[Callable[[pd.DataFrame], Union[np.ndarray, pd.Series]]] = None,
         override_mass: Optional[np.ndarray] = None,
+        qrf_reference_mass: Optional[np.ndarray] = None,
         battery_pack_density_override: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
@@ -497,7 +502,13 @@ class ConsumptionPredictor:
         )
         
         # Make predictions
-        predictions = self.predict(features, quantiles=quantiles, aux_energy_fn=aux_energy_fn, override_mass=override_mass)
+        predictions = self.predict(
+            features,
+            quantiles=quantiles,
+            aux_energy_fn=aux_energy_fn,
+            override_mass=override_mass,
+            qrf_reference_mass=qrf_reference_mass,
+        )
 
         # If this is a greybox model and we have parameters, compute and attach
         # battery-size sensitivities per trip. The sensitivity expresses how

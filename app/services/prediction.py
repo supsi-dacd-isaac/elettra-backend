@@ -564,6 +564,22 @@ async def predict_shift_consumption(
         # Build override_mass array (same mass for all trips)
         n_trips = len(trip_stats)
         override_mass = np.full(n_trips, total_weight_kg)
+        qrf_reference_occupancy_percent = getattr(
+            predictor.model,
+            "qrf_reference_occupancy_percent",
+            None,
+        )
+        qrf_reference_mass = None
+        if qrf_reference_occupancy_percent is not None:
+            reference_mass = physical_bus_mass(
+                specs,
+                occupancy_percent=float(qrf_reference_occupancy_percent),
+                num_battery_packs=packs,
+            )
+            qrf_reference_mass = np.full(
+                n_trips,
+                reference_mass.total_weight_kg,
+            )
 
         # Run prediction
         results = predictor.predict_from_json(
@@ -574,6 +590,7 @@ async def predict_shift_consumption(
             quantiles=quantiles,
             aux_energy_fn=aux_fn,
             override_mass=override_mass,
+            qrf_reference_mass=qrf_reference_mass,
             battery_pack_density_override=actual_pack_density,
         )
 
@@ -657,6 +674,14 @@ async def predict_shift_consumption(
                 "passenger_count": mass.passenger_count,
                 "passenger_weight_kg": mass.passenger_weight_kg,
                 "occupancy_percent": mass.occupancy_percent,
+                "qrf_reference_occupancy_percent": (
+                    qrf_reference_occupancy_percent
+                ),
+                "qrf_reference_total_weight_kg": (
+                    float(qrf_reference_mass[0])
+                    if qrf_reference_mass is not None
+                    else None
+                ),
                 "total_weight_kg": mass.total_weight_kg,
             },
             "quantiles": quantiles,

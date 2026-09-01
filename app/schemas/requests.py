@@ -184,7 +184,13 @@ class PredictionRequest(BaseModel):
         ),
     )
     external_temp_celsius: float = Field(examples=[15.0])
-    occupancy_percent: float = Field(default=50.0, examples=[50.0])
+    occupancy_percent: float = Field(
+        default=50.0,
+        ge=0.0,
+        le=100.0,
+        allow_inf_nan=False,
+        examples=[50.0],
+    )
     auxiliary_heating_type: AuxiliaryHeatingType = Field(
         default="default",
         description=(
@@ -260,7 +266,13 @@ class PredictionParams(BaseModel):
         default_factory=default_prediction_stack_name
     )
     external_temp_celsius: float = Field(examples=[15.0])
-    occupancy_percent: float = Field(default=50.0, examples=[50.0])
+    occupancy_percent: float = Field(
+        default=50.0,
+        ge=0.0,
+        le=100.0,
+        allow_inf_nan=False,
+        examples=[50.0],
+    )
     auxiliary_heating_type: AuxiliaryHeatingType = Field(
         default="default",
         description=(

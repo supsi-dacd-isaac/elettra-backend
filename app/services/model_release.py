@@ -34,6 +34,7 @@ from app.services.runtime_release import (
     PredictionStack,
     ROAD_SNAP_V3_ALGORITHM,
     runtime_release_configuration,
+    validate_g2_passenger_prior,
     validate_model_stack_contract,
 )
 
@@ -288,6 +289,29 @@ def _validate_loaded_model_artifact(
     if model.prediction_stack != stack_release.stack.value:
         raise ModelReleaseValidationError(
             "Model artifact prediction_stack does not match its registry entry"
+        )
+    artifact_reference_occupancy = getattr(
+        model,
+        "qrf_reference_occupancy_percent",
+        None,
+    )
+    if stack_release.stack is PredictionStack.VECTO_G2:
+        prior = validate_g2_passenger_prior(metadata)
+        declared_reference_occupancy = float(
+            prior["qrf_reference_occupancy_percent"]
+        )
+        if (
+            artifact_reference_occupancy is None
+            or float(artifact_reference_occupancy)
+            != declared_reference_occupancy
+            or GREYBOX_PRED_FEATURE not in model.selected_features
+        ):
+            raise ModelReleaseValidationError(
+                "G2 artifact QRF reference occupancy does not match metadata"
+            )
+    elif artifact_reference_occupancy is not None:
+        raise ModelReleaseValidationError(
+            "Only vecto-g2 artifacts may declare QRF reference occupancy"
         )
     expected_greybox_type = (
         CappedRegenAffineGreyBox
@@ -557,6 +581,7 @@ def _validate_one_model_release(
         or metadata.get("auxiliary_estimator") != release.get("auxiliary_estimator")
         or metadata.get("prediction_stack_contract")
         != release.get("prediction_stack_contract")
+        or metadata.get("passenger_prior") != release.get("passenger_prior")
         or metadata.get("training_software") != release.get("training_software")
         or not isinstance(feature_release, dict)
         or not isinstance(release_feature, dict)

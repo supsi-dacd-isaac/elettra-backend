@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from app.services.runtime_release import (
     DATA_DRIVEN_AUXILIARY_LOOKUP_SHA256,
@@ -12,6 +13,7 @@ from app.services.runtime_release import (
     ROAD_SNAP_V3_ALGORITHM,
     VECTO_COMPLETE_AUXILIARY_ESTIMATOR,
     VECTO_HVAC_AUXILIARY_ESTIMATOR,
+    VECTO_G2_TRANSFER_POLICY,
     PredictionStack,
     RuntimeReleaseConfigurationError,
     resolve_prediction_selection,
@@ -28,8 +30,11 @@ from app.services.optimization import (
     _aggregate_prediction_components,
     _prediction_provenance,
 )
-from app.routers.simulation import _assert_yearly_prediction_stack_compatible
-from app.schemas.requests import _validated_quantiles
+from app.routers.simulation import (
+    _assert_yearly_prediction_stack_compatible,
+    _validate_vecto_prediction_request,
+)
+from app.schemas.requests import PredictionParams, _validated_quantiles
 from app.models import PredictionRuns
 from simulation.consumption_prediction import ConsumptionPredictor
 from simulation.greybox_models import CombinedGreyboxQRF
@@ -40,6 +45,25 @@ from elettra_core import (
     LinearGreyBox,
 )
 from elettra_core.vecto_templates import VECTO_TEMPLATE_RELEASE, template_release_sha256
+
+
+TRAINING_HVAC_ESTIMATOR = "vbz-ogd-vecto-hvac-training-v1"
+TRAINING_COMFORT_POLICY = {
+    "release_id": "vbz-fleet-comfort-v1",
+    "sha256": "a" * 64,
+    "scope": "training-only",
+}
+PASSENGER_PRIOR = {
+    "source": "vbz-ogd",
+    "release_id": "vbz-ogd-prior-v1",
+    "sha256": "b" * 64,
+    "correction_factor_s": 1.01,
+    "qrf_reference_occupancy_percent": 21.5,
+    "mass_weighting": "distance",
+    "hvac_weighting": "duration",
+    "matching_policy": "vbz-ogd-gtfs-v1",
+    "primary_secondary_distance_coverage": 0.86,
+}
 
 
 def _registry(monkeypatch, *, experimental: bool = False) -> None:
@@ -65,10 +89,12 @@ def _stack_contract(stack: str) -> dict[str, str]:
         return {
             "stack": stack,
             "deployment_tier": "production",
-            "training_auxiliary_estimator": VECTO_HVAC_AUXILIARY_ESTIMATOR,
+            "training_auxiliary_estimator": TRAINING_HVAC_ESTIMATOR,
             "inference_auxiliary_estimator": VECTO_HVAC_AUXILIARY_ESTIMATOR,
             "fixed_auxiliary_owner": "model",
             "auxiliary_contract": "vecto-hvac-only",
+            "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+            "training_comfort_policy": TRAINING_COMFORT_POLICY,
             "vecto_template_release": VECTO_TEMPLATE_RELEASE,
             "vecto_template_sha256": template_release_sha256(),
         }
@@ -140,6 +166,9 @@ def _auxiliary_estimator(stack: str) -> dict[str, str]:
         value["training_sha256"] = contract[
             "training_auxiliary_estimator_sha256"
         ]
+    else:
+        value["transfer_policy"] = VECTO_G2_TRANSFER_POLICY
+        value["training_comfort_policy"] = TRAINING_COMFORT_POLICY
     return value
 
 
@@ -210,6 +239,7 @@ def test_model_metadata_is_bound_to_stack_semantics(monkeypatch):
         {
             "prediction_stack_contract": _stack_contract("vecto-g2"),
             "auxiliary_estimator": _auxiliary_estimator("vecto-g2"),
+            "passenger_prior": PASSENGER_PRIOR,
         },
     )
     wrong = _stack_contract("vecto-g2")
@@ -220,6 +250,36 @@ def test_model_metadata_is_bound_to_stack_semantics(monkeypatch):
             {
                 "prediction_stack_contract": wrong,
                 "auxiliary_estimator": _auxiliary_estimator("vecto-g2"),
+                "passenger_prior": PASSENGER_PRIOR,
+            },
+        )
+
+
+def test_g2_manifest_requires_template_v2_and_valid_ogd_prior(monkeypatch):
+    _registry(monkeypatch)
+    release = resolve_prediction_selection(prediction_stack="vecto-g2")
+    contract = _stack_contract("vecto-g2")
+    contract["vecto_template_release"] = (
+        "vecto-hvac-5.1.3-r744-templates-v1"
+    )
+    with pytest.raises(RuntimeReleaseConfigurationError, match="vecto_template_release"):
+        validate_model_stack_contract(
+            release,
+            {
+                "prediction_stack_contract": contract,
+                "auxiliary_estimator": _auxiliary_estimator("vecto-g2"),
+                "passenger_prior": PASSENGER_PRIOR,
+            },
+        )
+
+    invalid_prior = dict(PASSENGER_PRIOR, correction_factor_s=1.2)
+    with pytest.raises(RuntimeReleaseConfigurationError, match="passenger_prior"):
+        validate_model_stack_contract(
+            release,
+            {
+                "prediction_stack_contract": _stack_contract("vecto-g2"),
+                "auxiliary_estimator": _auxiliary_estimator("vecto-g2"),
+                "passenger_prior": invalid_prior,
             },
         )
 
@@ -256,6 +316,7 @@ def test_vecto_runtime_binding_separates_hvac_and_fixed_load(monkeypatch):
     assert dynamic["number_of_passengers"] == 30.0
     assert dynamic["solar_irradiance_wm2"] == 100.0
     assert dynamic["auxiliary_heating_type"] == "diesel"
+    assert dynamic["comfort_policy"]["heating_calculation_temperature_c"] == 18.0
     assert "uncovered_thermal_power_kw" in dynamic
 
     # Process health reports only immutable/static release readiness.  These
@@ -272,6 +333,34 @@ def test_vecto_runtime_binding_separates_hvac_and_fixed_load(monkeypatch):
         "uncovered_thermal_power_kw",
     ):
         assert request_key not in static
+
+
+@pytest.mark.parametrize("occupancy", [-1.0, 100.01, float("nan"), float("inf")])
+def test_prediction_api_rejects_invalid_occupancy_synchronously(
+    monkeypatch, occupancy
+):
+    _registry(monkeypatch)
+    with pytest.raises(ValidationError):
+        PredictionParams(
+            model_name="g2-release",
+            prediction_stack="vecto-g2",
+            external_temp_celsius=10.0,
+            occupancy_percent=occupancy,
+        )
+
+
+def test_prediction_endpoint_preflight_rejects_unsupported_vecto_length(monkeypatch):
+    _registry(monkeypatch)
+    with pytest.raises(ValueError, match="unsupported bus_length_m"):
+        _validate_vecto_prediction_request(
+            selected_stack=resolve_prediction_selection(
+                prediction_stack="vecto-g2"
+            ),
+            bus_model_specs={"bus_length_m": 14.0, "max_passengers": 70},
+            occupancy_percent=50.0,
+            external_temp_celsius=10.0,
+            auxiliary_heating_type="default",
+        )
 
 
 class _FakeQrf:
@@ -371,7 +460,7 @@ def _features() -> pd.DataFrame:
 
 
 def _artifact_metadata(model, selected_features=None):
-    return {
+    metadata = {
         "selected_features": list(
             selected_features
             if selected_features is not None
@@ -379,6 +468,9 @@ def _artifact_metadata(model, selected_features=None):
         ),
         "greybox_params": model.greybox.get_params_dict(),
     }
+    if model.prediction_stack == "vecto-g2":
+        metadata["passenger_prior"] = PASSENGER_PRIOR
+    return metadata
 
 
 def test_hybrid_wrapper_has_an_auditable_energy_identity():
@@ -453,6 +545,130 @@ def test_qrf_receives_greybox_prediction_recomputed_with_runtime_mass():
     assert qrf_heavy > qrf_light
 
 
+def test_anchored_qrf_is_invariant_to_requested_passenger_mass():
+    class CapturingQrf(_FakeQrf):
+        def __init__(self):
+            self.frames = []
+
+        def predict(self, frame, quantiles=None):
+            self.frames.append(frame.copy())
+            return super().predict(frame, quantiles=quantiles)
+
+    frame = _features().iloc[[0]]
+    greybox = CappedRegenAffineGreyBox()
+    greybox.theta_ = greybox.initial_bounds()[0]
+    qrf = CapturingQrf()
+    model = HybridGreyboxQRF(
+        greybox=greybox,
+        qrf=qrf,
+        selected_features=["greybox_pred_kwh"],
+        prediction_stack="vecto-g2",
+        qrf_reference_occupancy_percent=21.5,
+    )
+    auxiliary = lambda value: AuxiliaryEnergyComponents.zeros(len(value))
+    specs = {
+        "bus_length_m": 12.0,
+        "empty_weight_kg": 10_000.0,
+        "battery_pack_size_kwh": 40.0,
+        "battery_pack_weight_kg": 274.0,
+        "max_battery_packs": 10,
+        "max_passengers": 70,
+    }
+    empty_mass = physical_bus_mass(specs, occupancy_percent=0).total_weight_kg
+    full_mass = physical_bus_mass(specs, occupancy_percent=100).total_weight_kg
+    reference_mass = np.array(
+        [
+            physical_bus_mass(
+                specs,
+                occupancy_percent=21.5,
+            ).total_weight_kg
+        ]
+    )
+
+    empty = model.predict_components(
+        frame,
+        aux_energy_fn=auxiliary,
+        override_mass=np.array([empty_mass]),
+        qrf_reference_mass=reference_mass,
+    )
+    full = model.predict_components(
+        frame,
+        aux_energy_fn=auxiliary,
+        override_mass=np.array([full_mass]),
+        qrf_reference_mass=reference_mass,
+    )
+
+    assert qrf.frames[0]["greybox_pred_kwh"].to_numpy().tobytes() == (
+        qrf.frames[1]["greybox_pred_kwh"].to_numpy().tobytes()
+    )
+    assert full.mechanical_greybox_kwh[0] > empty.mechanical_greybox_kwh[0]
+    assert full.qrf_residual_kwh.tobytes() == empty.qrf_residual_kwh.tobytes()
+    with pytest.raises(ValueError, match="require qrf_reference_mass"):
+        model.predict_components(
+            frame,
+            aux_energy_fn=auxiliary,
+            override_mass=np.array([12_985.0]),
+        )
+
+
+def test_heater_selection_changes_auxiliary_but_not_anchored_drivetrain(monkeypatch):
+    _registry(monkeypatch)
+    frame = _features().iloc[[0]]
+    greybox = CappedRegenAffineGreyBox()
+    greybox.theta_ = greybox.initial_bounds()[0]
+    model = HybridGreyboxQRF(
+        greybox=greybox,
+        qrf=_FakeQrf(),
+        selected_features=["greybox_pred_kwh"],
+        prediction_stack="vecto-g2",
+        qrf_reference_occupancy_percent=21.5,
+    )
+    release = resolve_prediction_selection(prediction_stack="vecto-g2")
+    specs = {"bus_length_m": 12.0, "max_passengers": 60}
+    common = {
+        "stack_release": release,
+        "bus_model_specs": specs,
+        "occupancy_percent": 50.0,
+        "external_temp_celsius": -20.0,
+    }
+    default = build_vecto_auxiliary_binding(
+        **common,
+        auxiliary_heating_type="default",
+    )
+    diesel = build_vecto_auxiliary_binding(
+        **common,
+        auxiliary_heating_type="diesel",
+    )
+    prediction_common = {
+        "override_mass": np.array([15_000.0]),
+        "qrf_reference_mass": np.array([14_000.0]),
+    }
+
+    default_components = model.predict_components(
+        frame,
+        aux_energy_fn=default.energy_fn,
+        **prediction_common,
+    )
+    diesel_components = model.predict_components(
+        frame,
+        aux_energy_fn=diesel.energy_fn,
+        **prediction_common,
+    )
+
+    assert default_components.drivetrain_kwh.tolist() == pytest.approx(
+        diesel_components.drivetrain_kwh.tolist(), abs=1e-12
+    )
+    assert default_components.qrf_residual_kwh.tobytes() == (
+        diesel_components.qrf_residual_kwh.tobytes()
+    )
+    assert default_components.mechanical_greybox_kwh.tolist() == pytest.approx(
+        diesel_components.mechanical_greybox_kwh.tolist(), abs=1e-12
+    )
+    assert default_components.hvac_electrical_kwh.tolist() != pytest.approx(
+        diesel_components.hvac_electrical_kwh.tolist(), abs=1e-12
+    )
+
+
 def test_predictor_normalizes_one_quantile_qrf_output():
     greybox = CappedRegenAffineGreyBox()
     greybox.theta_ = greybox.initial_bounds()[0]
@@ -508,6 +724,7 @@ def test_release_gate_binds_fitted_hybrid_artifact_to_stack(monkeypatch):
         qrf=_FakeQrf(),
         selected_features=["greybox_pred_kwh"],
         prediction_stack="vecto-g2",
+        qrf_reference_occupancy_percent=21.5,
     )
     g2_release = resolve_prediction_selection(prediction_stack="vecto-g2")
     _validate_loaded_model_artifact(
@@ -538,6 +755,7 @@ def test_release_gate_rejects_unfitted_or_semantically_mismatched_artifact(monke
         qrf=_FakeQrf(),
         selected_features=["greybox_pred_kwh"],
         prediction_stack="vecto-g2",
+        qrf_reference_occupancy_percent=21.5,
     )
     with pytest.raises(ModelReleaseValidationError, match="unfitted"):
         _validate_loaded_model_artifact(
@@ -571,6 +789,7 @@ def test_vecto_release_gate_rejects_unservable_or_identity_features(
         qrf=_FakeQrf(),
         selected_features=[feature],
         prediction_stack="vecto-g2",
+        qrf_reference_occupancy_percent=21.5,
     )
     with pytest.raises(ModelReleaseValidationError, match="cannot be served"):
         _validate_loaded_model_artifact(
@@ -589,6 +808,7 @@ def test_vecto_release_gate_rejects_stale_greybox_parameters(monkeypatch):
         qrf=_FakeQrf(),
         selected_features=["greybox_pred_kwh"],
         prediction_stack="vecto-g2",
+        qrf_reference_occupancy_percent=21.5,
     )
     metadata = _artifact_metadata(model)
     metadata["greybox_params"]["alpha_roll"] *= 2
@@ -596,6 +816,26 @@ def test_vecto_release_gate_rejects_stale_greybox_parameters(monkeypatch):
         _validate_loaded_model_artifact(
             model,
             metadata,
+            resolve_prediction_selection(prediction_stack="vecto-g2"),
+        )
+
+
+def test_vecto_release_gate_binds_qrf_reference_occupancy(monkeypatch):
+    _registry(monkeypatch)
+    greybox = CappedRegenAffineGreyBox()
+    greybox.theta_ = greybox.initial_bounds()[0]
+    model = HybridGreyboxQRF(
+        greybox=greybox,
+        qrf=_FakeQrf(),
+        selected_features=["greybox_pred_kwh"],
+        prediction_stack="vecto-g2",
+        qrf_reference_occupancy_percent=22.0,
+    )
+
+    with pytest.raises(ModelReleaseValidationError, match="reference occupancy"):
+        _validate_loaded_model_artifact(
+            model,
+            _artifact_metadata(model),
             resolve_prediction_selection(prediction_stack="vecto-g2"),
         )
 
@@ -611,6 +851,7 @@ def test_vecto_release_gate_rejects_qrf_feature_order_mismatch(monkeypatch):
         qrf=qrf,
         selected_features=["greybox_pred_kwh"],
         prediction_stack="vecto-g2",
+        qrf_reference_occupancy_percent=21.5,
     )
     with pytest.raises(ModelReleaseValidationError, match="feature order"):
         _validate_loaded_model_artifact(

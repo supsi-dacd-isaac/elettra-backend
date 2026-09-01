@@ -12,6 +12,7 @@ from app.services.yearly_weather_recalculation import (
     prediction_run_provenance,
     require_uniform_prediction_provenance,
 )
+from app.services.runtime_release import VECTO_HVAC_AUXILIARY_ESTIMATOR
 
 
 def _run():
@@ -21,7 +22,7 @@ def _run():
         auxiliary_heating_type="diesel",
         prediction_stack="vecto-g2",
         model_name="g2-release",
-        auxiliary_estimator_release="vecto-hvac-5.1.3-r744-templates-v1",
+        auxiliary_estimator_release=VECTO_HVAC_AUXILIARY_ESTIMATOR,
         summary={
             "total_consumption_kwh": 12.0,
             "total_distance_km": 10.0,
@@ -55,7 +56,7 @@ async def test_yearly_summary_propagates_stack_and_energy_components():
     assert summary["prediction_stacks"] == ["vecto-g2"]
     assert summary["model_releases"] == ["g2-release"]
     assert summary["auxiliary_estimator_releases"] == [
-        "vecto-hvac-5.1.3-r744-templates-v1"
+        VECTO_HVAC_AUXILIARY_ESTIMATOR
     ]
     assert summary["scenarios"][0]["daily_components"] == {
         "mechanical_greybox_kwh": 8.0,

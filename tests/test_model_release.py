@@ -17,6 +17,7 @@ from app.services.runtime_release import (
     ROAD_SNAP_V3_ALGORITHM,
     VECTO_COMPLETE_AUXILIARY_ESTIMATOR,
     VECTO_HVAC_AUXILIARY_ESTIMATOR,
+    VECTO_G2_TRANSFER_POLICY,
     PredictionStack,
     PredictionStackRelease,
 )
@@ -38,6 +39,23 @@ MODEL = "greybox_qrf_production_core_v2_roaddeck_v3_3_20260828"
 PREFIX = f"models/{MODEL}/"
 ROADS_RELEASE = "swisstlm3d_2026-02-24"
 ROADS_SHA256 = "6a2184d107b093ad7c8ea2ba9ff1cd2768c8a81dce7a5ff12e7bcd5711408a1d"
+TRAINING_HVAC_ESTIMATOR = "vbz-ogd-vecto-hvac-training-v1"
+TRAINING_COMFORT_POLICY = {
+    "release_id": "vbz-fleet-comfort-v1",
+    "sha256": "a" * 64,
+    "scope": "training-only",
+}
+PASSENGER_PRIOR = {
+    "source": "vbz-ogd",
+    "release_id": "vbz-ogd-prior-v1",
+    "sha256": "b" * 64,
+    "correction_factor_s": 1.01,
+    "qrf_reference_occupancy_percent": 21.5,
+    "mass_weighting": "distance",
+    "hvac_weighting": "duration",
+    "matching_policy": "vbz-ogd-gtfs-v1",
+    "primary_secondary_distance_coverage": 0.86,
+}
 
 
 class _LegacyModelFixture:
@@ -209,19 +227,23 @@ def _vecto_release_objects(
         contract = {
             "stack": stack.value,
             "deployment_tier": "production",
-            "training_auxiliary_estimator": VECTO_HVAC_AUXILIARY_ESTIMATOR,
+            "training_auxiliary_estimator": TRAINING_HVAC_ESTIMATOR,
             "inference_auxiliary_estimator": VECTO_HVAC_AUXILIARY_ESTIMATOR,
             "fixed_auxiliary_owner": "model",
             "auxiliary_contract": "vecto-hvac-only",
+            "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+            "training_comfort_policy": TRAINING_COMFORT_POLICY,
             "vecto_template_release": VECTO_TEMPLATE_RELEASE,
             "vecto_template_sha256": template_sha,
         }
         greybox = CappedRegenAffineGreyBox()
         auxiliary_estimator = {
-            "training": VECTO_HVAC_AUXILIARY_ESTIMATOR,
+            "training": TRAINING_HVAC_ESTIMATOR,
             "inference": VECTO_HVAC_AUXILIARY_ESTIMATOR,
             "fixed_auxiliary_owner": "model",
             "auxiliary_contract": "vecto-hvac-only",
+            "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+            "training_comfort_policy": TRAINING_COMFORT_POLICY,
             "vecto_template_release": VECTO_TEMPLATE_RELEASE,
             "vecto_template_sha256": template_sha,
         }
@@ -257,10 +279,13 @@ def _vecto_release_objects(
         qrf=_QrfFixture(),
         selected_features=["greybox_pred_kwh"],
         prediction_stack=stack.value,
+        qrf_reference_occupancy_percent=(
+            21.5 if stack is PredictionStack.VECTO_G2 else None
+        ),
     )
     core = {
-        "package_version": "2.1.0",
-        "tag": "elettra-core-v2.1.0",
+        "package_version": "2.2.0",
+        "tag": "elettra-core-v2.2.0",
         "source_commit": core_commit,
     }
     metadata = _metadata()
@@ -275,6 +300,8 @@ def _vecto_release_objects(
             "greybox_params": greybox.get_params_dict(),
         }
     )
+    if stack is PredictionStack.VECTO_G2:
+        metadata["passenger_prior"] = PASSENGER_PRIOR
     acceptance_value = {
         "schema_version": 1,
         "evaluation_manifest": {"sha256": "e" * 64},
@@ -320,6 +347,11 @@ def _vecto_release_objects(
         "prediction_stack_contract": contract,
         "elettra_core": core,
         "auxiliary_estimator": auxiliary_estimator,
+        **(
+            {"passenger_prior": PASSENGER_PRIOR}
+            if stack is PredictionStack.VECTO_G2
+            else {}
+        ),
         "training_software": metadata["training_software"],
         "acceptance": {**_entry(acceptance), "decision": "passed"},
         "artifacts": artifacts,
