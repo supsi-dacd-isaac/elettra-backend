@@ -9,6 +9,7 @@ import pytest
 
 from elettra_core.vecto_ssm import (
     VectoAuxResult,
+    VectoComfortPolicy,
     VectoEnvironmentalCondition,
     VectoSsmInputs,
     _heating_distribution_case,
@@ -107,6 +108,20 @@ def test_matches_official_vecto_5_1_3_oracle(case):
         assert getattr(actual, field) == pytest.approx(expected[field], abs=1e-9)
 
 
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])
+def test_explicit_default_comfort_policy_is_bit_for_bit_oracle(case):
+    environment, inputs = _inputs_from_oracle_case(case)
+
+    implicit = _ssm_calculate(environment, inputs)
+    explicit = _ssm_calculate(
+        environment,
+        inputs,
+        VectoComfortPolicy(),
+    )
+
+    assert explicit == implicit
+
+
 def test_every_oracle_case_has_exactly_one_golden_result():
     assert [item["name"] for item in CASES] == [item["name"] for item in GOLDEN]
 
@@ -192,6 +207,41 @@ def test_input_validation_rejects_implicit_or_non_finite_values():
         vecto_auxiliary_power(
             environment=environment, inputs=inputs, non_hvac_baseline_kw=-1.0
         )
+    with pytest.raises(ValueError, match="finite"):
+        VectoComfortPolicy(heating_calculation_temperature_c=float("nan"))
+    with pytest.raises(ValueError, match="non-negative"):
+        VectoComfortPolicy(low_floor_max_temperature_delta_k=-1.0)
+    with pytest.raises(ValueError, match="boolean"):
+        VectoComfortPolicy(heating_enabled=1)  # type: ignore[arg-type]
+
+
+def test_custom_comfort_policy_changes_only_the_opted_in_call():
+    environment, inputs = _inputs_from_oracle_case(CASES[0])
+    default_before = vecto_auxiliary_power(environment=environment, inputs=inputs)
+    custom = vecto_auxiliary_power(
+        environment=environment,
+        inputs=inputs,
+        comfort_policy=VectoComfortPolicy(
+            heating_calculation_temperature_c=15.0,
+        ),
+    )
+    default_after = vecto_auxiliary_power(environment=environment, inputs=inputs)
+
+    assert custom.p_heating_demand_kw < default_before.p_heating_demand_kw
+    assert default_after == default_before
+
+
+def test_comfort_policy_can_disable_a_caller_selected_operating_interval():
+    environment, inputs = _inputs_from_oracle_case(CASES[0])
+    result = vecto_auxiliary_power(
+        environment=environment,
+        inputs=inputs,
+        comfort_policy=VectoComfortPolicy(heating_enabled=False),
+    )
+
+    assert result.p_heating_demand_kw == 0.0
+    assert result.p_fuel_kw == 0.0
+    assert result.mode != "heating"
 
 
 def test_backend_service_is_a_compatibility_reexport():

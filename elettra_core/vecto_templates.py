@@ -19,14 +19,16 @@ from typing import Any, Literal, Mapping
 
 from .vecto_ssm import (
     VectoAuxResult,
+    VectoComfortPolicy,
     VectoEnvironmentalCondition,
     VectoSsmInputs,
+    VECTO_DEFAULT_COMFORT_POLICY,
     default_environmental_condition,
     vecto_auxiliary_power,
 )
 
 VECTO_TEMPLATE_SCHEMA_VERSION = 1
-VECTO_TEMPLATE_RELEASE = "vecto-hvac-5.1.3-r744-templates-v1"
+VECTO_TEMPLATE_RELEASE = "vecto-hvac-5.1.3-r744-templates-v2"
 VECTO_UPSTREAM_VERSION = "5.1.3"
 VECTO_UPSTREAM_COMMIT = "cef1f3d260afa7f7c6ec09981d821e545d21b249"
 VECTO_ENVIRONMENT_POLICY = "nearest-default-climatic-row-v1"
@@ -48,7 +50,7 @@ _FUEL_HEATER_CAPACITY_W = 30_000.0
 _SPECIFIC_VENTILATION_POWER_WH_PER_M3 = 0.56
 _PACKAGED_RELEASE_PARTS = (
     "data",
-    "vecto_hvac_5_1_3_r744_templates_v1.json",
+    "vecto_hvac_5_1_3_r744_templates_v2.json",
 )
 
 
@@ -167,6 +169,7 @@ class VectoTemplateEstimate:
     number_of_passengers: float
     solar_irradiance_wm2: float
     environmental_id: int
+    comfort_policy: VectoComfortPolicy
     fuel_heater_efficiency: float | None
     fuel_l_per_hour: float
     unmet_thermal_demand_kw: float
@@ -404,6 +407,7 @@ def vecto_template_auxiliary_power(
     auxiliary_contract: VectoAuxiliaryContract,
     auxiliary_heating_type: VectoAuxiliaryHeatingType,
     solar_irradiance_wm2: float = VECTO_DEFAULT_GHI_WM2,
+    comfort_policy: VectoComfortPolicy | None = None,
     release: VectoTemplateRelease | None = None,
 ) -> VectoTemplateEstimate:
     """Evaluate one approved declaration without hiding contract ownership."""
@@ -428,6 +432,7 @@ def vecto_template_auxiliary_power(
     result = vecto_auxiliary_power(
         environment=environment,
         inputs=inputs,
+        comfort_policy=comfort_policy,
         non_hvac_baseline_kw=(
             template.non_hvac_baseline_kw
             if auxiliary_contract == VECTO_COMPLETE
@@ -445,6 +450,7 @@ def vecto_template_auxiliary_power(
         number_of_passengers=passengers,
         solar_irradiance_wm2=environment.solar_irradiance_wm2,
         environmental_id=environment.environmental_id,
+        comfort_policy=comfort_policy or VECTO_DEFAULT_COMFORT_POLICY,
         fuel_heater_efficiency=environment.heater_efficiency.get("fuel"),
         fuel_l_per_hour=result.p_fuel_kw / DIESEL_ENERGY_KWH_PER_L,
         unmet_thermal_demand_kw=result.unmet_thermal_demand_kw,

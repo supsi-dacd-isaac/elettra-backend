@@ -20,7 +20,7 @@ DEFAULT_OUTPUT = (
     REPOSITORY_ROOT
     / "elettra_core"
     / "data"
-    / "vecto_hvac_5_1_3_r744_templates_v1.json"
+    / "vecto_hvac_5_1_3_r744_templates_v2.json"
 )
 
 
