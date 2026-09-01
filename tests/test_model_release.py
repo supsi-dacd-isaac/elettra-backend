@@ -51,13 +51,17 @@ PASSENGER_PRIOR = {
     "source": "vbz-ogd",
     "release_id": "vbz-ogd-prior-v1",
     "sha256": "b" * 64,
-    "correction_factor_s": 1.01,
+    "correction_factor_s": 1.0,
     "qrf_reference_occupancy_percent": 21.5,
     "mass_weighting": "distance",
     "hvac_weighting": "duration",
     "matching_policy": "vbz-ogd-gtfs-v1",
     "primary_secondary_distance_coverage": 0.86,
     "passenger_mass_kg": PASSENGER_MASS_KG,
+    "scale_policy": {
+        "policy": "ogd-unscaled",
+        "calibration_performed": False,
+    },
 }
 
 
@@ -287,8 +291,8 @@ def _vecto_release_objects(
         ),
     )
     core = {
-        "package_version": "2.2.0",
-        "tag": "elettra-core-v2.2.0",
+        "package_version": "2.2.1",
+        "tag": "elettra-core-v2.2.1",
         "source_commit": core_commit,
         "source_tree_sha256": source_tree_sha256(),
     }

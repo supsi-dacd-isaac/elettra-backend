@@ -25,7 +25,11 @@ from app.services.model_release import (
     ModelReleaseValidationError,
     _validate_loaded_model_artifact,
 )
-from app.services.prediction import _bind_prediction_run_stack, physical_bus_mass
+from app.services.prediction import (
+    _bind_prediction_run_stack,
+    _model_passenger_mass_kg,
+    physical_bus_mass,
+)
 from app.services.optimization import (
     _aggregate_prediction_components,
     _prediction_provenance,
@@ -59,13 +63,17 @@ PASSENGER_PRIOR = {
     "source": "vbz-ogd",
     "release_id": "vbz-ogd-prior-v1",
     "sha256": "b" * 64,
-    "correction_factor_s": 1.01,
+    "correction_factor_s": 1.0,
     "qrf_reference_occupancy_percent": 21.5,
     "mass_weighting": "distance",
     "hvac_weighting": "duration",
     "matching_policy": "vbz-ogd-gtfs-v1",
     "primary_secondary_distance_coverage": 0.86,
     "passenger_mass_kg": PASSENGER_MASS_KG,
+    "scale_policy": {
+        "policy": "ogd-unscaled",
+        "calibration_performed": False,
+    },
 }
 
 
@@ -132,9 +140,9 @@ def test_runtime_physical_mass_counts_requested_passengers_exactly_once():
     assert empty.battery_weight_kg == 2750
     assert empty.total_weight_kg == 12985
     assert half.passenger_count == 35
-    assert half.passenger_weight_kg == 2450
-    assert half.total_weight_kg == 15435
-    assert full.total_weight_kg - empty.total_weight_kg == 70 * 70
+    assert half.passenger_weight_kg == 2380
+    assert half.total_weight_kg == 15365
+    assert full.total_weight_kg - empty.total_weight_kg == 70 * 68
     assert half.battery_capacity_kwh == 460
     assert half.battery_density_kg_per_kwh == pytest.approx(275 / 46)
 
@@ -154,6 +162,38 @@ def test_runtime_physical_mass_fails_closed_on_missing_or_invalid_specs():
         physical_bus_mass(specs, occupancy_percent=101)
     with pytest.raises(ValueError, match="between 1 and 10"):
         physical_bus_mass(specs, occupancy_percent=50, num_battery_packs=11)
+
+
+def test_model_specific_passenger_mass_preserves_legacy_and_uses_core_for_vecto():
+    class Predictor:
+        def __init__(self, *, model, metadata):
+            self.model = model
+            self.metadata = metadata
+
+    legacy_release = type("Release", (), {"stack": PredictionStack.LEGACY})()
+    legacy_model = type(
+        "LegacyModel",
+        (),
+        {
+            "passenger_load_estimator": {
+                "config": {"passenger_weight_kg": 70.0}
+            }
+        },
+    )()
+    assert _model_passenger_mass_kg(
+        legacy_release, Predictor(model=legacy_model, metadata={})
+    ) == 70.0
+
+    g2_release = type("Release", (), {"stack": PredictionStack.VECTO_G2})()
+    assert _model_passenger_mass_kg(
+        g2_release,
+        Predictor(model=object(), metadata={"passenger_mass_kg": 68.0}),
+    ) == 68.0
+    with pytest.raises(ValueError, match="installed core"):
+        _model_passenger_mass_kg(
+            g2_release,
+            Predictor(model=object(), metadata={"passenger_mass_kg": 70.0}),
+        )
 
 
 def _auxiliary_estimator(stack: str) -> dict[str, str]:

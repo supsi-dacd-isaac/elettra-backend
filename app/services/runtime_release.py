@@ -657,6 +657,7 @@ def validate_g2_passenger_prior(
         "matching_policy",
         "primary_secondary_distance_coverage",
         "passenger_mass_kg",
+        "scale_policy",
     }
     if not required.issubset(prior):
         raise RuntimeReleaseConfigurationError(
@@ -667,6 +668,7 @@ def validate_g2_passenger_prior(
     correction = prior.get("correction_factor_s")
     reference = prior.get("qrf_reference_occupancy_percent")
     coverage = prior.get("primary_secondary_distance_coverage")
+    scale_policy = prior.get("scale_policy")
     if (
         prior.get("source") != VECTO_G2_PASSENGER_PRIOR_SOURCE
         or not isinstance(release_id, str)
@@ -675,7 +677,7 @@ def validate_g2_passenger_prior(
         or re.fullmatch(r"[0-9a-f]{64}", digest) is None
         or isinstance(correction, bool)
         or not isinstance(correction, (int, float))
-        or not 0.8 < float(correction) < 1.2
+        or float(correction) != 1.0
         or isinstance(reference, bool)
         or not isinstance(reference, (int, float))
         or not 0 <= float(reference) <= 100
@@ -684,6 +686,9 @@ def validate_g2_passenger_prior(
         or prior.get("matching_policy") != VECTO_G2_MATCHING_POLICY
         or isinstance(prior.get("passenger_mass_kg"), bool)
         or prior.get("passenger_mass_kg") != PASSENGER_MASS_KG
+        or not isinstance(scale_policy, Mapping)
+        or scale_policy.get("policy") != "ogd-unscaled"
+        or scale_policy.get("calibration_performed") is not False
         or isinstance(coverage, bool)
         or not isinstance(coverage, (int, float))
         or not 0.8 <= float(coverage) <= 1.0

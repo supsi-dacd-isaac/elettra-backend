@@ -79,6 +79,7 @@ def physical_bus_mass(
     *,
     occupancy_percent: float,
     num_battery_packs: Optional[int] = None,
+    passenger_mass_kg: float = PASSENGER_MASS_KG,
 ) -> PhysicalBusMass:
     """Resolve the authoritative runtime mass without silent fallbacks."""
 
@@ -134,10 +135,13 @@ def physical_bus_mass(
     occupancy = float(occupancy_percent)
     if not math.isfinite(occupancy) or not 0 <= occupancy <= 100:
         raise ValueError("occupancy_percent must be finite and between 0 and 100")
+    passenger_mass = float(passenger_mass_kg)
+    if not math.isfinite(passenger_mass) or passenger_mass <= 0:
+        raise ValueError("passenger_mass_kg must be finite and positive")
 
     passenger_count = max_passengers * occupancy / 100.0
     battery_weight = packs * pack_weight
-    passenger_weight = passenger_count * PASSENGER_MASS_KG
+    passenger_weight = passenger_count * passenger_mass
     total_weight = empty_weight + battery_weight + passenger_weight
     return PhysicalBusMass(
         bus_length_m=bus_length_m,
@@ -152,6 +156,48 @@ def physical_bus_mass(
         passenger_weight_kg=passenger_weight,
         total_weight_kg=total_weight,
     )
+
+
+def _model_passenger_mass_kg(
+    stack_release: PredictionStackRelease,
+    predictor: ConsumptionPredictor,
+) -> float:
+    """Resolve passenger mass from the selected model contract.
+
+    Legacy artifacts keep their historical 70 kg convention. New VECTO
+    artifacts must explicitly bind the core 68 kg convention in metadata.
+    """
+
+    metadata = predictor.metadata if isinstance(predictor.metadata, dict) else {}
+    if stack_release.stack is PredictionStack.LEGACY:
+        estimator = getattr(predictor.model, "passenger_load_estimator", None)
+        if not isinstance(estimator, dict):
+            estimator = metadata.get("passenger_load_estimator")
+        value = None
+        if isinstance(estimator, dict):
+            config = estimator.get("config")
+            if isinstance(config, dict):
+                value = config.get("passenger_weight_kg")
+            if value is None:
+                value = estimator.get("passenger_weight_kg")
+        # The pre-2.2 legacy contract itself defines 70 kg when old artifacts
+        # did not serialize the convention. This is deliberate compatibility,
+        # not the default for new models.
+        value = 70.0 if value is None else value
+        resolved = float(value)
+        if not math.isfinite(resolved) or resolved <= 0:
+            raise ValueError("Legacy model has an invalid passenger mass contract")
+        return resolved
+    value = metadata.get("passenger_mass_kg")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or float(value) != PASSENGER_MASS_KG
+    ):
+        raise ValueError(
+            "VECTO model passenger mass does not match the installed core contract"
+        )
+    return float(value)
 
 
 def _bind_prediction_run_stack(
@@ -516,10 +562,20 @@ async def predict_shift_consumption(
             raise ValueError(f"BusModel {run.bus_model_id} not found")
         specs = bus_model.specs or {}
 
+        stack_release = resolve_prediction_selection(
+            prediction_stack=getattr(run, "prediction_stack", None) or None,
+            model_name=run.model_name,
+        )
+        _bind_prediction_run_stack(run, stack_release)
+        predictor = get_predictor(run.model_name)
+        validate_model_stack_contract(stack_release, predictor.metadata)
+        passenger_mass_kg = _model_passenger_mass_kg(stack_release, predictor)
+
         mass = physical_bus_mass(
             specs,
             occupancy_percent=float(run.occupancy_percent),
             num_battery_packs=num_battery_packs,
+            passenger_mass_kg=passenger_mass_kg,
         )
         bus_length_m = mass.bus_length_m
         packs = mass.battery_packs
@@ -537,12 +593,6 @@ async def predict_shift_consumption(
             "trip_statistics": trip_stats,
         }
 
-        stack_release = resolve_prediction_selection(
-            prediction_stack=getattr(run, "prediction_stack", None) or None,
-            model_name=run.model_name,
-        )
-        _bind_prediction_run_stack(run, stack_release)
-
         auxiliary_context: dict[str, object] | None = None
         if stack_release.stack is PredictionStack.LEGACY:
             aux_fn = build_aux_energy_fn(specs, run.auxiliary_heating_type)
@@ -558,9 +608,6 @@ async def predict_shift_consumption(
             auxiliary_context = vecto_binding.metadata()
 
         # Get predictor (cached) and bind it to the same stack contract.
-        predictor = get_predictor(run.model_name)
-        validate_model_stack_contract(stack_release, predictor.metadata)
-
         # Build override_mass array (same mass for all trips)
         n_trips = len(trip_stats)
         override_mass = np.full(n_trips, total_weight_kg)
@@ -575,6 +622,7 @@ async def predict_shift_consumption(
                 specs,
                 occupancy_percent=float(qrf_reference_occupancy_percent),
                 num_battery_packs=packs,
+                passenger_mass_kg=passenger_mass_kg,
             )
             qrf_reference_mass = np.full(
                 n_trips,
@@ -673,6 +721,7 @@ async def predict_shift_consumption(
                 "battery_weight_kg": mass.battery_weight_kg,
                 "passenger_count": mass.passenger_count,
                 "passenger_weight_kg": mass.passenger_weight_kg,
+                "passenger_mass_kg": passenger_mass_kg,
                 "occupancy_percent": mass.occupancy_percent,
                 "qrf_reference_occupancy_percent": (
                     qrf_reference_occupancy_percent
