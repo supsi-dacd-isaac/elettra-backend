@@ -33,6 +33,7 @@ from .preprocessing import (
     prepare_model_feature_frame,
     prepare_model_feature_row,
 )
+from .provenance import PASSENGER_MASS_KG, source_tree_sha256
 from .vecto_ssm import (
     VectoAuxResult,
     VectoComfortPolicy,
@@ -92,6 +93,8 @@ __all__ = [
     "encode_categorical_features",
     "prepare_model_feature_frame",
     "prepare_model_feature_row",
+    "PASSENGER_MASS_KG",
+    "source_tree_sha256",
     "VectoAuxResult",
     "VectoComfortPolicy",
     "VectoEnvironmentalCondition",
