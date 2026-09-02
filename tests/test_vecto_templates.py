@@ -24,9 +24,16 @@ from elettra_core.vecto_templates import (
     vecto_ssm_source_sha256,
     vecto_template_auxiliary_power,
 )
+from elettra_core.vecto_ssm import VectoComfortPolicy
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGED_RELEASE = (
+    ROOT
+    / "elettra_core"
+    / "data"
+    / "vecto_hvac_5_1_3_r744_templates_v2.json"
+)
+LEGACY_V1_RELEASE = (
     ROOT
     / "elettra_core"
     / "data"
@@ -103,8 +110,9 @@ def test_packaged_release_is_canonical_and_checksum_is_stable():
     assert PACKAGED_RELEASE.read_bytes() == expected
     assert template_release_sha256() == hashlib.sha256(expected).hexdigest()
     assert template_release_sha256() == (
-        "982e4bc7fa65053dcfef943b8cc7fe60de64c834fc82bd4425e8ce0a36b5e5d2"
+        "68dae71d01f93f372d04471f0604b483ab629aa606edb7ac2dcf75cca0541c51"
     )
+    assert template_release_sha256() == hashlib.sha256(expected).hexdigest()
 
     payload = json.loads(expected)
     assert payload["release_id"] == VECTO_TEMPLATE_RELEASE
@@ -119,6 +127,19 @@ def test_packaged_release_is_canonical_and_checksum_is_stable():
     assert loaded.release_id == VECTO_TEMPLATE_RELEASE
     assert loaded.content_sha256 == template_release_sha256()
     assert loaded.ssm_source_sha256 == vecto_ssm_source_sha256()
+
+
+def test_legacy_v1_artifact_remains_immutable_with_its_original_identity():
+    raw = LEGACY_V1_RELEASE.read_bytes()
+    payload = json.loads(raw)
+
+    assert hashlib.sha256(raw).hexdigest() == (
+        "982e4bc7fa65053dcfef943b8cc7fe60de64c834fc82bd4425e8ce0a36b5e5d2"
+    )
+    assert payload["release_id"] == "vecto-hvac-5.1.3-r744-templates-v1"
+    assert payload["implementation"]["source_sha256"] == (
+        "195981d937822a8e4d001a1936a5d4712b7763858906101ab227da47cfc487bb"
+    )
 
 
 def test_generator_check_is_read_only_and_passes():
@@ -230,6 +251,27 @@ def test_passenger_count_is_dynamic_not_embedded_in_template():
 
     assert empty.template_length_m == occupied.template_length_m == 10.0
     assert empty.result.p_heating_demand_kw > occupied.result.p_heating_demand_kw
+
+
+def test_training_can_supply_a_generic_comfort_policy_without_changing_default():
+    common = {
+        "bus_length_m": 12.0,
+        "number_of_passengers": 30.0,
+        "temperature_celsius": -10.0,
+        "auxiliary_contract": VECTO_HVAC_ONLY,
+        "auxiliary_heating_type": "diesel",
+    }
+    default = vecto_template_auxiliary_power(**common)
+    custom = vecto_template_auxiliary_power(
+        **common,
+        comfort_policy=VectoComfortPolicy(
+            heating_calculation_temperature_c=15.0,
+        ),
+    )
+
+    assert default.comfort_policy == VectoComfortPolicy()
+    assert custom.comfort_policy.heating_calculation_temperature_c == 15.0
+    assert custom.result.p_heating_demand_kw < default.result.p_heating_demand_kw
 
 
 @pytest.mark.parametrize(

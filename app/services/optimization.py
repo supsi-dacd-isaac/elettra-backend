@@ -13,6 +13,8 @@ from uuid import UUID
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from elettra_core import PASSENGER_MASS_KG
+
 from app.database import AsyncSessionLocal
 from app.models import (
     Buses,
@@ -34,7 +36,7 @@ from simulation.optimization_model import (
     TripData,
     solve_optimization,
 )
-from app.services.runtime_release import resolve_prediction_selection
+from app.services.runtime_release import PredictionStack, resolve_prediction_selection
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +169,11 @@ async def ensure_predictions(
             + float(specs.get("max_passengers", 120))
             * float(prediction_params["occupancy_percent"])
             / 100.0
-            * 70.0
+            * (
+                70.0
+                if selected_stack.stack is PredictionStack.LEGACY
+                else PASSENGER_MASS_KG
+            )
         )
 
         result = await db.execute(

@@ -17,12 +17,17 @@ four deterministic engineering templates. They are versioned scenarios for
 reproducible training and inference, not statements about a manufacturer's
 certified vehicle.
 
-The immutable declaration release is
-`vecto-hvac-5.1.3-r744-templates-v1`. Its canonical JSON is packaged in
-`elettra_core/data/vecto_hvac_5_1_3_r744_templates_v1.json`; its SHA-256 is
-`982e4bc7fa65053dcfef943b8cc7fe60de64c834fc82bd4425e8ce0a36b5e5d2`.
-The release also binds the source SHA-256 of `elettra_core.vecto_ssm`, currently
-`195981d937822a8e4d001a1936a5d4712b7763858906101ab227da47cfc487bb`.
+The active immutable declaration release is
+`vecto-hvac-5.1.3-r744-templates-v2`. Its canonical JSON is packaged in
+`elettra_core/data/vecto_hvac_5_1_3_r744_templates_v2.json`; its SHA-256 is
+`68dae71d01f93f372d04471f0604b483ab629aa606edb7ac2dcf75cca0541c51`.
+The release binds source SHA-256
+`9b951acf3f4c5bc204b6e7f75f6785d727c255eaaea5b5c48274c45829b3c0e0`.
+The physical declarations are unchanged from v1. A new release was necessary
+because core 2.2 adds an explicit comfort-policy input and the implementation
+source hash is part of the immutable identity. The v1 file and its original
+SHA-256 remain unchanged for provenance only; core 2.2 model manifests must
+select v2.
 
 ## What is shared
 
@@ -118,11 +123,26 @@ from the selected bus specification and request:
 passengers = max_passengers × occupancy_percent / 100
 ```
 
-The training data does not contain observed occupancy. The intended training
-scenario uses half of the cohort capacity: 25 passengers for 10/10.8 m,
-30 for 12 m and 50 for 18 m. This training assumption belongs in the model
-manifest; changing it requires retraining, not regenerating the vehicle
-template.
+Training may use a versioned passenger prior. Its source release, correction,
+weighting, matching coverage and QRF reference occupancy belong in the model
+manifest; they never alter this vehicle-template release. The backend does not
+load that dataset. It reconstructs the model's scalar QRF reference mass from
+the requested bus's physical specification, while the final grey-box mechanics
+use the request occupancy.
+
+## Optional comfort policy
+
+`elettra-core` 2.2 exposes `VectoComfortPolicy`. Its defaults are exactly the
+VECTO 5.1.3 calculation temperatures, cooling activation threshold and
+low-floor delta; calls that omit it remain bit-for-bit equal to the official
+oracle fixtures. A caller may explicitly provide resolved heating/cooling
+calculation temperatures and enabled intervals for a controlled training
+scenario.
+
+The policy is numerical and manufacturer-neutral. Lookup curves, fleet
+identifiers and private documents are resolved by training code and are not
+packaged in `elettra_core` or the backend image. Production inference omits the
+optional argument and therefore always uses the canonical VECTO default.
 
 The default global horizontal irradiance (GHI) is 100 W/m². For every call the
 adapter:
@@ -172,7 +192,7 @@ The stack ownership rule is:
 | Stack | Removed for training | Learned by grey box | Added at inference |
 |---|---|---|---|
 | `legacy` | current data-driven treatment | current behavior | legacy curves |
-| `vecto-g2` | VECTO electrical HVAC | powertrain and affine fixed load | VECTO electrical HVAC |
+| `vecto-g2` | versioned training-only VECTO HVAC policy | powertrain and affine fixed load | canonical VECTO v2 electrical HVAC |
 | `vecto-g0-transfer` | complete data-driven auxiliaries | residual powertrain | VECTO HVAC and template baseline |
 
 Mixing `vecto-g2` with `vecto-complete` double-counts fixed load. Mixing the G0
@@ -235,6 +255,8 @@ and a link to the exact public source tag.
   intentionally change the generator and assign a new release ID.
 - **Unexpected HVAC discontinuity:** inspect the selected climatic row. COP is
   stepwise because interpolation is intentionally disabled.
+- **Core/template mismatch:** core 2.2 and new G2 artifacts require template
+  v2. Do not relabel a v1 manifest or mutate either generated JSON artifact.
 - **Unexpected battery demand:** verify the manifest contract and fixed-load
   owner before changing parameters.
 - **No diesel demand in mild weather:** this can be a valid SSM result; fuel

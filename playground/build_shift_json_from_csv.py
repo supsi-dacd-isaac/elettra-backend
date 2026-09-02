@@ -596,8 +596,17 @@ def create_aux_trip(
         body["day_of_week"] = day_of_week
     resp = requests.post(url, headers=headers, json=body)
     resp.raise_for_status()
-    result = resp.json()
-    print(f"[INFO] Created new trip {result.get('id')} with shape_id {result.get('shape_id')}")
+    if resp.status_code != 202:
+        raise RuntimeError(f"Unexpected auxiliary-trip status {resp.status_code}; expected 202")
+    payload = resp.json()
+    result = payload.get("trip")
+    elevation_job = payload.get("elevation_job")
+    if not isinstance(result, dict) or not isinstance(elevation_job, dict):
+        raise RuntimeError("Invalid auxiliary-trip response: expected trip and elevation_job")
+    print(
+        f"[INFO] Created new trip {result.get('id')} with shape_id {result.get('shape_id')} "
+        f"(elevation job: {elevation_job.get('status')})"
+    )
     return result
 
 

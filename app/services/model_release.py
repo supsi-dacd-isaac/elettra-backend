@@ -17,6 +17,7 @@ from elettra_core import (
     RAW_MODEL_FEATURE_COLUMNS,
     __version__ as ELETTRA_CORE_VERSION,
     categorical_feature_contract,
+    source_tree_sha256,
 )
 from elettra_core.greybox import (
     CappedRegenAffineGreyBox,
@@ -34,12 +35,14 @@ from app.services.runtime_release import (
     PredictionStack,
     ROAD_SNAP_V3_ALGORITHM,
     runtime_release_configuration,
+    validate_g2_passenger_prior,
     validate_model_stack_contract,
 )
 
 
 MODEL_BUCKET = "consumption-models"
 MODEL_RELEASE_SCHEMA_VERSION = 1
+VECTO_ACCEPTANCE_TYPE = "vecto-model-release-acceptance-v1"
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 ELETTRA_CORE_TAG = f"elettra-core-v{ELETTRA_CORE_VERSION}"
@@ -289,6 +292,29 @@ def _validate_loaded_model_artifact(
         raise ModelReleaseValidationError(
             "Model artifact prediction_stack does not match its registry entry"
         )
+    artifact_reference_occupancy = getattr(
+        model,
+        "qrf_reference_occupancy_percent",
+        None,
+    )
+    if stack_release.stack is PredictionStack.VECTO_G2:
+        prior = validate_g2_passenger_prior(metadata)
+        declared_reference_occupancy = float(
+            prior["qrf_reference_occupancy_percent"]
+        )
+        if (
+            artifact_reference_occupancy is None
+            or float(artifact_reference_occupancy)
+            != declared_reference_occupancy
+            or GREYBOX_PRED_FEATURE not in model.selected_features
+        ):
+            raise ModelReleaseValidationError(
+                "G2 artifact QRF reference occupancy does not match metadata"
+            )
+    elif artifact_reference_occupancy is not None:
+        raise ModelReleaseValidationError(
+            "Only vecto-g2 artifacts may declare QRF reference occupancy"
+        )
     expected_greybox_type = (
         CappedRegenAffineGreyBox
         if stack_release.stack is PredictionStack.VECTO_G2
@@ -495,7 +521,9 @@ def _validate_one_model_release(
     _validate_loaded_model_artifact(model, metadata, stack_release)
 
     core_provenance = metadata.get("elettra_core")
-    runtime_core_commit = runtime_release_configuration().elettra_core_source_commit
+    runtime_configuration = runtime_release_configuration()
+    runtime_core_commit = runtime_configuration.elettra_core_source_commit
+    runtime_core_tree_sha256 = source_tree_sha256()
     if stack_release.stack is not PredictionStack.LEGACY and (
         not isinstance(core_provenance, dict)
         or core_provenance.get("package_version") != ELETTRA_CORE_VERSION
@@ -503,11 +531,14 @@ def _validate_one_model_release(
         or not isinstance(core_provenance.get("source_commit"), str)
         or _GIT_SHA_PATTERN.fullmatch(core_provenance["source_commit"]) is None
         or core_provenance["source_commit"] != runtime_core_commit
+        or core_provenance.get("source_tree_sha256") != runtime_core_tree_sha256
+        or runtime_configuration.elettra_core_image_tree_sha256
+        != runtime_core_tree_sha256
         or release.get("elettra_core") != core_provenance
     ):
         raise ModelReleaseValidationError(
             "VECTO model metadata/manifest does not pin the runtime "
-            f"{ELETTRA_CORE_TAG} release and source commit"
+            f"{ELETTRA_CORE_TAG} release, source commit and installed source tree"
         )
 
     feature_release = metadata.get("feature_release")
@@ -525,10 +556,36 @@ def _validate_one_model_release(
         acceptance_candidate = acceptance_report.get("candidate")
         acceptance_test_set = acceptance_report.get("test_set")
         acceptance_evaluation = acceptance_report.get("evaluation_manifest")
+        acceptance_artifacts = acceptance_report.get("artifacts")
+        stack_contract = metadata.get("prediction_stack_contract")
+        expected_tier = (
+            stack_contract.get("deployment_tier")
+            if isinstance(stack_contract, dict)
+            else None
+        )
+        expected_acceptance_artifacts = {
+            "model_sha256": artifact_sha256["model"],
+            "metadata_sha256": artifact_sha256["metadata"],
+            "feature_importance_sha256": artifact_sha256["importance"],
+        }
         if (
             acceptance_report.get("schema_version") != 1
+            or acceptance_report.get("acceptance_type") != VECTO_ACCEPTANCE_TYPE
+            or acceptance_report.get("release_id") != model_name
+            or acceptance_report.get("decision") != acceptance_decision
+            or acceptance_report.get("prediction_stack")
+            != stack_release.stack.value
+            or acceptance_report.get("deployment_tier") != expected_tier
+            or acceptance_artifacts != expected_acceptance_artifacts
             or not isinstance(acceptance_candidate, dict)
             or acceptance_candidate.get("model_name") != model_name
+            or acceptance_candidate.get("prediction_stack")
+            != stack_release.stack.value
+            or acceptance_candidate.get("deployment_tier") != expected_tier
+            or any(
+                acceptance_candidate.get(key) != value
+                for key, value in expected_acceptance_artifacts.items()
+            )
             or acceptance_candidate.get("feature_contract_version")
             != FEATURE_CONTRACT_VERSION
             or acceptance_candidate.get("feature_release_manifest_sha256")
@@ -557,6 +614,7 @@ def _validate_one_model_release(
         or metadata.get("auxiliary_estimator") != release.get("auxiliary_estimator")
         or metadata.get("prediction_stack_contract")
         != release.get("prediction_stack_contract")
+        or metadata.get("passenger_prior") != release.get("passenger_prior")
         or metadata.get("training_software") != release.get("training_software")
         or not isinstance(feature_release, dict)
         or not isinstance(release_feature, dict)
@@ -766,6 +824,7 @@ def model_release_runtime_metadata() -> dict[str, Any]:
                         "release_manifest_sha256": validated["manifest_sha256"],
                         "metadata_sha256": validated["metadata_sha256"],
                         "artifact_count": len(validated["artifact_identities"]),
+                        **_validated_runtime_contract(validated),
                     }
                     for model_name, validated in sorted(
                         _validated_model_releases.items()
@@ -774,3 +833,35 @@ def model_release_runtime_metadata() -> dict[str, Any]:
             }
         )
     return metadata
+
+
+def _validated_runtime_contract(validated: dict[str, Any]) -> dict[str, Any]:
+    """Expose the immutable mass and comfort-policy semantics of a model."""
+
+    stack_release = validated["stack_release"]
+    model_metadata = validated["metadata"]
+    contract = model_metadata.get("prediction_stack_contract")
+    contract = contract if isinstance(contract, dict) else {}
+    if stack_release.stack is PredictionStack.LEGACY:
+        estimator = model_metadata.get("passenger_load_estimator")
+        estimator = estimator if isinstance(estimator, dict) else {}
+        config = estimator.get("config")
+        config = config if isinstance(config, dict) else {}
+        passenger_mass = config.get(
+            "passenger_weight_kg",
+            estimator.get("passenger_weight_kg", 70.0),
+        )
+    else:
+        passenger_mass = model_metadata.get("passenger_mass_kg")
+    prior = model_metadata.get("passenger_prior")
+    prior = prior if isinstance(prior, dict) else {}
+    return {
+        "prediction_stack": stack_release.stack.value,
+        "deployment_tier": stack_release.deployment_tier,
+        "passenger_mass_kg": float(passenger_mass),
+        "qrf_reference_occupancy_percent": prior.get(
+            "qrf_reference_occupancy_percent"
+        ),
+        "training_comfort_policy": contract.get("training_comfort_policy"),
+        "transfer_policy": contract.get("transfer_policy"),
+    }

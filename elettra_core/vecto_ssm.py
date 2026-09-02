@@ -98,6 +98,48 @@ class VectoEnvironmentalCondition:
 
 
 @dataclass(frozen=True)
+class VectoComfortPolicy:
+    """Caller-supplied cabin-temperature policy for controlled scenarios.
+
+    The default values are the constants used by VECTO 5.1.3.  Fleet-specific
+    training code may resolve a documented setpoint curve for one ambient
+    condition and pass the resulting numeric policy here.  The policy is
+    deliberately generic: manufacturer names, private curves and lookup logic
+    do not belong in the shared runtime package.
+
+    ``heating_enabled`` and ``cooling_enabled`` model an explicit operating
+    interval selected by the caller.  They never default from ambient weather.
+    """
+
+    heating_calculation_temperature_c: float = _HEATING_BOUNDARY_TEMP_C
+    cooling_calculation_temperature_c: float = _COOLING_BOUNDARY_TEMP_C
+    cooling_activation_temperature_c: float = _COOLING_TURNS_OFF_TEMP_C
+    low_floor_max_temperature_delta_k: float = _MAX_DELTA_LOW_FLOOR_K
+    heating_enabled: bool = True
+    cooling_enabled: bool = True
+
+    def __post_init__(self) -> None:
+        for name in (
+            "heating_calculation_temperature_c",
+            "cooling_calculation_temperature_c",
+            "cooling_activation_temperature_c",
+            "low_floor_max_temperature_delta_k",
+        ):
+            _require_finite(name, getattr(self, name))
+        if self.low_floor_max_temperature_delta_k < 0:
+            raise ValueError(
+                "low_floor_max_temperature_delta_k must be non-negative"
+            )
+        if not isinstance(self.heating_enabled, bool):
+            raise ValueError("heating_enabled must be boolean")
+        if not isinstance(self.cooling_enabled, bool):
+            raise ValueError("cooling_enabled must be boolean")
+
+
+VECTO_DEFAULT_COMFORT_POLICY = VectoComfortPolicy()
+
+
+@dataclass(frozen=True)
 class VectoSsmInputs:
     """Explicit declaration inputs consumed by VECTO's HVAC SSM."""
 
@@ -339,20 +381,22 @@ def _thermal_balance_w(
 def _run_totals(
     environment: VectoEnvironmentalCondition,
     inputs: VectoSsmInputs,
+    comfort_policy: VectoComfortPolicy,
 ) -> tuple[float, float]:
     run1 = _thermal_balance_w(
         environment.temperature_celsius,
         environment.solar_irradiance_wm2,
-        _HEATING_BOUNDARY_TEMP_C,
+        comfort_policy.heating_calculation_temperature_c,
         inputs,
     )
     run2_temperature = (
         max(
-            _COOLING_BOUNDARY_TEMP_C,
-            environment.temperature_celsius - _MAX_DELTA_LOW_FLOOR_K,
+            comfort_policy.cooling_calculation_temperature_c,
+            environment.temperature_celsius
+            - comfort_policy.low_floor_max_temperature_delta_k,
         )
         if inputs.floor_type == "LowFloor"
-        else _COOLING_BOUNDARY_TEMP_C
+        else comfort_policy.cooling_calculation_temperature_c
     )
     run2 = _thermal_balance_w(
         environment.temperature_celsius,
@@ -416,9 +460,12 @@ def _base_cooling_loads_w(
     inputs: VectoSsmInputs,
     run1: float,
     run2: float,
+    comfort_policy: VectoComfortPolicy,
 ) -> tuple[float, float]:
     if (
-        environment.temperature_celsius < _COOLING_TURNS_OFF_TEMP_C
+        not comfort_policy.cooling_enabled
+        or environment.temperature_celsius
+        < comfort_policy.cooling_activation_temperature_c
         or run1 <= 0
         or run2 <= 0
     ):
@@ -445,15 +492,21 @@ def _base_ventilation_loads_w(
     inputs: VectoSsmInputs,
     run1: float,
     run2: float,
+    comfort_policy: VectoComfortPolicy,
 ) -> tuple[float, float, float]:
     heating = (
         _vent_power_w(inputs, heating=True)
-        if run1 < 0 and run2 < 0 and inputs.ventilation_on_during_heating
+        if comfort_policy.heating_enabled
+        and run1 < 0
+        and run2 < 0
+        and inputs.ventilation_on_during_heating
         else 0.0
     )
     cooling = (
         _vent_power_w(inputs, heating=False)
-        if environment.temperature_celsius >= _COOLING_TURNS_OFF_TEMP_C
+        if comfort_policy.cooling_enabled
+        and environment.temperature_celsius
+        >= comfort_policy.cooling_activation_temperature_c
         and run1 > 0
         and run2 > 0
         and inputs.ventilation_during_cooling
@@ -461,7 +514,8 @@ def _base_ventilation_loads_w(
     )
     inactive_condition = (
         (
-            environment.temperature_celsius < _COOLING_TURNS_OFF_TEMP_C
+            environment.temperature_celsius
+            < comfort_policy.cooling_activation_temperature_c
             and run1 > 0
             and run2 > 0
         )
@@ -581,8 +635,9 @@ def _heating_loads_w(
     inputs: VectoSsmInputs,
     run1: float,
     run2: float,
+    comfort_policy: VectoComfortPolicy,
 ) -> tuple[float, float, float, float, float, float]:
-    if run1 >= 0 or run2 >= 0:
+    if not comfort_policy.heating_enabled or run1 >= 0 or run2 >= 0:
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
     demand = max(abs(max(run1, run2)) - inputs.engine_waste_heat_w, 0.0)
@@ -677,14 +732,16 @@ def _heating_loads_w(
 def _ssm_calculate(
     environment: VectoEnvironmentalCondition,
     inputs: VectoSsmInputs,
+    comfort_policy: VectoComfortPolicy | None = None,
 ) -> _SsmBreakdown:
     """Mirror the official ``SSMCalculate`` outputs for one map entry."""
-    run1, run2 = _run_totals(environment, inputs)
+    policy = comfort_policy or VECTO_DEFAULT_COMFORT_POLICY
+    run1, run2 = _run_totals(environment, inputs, policy)
     electrical_cooling, mechanical_cooling = _base_cooling_loads_w(
-        environment, inputs, run1, run2
+        environment, inputs, run1, run2, policy
     )
     heating_vent, cooling_vent, inactive_vent = _base_ventilation_loads_w(
-        environment, inputs, run1, run2
+        environment, inputs, run1, run2, policy
     )
     cop = _cooling_cop(environment, inputs)
     max_cooling_power = (
@@ -711,19 +768,22 @@ def _ssm_calculate(
         + inactive_vent
         * (1.0 - _limit_technology_variation(inputs.inactive_ventilation_variation))
     )
-    heating = _heating_loads_w(environment, inputs, run1, run2)
+    heating = _heating_loads_w(environment, inputs, run1, run2, policy)
 
-    if run1 < 0 and run2 < 0:
+    if policy.heating_enabled and run1 < 0 and run2 < 0:
         mode: Literal["heating", "cooling", "ventilation", "off"] = "heating"
     elif (
-        environment.temperature_celsius >= _COOLING_TURNS_OFF_TEMP_C
+        policy.cooling_enabled
+        and environment.temperature_celsius
+        >= policy.cooling_activation_temperature_c
         and run1 > 0
         and run2 > 0
     ):
         mode = "cooling"
     elif (
         (
-            environment.temperature_celsius < _COOLING_TURNS_OFF_TEMP_C
+            environment.temperature_celsius
+            < policy.cooling_activation_temperature_c
             and run1 > 0
             and run2 > 0
         )
@@ -752,6 +812,7 @@ def vecto_auxiliary_power(
     environment: VectoEnvironmentalCondition,
     inputs: VectoSsmInputs,
     non_hvac_baseline_kw: float = 0.0,
+    comfort_policy: VectoComfortPolicy | None = None,
 ) -> VectoAuxResult:
     """Calculate one VECTO SSM condition.
 
@@ -759,7 +820,7 @@ def vecto_auxiliary_power(
     calculates it nor supplies a default.
     """
     _require_non_negative("non_hvac_baseline_kw", non_hvac_baseline_kw)
-    result = _ssm_calculate(environment, inputs)
+    result = _ssm_calculate(environment, inputs, comfort_policy)
     hvac_electrical_kw = (
         result.electrical_cooling_and_ventilation_w
         + result.electrical_heat_pump_w
@@ -786,8 +847,10 @@ __all__ = [
     "FloorType",
     "HeatPumpType",
     "VectoAuxResult",
+    "VectoComfortPolicy",
     "VectoEnvironmentalCondition",
     "VectoSsmInputs",
+    "VECTO_DEFAULT_COMFORT_POLICY",
     "default_environmental_condition",
     "vecto_auxiliary_power",
 ]

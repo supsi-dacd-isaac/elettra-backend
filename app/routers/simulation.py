@@ -64,10 +64,12 @@ from app.services.elevation_profiles import (
 )
 from app.services.runtime_release import (
     LEGACY_AUXILIARY_ESTIMATOR,
+    PredictionStack,
     PredictionStackRelease,
     RuntimeReleaseConfigurationError,
     resolve_prediction_selection,
 )
+from app.services.vecto_auxiliary import build_vecto_auxiliary_binding
 from app.utils.trip_statistics import (
     combine_elevation_profiles,
     combine_trip_schedules,
@@ -77,6 +79,27 @@ from app.utils.trip_statistics import (
 )
 
 router = APIRouter()
+
+
+def _validate_vecto_prediction_request(
+    *,
+    selected_stack: PredictionStackRelease,
+    bus_model_specs: dict,
+    occupancy_percent: float,
+    external_temp_celsius: float,
+    auxiliary_heating_type: str,
+) -> None:
+    """Fail before persistence when a VECTO scenario cannot be served."""
+
+    if selected_stack.stack is PredictionStack.LEGACY:
+        return
+    build_vecto_auxiliary_binding(
+        stack_release=selected_stack,
+        bus_model_specs=bus_model_specs,
+        occupancy_percent=occupancy_percent,
+        external_temp_celsius=external_temp_celsius,
+        auxiliary_heating_type=auxiliary_heating_type,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +216,21 @@ async def create_prediction_runs(
     bus_model = await db.get(BusesModels, request.bus_model_id)
     if bus_model is None:
         raise HTTPException(status_code=404, detail="Bus model not found")
+    if selected_stack.stack is not PredictionStack.LEGACY:
+        try:
+            # Validate the complete request-bound VECTO scenario before any
+            # prediction rows are inserted or background work is scheduled.
+            # In particular, unsupported declaration-length gaps must be a
+            # synchronous client error rather than a delayed failed run.
+            _validate_vecto_prediction_request(
+                selected_stack=selected_stack,
+                bus_model_specs=bus_model.specs or {},
+                occupancy_percent=request.occupancy_percent,
+                external_temp_celsius=request.external_temp_celsius,
+                auxiliary_heating_type=request.auxiliary_heating_type,
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if request.yearly_analysis_id is not None:
         result = await db.execute(

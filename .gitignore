@@ -179,6 +179,7 @@ data/*
 
 # Config folder
 config/*.yaml
+!config/elettra-config.image.yaml
 
 # Cursor folder
 .cursor

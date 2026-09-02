@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Callable
 
 import numpy as np
@@ -39,6 +39,7 @@ class VectoAuxiliaryBinding:
             "number_of_passengers": self.estimate.number_of_passengers,
             "solar_irradiance_wm2": self.estimate.solar_irradiance_wm2,
             "environmental_id": self.estimate.environmental_id,
+            "comfort_policy": asdict(self.estimate.comfort_policy),
             "diesel_heater_efficiency": self.estimate.fuel_heater_efficiency,
             "hvac_electrical_power_kw": result.p_hvac_electrical_kw,
             "fixed_auxiliary_power_kw": result.p_baseline_kw,

@@ -400,6 +400,9 @@ default. `model_name` remains accepted for compatibility; if both selectors
 are sent, they must identify the same registered immutable release. VECTO
 responses persist the explicit mechanical, residual-QRF, fixed-auxiliary,
 electrical-HVAC and diesel components on the prediction run and trip rows.
+`occupancy_percent` must be a finite value from 0 through 100. For VECTO
+stacks, unsupported bus lengths or incomplete scenario declarations are
+rejected synchronously with `422`; no failed prediction row is scheduled.
 
 ### 13.2 Optimization Runs
 

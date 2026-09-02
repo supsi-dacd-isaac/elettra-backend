@@ -33,10 +33,13 @@ from .preprocessing import (
     prepare_model_feature_frame,
     prepare_model_feature_row,
 )
+from .provenance import PASSENGER_MASS_KG, source_tree_sha256
 from .vecto_ssm import (
     VectoAuxResult,
+    VectoComfortPolicy,
     VectoEnvironmentalCondition,
     VectoSsmInputs,
+    VECTO_DEFAULT_COMFORT_POLICY,
     default_environmental_condition,
     vecto_auxiliary_power,
 )
@@ -60,7 +63,7 @@ from .vecto_templates import (
     vecto_template_auxiliary_power,
 )
 
-__version__ = "2.1.0"
+__version__ = "2.2.1"
 
 __all__ = [
     "FEATURE_CONTRACT_VERSION",
@@ -90,9 +93,13 @@ __all__ = [
     "encode_categorical_features",
     "prepare_model_feature_frame",
     "prepare_model_feature_row",
+    "PASSENGER_MASS_KG",
+    "source_tree_sha256",
     "VectoAuxResult",
+    "VectoComfortPolicy",
     "VectoEnvironmentalCondition",
     "VectoSsmInputs",
+    "VECTO_DEFAULT_COMFORT_POLICY",
     "default_environmental_condition",
     "vecto_auxiliary_power",
     "DIESEL_ENERGY_KWH_PER_L",

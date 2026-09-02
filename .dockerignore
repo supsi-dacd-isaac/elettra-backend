@@ -27,9 +27,10 @@
 !elettra_core/*.py
 !elettra_core/data/
 !elettra_core/data/vecto_hvac_5_1_3_r744_templates_v1.json
+!elettra_core/data/vecto_hvac_5_1_3_r744_templates_v2.json
 
 !config/
-!config/elettra-config.docker.yaml
+!config/elettra-config.image.yaml
 !config/economic_defaults.json
 !config/emission_defaults.json
 

@@ -1,0 +1,59 @@
+# Non-secret baseline embedded in the API image.
+# Production overrides database.url and auth.secret_key through DATABASE_URL
+# and APP_SECRET_KEY; docker-compose.external.yml requires both at render time.
+app:
+  name: "Elettra Backend"
+  version: "1.0.0"
+  debug: false
+
+database:
+  url: "postgresql+asyncpg://admin:admin@db:5432/elettra"
+  echo: false
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+
+auth:
+  secret_key: "CHANGE_ME__runtime_environment_must_override"
+  algorithm: "HS256"
+  access_token_expire_minutes: 1440
+
+cors:
+  origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+    - "http://localhost:55557"
+    - "http://localhost:5174"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+pvgis:
+  coerce_year: 2030
+
+elettra:
+  max_route_length_km: 100.0
+  max_bus_capacity: 120
+  battery_efficiency_factor: 0.92
+  default_charging_power_kw: 150.0
+
+simulation:
+  max_concurrent_simulations: 4
+  simulation_timeout_minutes: 30
+
+paths:
+  temp_dir: "/tmp/elettra"
+  upload_dir: "/data/uploads"
+  elevation_profiles_path: "/data/elevation"
+
+performance:
+  request_timeout_seconds: 30
+  max_request_size_mb: 50
+
+lca:
+  api_base_url: "https://d2ztsj2ne13pqv.cloudfront.net"
+
+external_api_endpoints: {}

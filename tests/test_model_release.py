@@ -17,6 +17,7 @@ from app.services.runtime_release import (
     ROAD_SNAP_V3_ALGORITHM,
     VECTO_COMPLETE_AUXILIARY_ESTIMATOR,
     VECTO_HVAC_AUXILIARY_ESTIMATOR,
+    VECTO_G2_TRANSFER_POLICY,
     PredictionStack,
     PredictionStackRelease,
 )
@@ -26,7 +27,9 @@ from elettra_core import (
     CappedRegenAffineGreyBox,
     HybridGreyboxQRF,
     LinearGreyBox,
+    PASSENGER_MASS_KG,
     categorical_feature_contract,
+    source_tree_sha256,
 )
 from elettra_core.vecto_templates import (
     VECTO_TEMPLATE_RELEASE,
@@ -38,6 +41,28 @@ MODEL = "greybox_qrf_production_core_v2_roaddeck_v3_3_20260828"
 PREFIX = f"models/{MODEL}/"
 ROADS_RELEASE = "swisstlm3d_2026-02-24"
 ROADS_SHA256 = "6a2184d107b093ad7c8ea2ba9ff1cd2768c8a81dce7a5ff12e7bcd5711408a1d"
+TRAINING_HVAC_ESTIMATOR = "vbz-man-hess-setpoints-v1"
+TRAINING_COMFORT_POLICY = {
+    "release_id": TRAINING_HVAC_ESTIMATOR,
+    "sha256": "289792e25044fedfc414588e17a90d1a7729ae96680c0692cd0942020316e4e0",
+    "scope": "training-only",
+}
+PASSENGER_PRIOR = {
+    "source": "vbz-ogd",
+    "release_id": "vbz-ogd-prior-v1",
+    "sha256": "b" * 64,
+    "correction_factor_s": 1.0,
+    "qrf_reference_occupancy_percent": 21.5,
+    "mass_weighting": "distance",
+    "hvac_weighting": "duration",
+    "matching_policy": "vbz-ogd-gtfs-v1",
+    "primary_secondary_distance_coverage": 0.86,
+    "passenger_mass_kg": PASSENGER_MASS_KG,
+    "scale_policy": {
+        "policy": "ogd-unscaled",
+        "calibration_performed": False,
+    },
+}
 
 
 class _LegacyModelFixture:
@@ -209,19 +234,23 @@ def _vecto_release_objects(
         contract = {
             "stack": stack.value,
             "deployment_tier": "production",
-            "training_auxiliary_estimator": VECTO_HVAC_AUXILIARY_ESTIMATOR,
+            "training_auxiliary_estimator": TRAINING_HVAC_ESTIMATOR,
             "inference_auxiliary_estimator": VECTO_HVAC_AUXILIARY_ESTIMATOR,
             "fixed_auxiliary_owner": "model",
             "auxiliary_contract": "vecto-hvac-only",
+            "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+            "training_comfort_policy": TRAINING_COMFORT_POLICY,
             "vecto_template_release": VECTO_TEMPLATE_RELEASE,
             "vecto_template_sha256": template_sha,
         }
         greybox = CappedRegenAffineGreyBox()
         auxiliary_estimator = {
-            "training": VECTO_HVAC_AUXILIARY_ESTIMATOR,
+            "training": TRAINING_HVAC_ESTIMATOR,
             "inference": VECTO_HVAC_AUXILIARY_ESTIMATOR,
             "fixed_auxiliary_owner": "model",
             "auxiliary_contract": "vecto-hvac-only",
+            "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+            "training_comfort_policy": TRAINING_COMFORT_POLICY,
             "vecto_template_release": VECTO_TEMPLATE_RELEASE,
             "vecto_template_sha256": template_sha,
         }
@@ -257,11 +286,15 @@ def _vecto_release_objects(
         qrf=_QrfFixture(),
         selected_features=["greybox_pred_kwh"],
         prediction_stack=stack.value,
+        qrf_reference_occupancy_percent=(
+            21.5 if stack is PredictionStack.VECTO_G2 else None
+        ),
     )
     core = {
-        "package_version": "2.1.0",
-        "tag": "elettra-core-v2.1.0",
+        "package_version": "2.2.1",
+        "tag": "elettra-core-v2.2.1",
         "source_commit": core_commit,
+        "source_tree_sha256": source_tree_sha256(),
     }
     metadata = _metadata()
     metadata.update(
@@ -275,8 +308,15 @@ def _vecto_release_objects(
             "greybox_params": greybox.get_params_dict(),
         }
     )
+    if stack is PredictionStack.VECTO_G2:
+        metadata["passenger_prior"] = PASSENGER_PRIOR
     acceptance_value = {
         "schema_version": 1,
+        "acceptance_type": "vecto-model-release-acceptance-v1",
+        "release_id": model_name,
+        "prediction_stack": stack.value,
+        "deployment_tier": contract["deployment_tier"],
+        "decision": "passed",
         "evaluation_manifest": {"sha256": "e" * 64},
         "test_set": {
             "source_row_identity_sha256": metadata["feature_release"][
@@ -289,6 +329,8 @@ def _vecto_release_objects(
             "feature_release_manifest_sha256": metadata["feature_release"][
                 "manifest_sha256"
             ],
+            "prediction_stack": stack.value,
+            "deployment_tier": contract["deployment_tier"],
         },
     }
     acceptance = json.dumps(acceptance_value, sort_keys=True).encode()
@@ -308,6 +350,17 @@ def _vecto_release_objects(
     artifacts = {
         name.rsplit("/", 1)[-1]: _entry(data) for name, data in objects.items()
     }
+    acceptance_value["artifacts"] = {
+        "model_sha256": artifacts[f"{model_name}.joblib"]["sha256"],
+        "metadata_sha256": artifacts[f"{model_name}_metadata.json"]["sha256"],
+        "feature_importance_sha256": artifacts[
+            f"{model_name}_feature_importance.csv"
+        ]["sha256"],
+    }
+    acceptance_value["candidate"].update(acceptance_value["artifacts"])
+    acceptance = json.dumps(acceptance_value, sort_keys=True).encode()
+    objects[f"{prefix}{model_name}_acceptance.json"] = acceptance
+    artifacts[f"{model_name}_acceptance.json"] = _entry(acceptance)
     release = {
         "schema_version": 1,
         "release_id": model_name,
@@ -320,6 +373,11 @@ def _vecto_release_objects(
         "prediction_stack_contract": contract,
         "elettra_core": core,
         "auxiliary_estimator": auxiliary_estimator,
+        **(
+            {"passenger_prior": PASSENGER_PRIOR}
+            if stack is PredictionStack.VECTO_G2
+            else {}
+        ),
         "training_software": metadata["training_software"],
         "acceptance": {**_entry(acceptance), "decision": "passed"},
         "artifacts": artifacts,
@@ -349,6 +407,7 @@ def _configure_vecto_registry(monkeypatch):
     monkeypatch.setenv("ENABLE_EXPERIMENTAL_PREDICTION_STACKS", "true")
     monkeypatch.setenv("ELETTRA_CORE_SOURCE_COMMIT", "c" * 40)
     monkeypatch.setenv("ELETTRA_CORE_IMAGE_COMMIT", "c" * 40)
+    monkeypatch.setenv("ELETTRA_CORE_IMAGE_TREE_SHA256", source_tree_sha256())
 
 
 def _elevation_manifest():
@@ -382,6 +441,61 @@ def test_model_release_pins_manifest_and_all_artifacts(configured):
         "training_profile_release": "training-roaddeck-v3.3-r3",
     }
     model_release.probe_configured_model_immutable(client=client)
+
+
+def test_health_contract_exposes_vecto_mass_and_setpoint_policy():
+    release = PredictionStackRelease(
+        stack=PredictionStack.VECTO_G2,
+        model_release="g2-release",
+        auxiliary_estimator=VECTO_HVAC_AUXILIARY_ESTIMATOR,
+        fixed_auxiliary_owner="model",
+        deployment_tier="production",
+    )
+    contract = model_release._validated_runtime_contract(
+        {
+            "stack_release": release,
+            "metadata": {
+                "passenger_mass_kg": PASSENGER_MASS_KG,
+                "passenger_prior": {
+                    "qrf_reference_occupancy_percent": 21.5,
+                },
+                "prediction_stack_contract": {
+                    "training_comfort_policy": TRAINING_COMFORT_POLICY,
+                    "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+                },
+            },
+        }
+    )
+    assert contract == {
+        "prediction_stack": "vecto-g2",
+        "deployment_tier": "production",
+        "passenger_mass_kg": 68.0,
+        "qrf_reference_occupancy_percent": 21.5,
+        "training_comfort_policy": TRAINING_COMFORT_POLICY,
+        "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+    }
+
+
+def test_health_contract_preserves_legacy_serialized_passenger_mass():
+    release = PredictionStackRelease(
+        stack=PredictionStack.LEGACY,
+        model_release="legacy-release",
+        auxiliary_estimator=LEGACY_AUXILIARY_ESTIMATOR,
+        fixed_auxiliary_owner="legacy",
+        deployment_tier="production",
+    )
+    contract = model_release._validated_runtime_contract(
+        {
+            "stack_release": release,
+            "metadata": {
+                "passenger_load_estimator": {
+                    "config": {"passenger_weight_kg": 70.0}
+                }
+            },
+        }
+    )
+    assert contract["passenger_mass_kg"] == 70.0
+    assert contract["prediction_stack"] == "legacy"
 
 
 def test_model_release_rejects_missing_commit_manifest(configured):
@@ -551,8 +665,15 @@ def test_vecto_controlled_regression_approval_binds_evaluation_hash(monkeypatch)
     objects = _vecto_release_objects(
         model_name=model_name, stack=PredictionStack.VECTO_G2
     )
+    acceptance_path = f"models/{model_name}/{model_name}_acceptance.json"
     manifest_path = f"models/{model_name}/{model_name}_release.json"
     release = json.loads(objects[manifest_path])
+    acceptance = json.loads(objects[acceptance_path])
+    acceptance["decision"] = "approved_with_documented_regression"
+    objects[acceptance_path] = json.dumps(acceptance, sort_keys=True).encode()
+    acceptance_entry = _entry(objects[acceptance_path])
+    release["artifacts"][f"{model_name}_acceptance.json"] = acceptance_entry
+    release["acceptance"].update(acceptance_entry)
     release["acceptance"]["decision"] = "approved_with_documented_regression"
     release["acceptance"]["documented_approval"] = {
         "approved_by": "release-owner",
@@ -577,6 +698,47 @@ def test_vecto_controlled_regression_approval_binds_evaluation_hash(monkeypatch)
         stack_release=stack_release,
         client=_Client(objects),
     )["model_name"] == model_name
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("decision", "approved_with_documented_regression"),
+        ("release_id", "another-release"),
+        ("prediction_stack", "vecto-g0-transfer"),
+        ("deployment_tier", "experimental"),
+    ],
+)
+def test_vecto_preflight_rejects_semantically_unbound_acceptance(
+    monkeypatch, field, value
+):
+    _configure_vecto_registry(monkeypatch)
+    model_name = "g2-release"
+    stack_release = model_release.runtime_release_configuration().prediction_stacks[
+        PredictionStack.VECTO_G2
+    ]
+    objects = _vecto_release_objects(
+        model_name=model_name, stack=PredictionStack.VECTO_G2
+    )
+    prefix = f"models/{model_name}/"
+    acceptance_path = f"{prefix}{model_name}_acceptance.json"
+    manifest_path = f"{prefix}{model_name}_release.json"
+    acceptance = json.loads(objects[acceptance_path])
+    acceptance[field] = value
+    objects[acceptance_path] = json.dumps(acceptance, sort_keys=True).encode()
+    release = json.loads(objects[manifest_path])
+    entry = _entry(objects[acceptance_path])
+    release["artifacts"][f"{model_name}_acceptance.json"] = entry
+    release["acceptance"].update(entry)
+    objects[manifest_path] = json.dumps(release).encode()
+
+    with pytest.raises(ModelReleaseValidationError, match="acceptance artifact"):
+        model_release._validate_one_model_release(
+            _elevation_manifest(),
+            model_name=model_name,
+            stack_release=stack_release,
+            client=_Client(objects),
+        )
 
 
 def test_vecto_preflight_reports_malformed_feature_release(monkeypatch):

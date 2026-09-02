@@ -52,4 +52,4 @@ Official source archive:
 <https://code.europa.eu/vecto/vecto/-/archive/Release/v5.1.3/vecto-Release-v5.1.3.tar.gz>.
 
 Corresponding Elettra source release:
-<https://github.com/supsi-dacd-isaac/elettra-backend/tree/elettra-core-v2.1.0>.
+<https://github.com/supsi-dacd-isaac/elettra-backend/tree/elettra-core-v2.2.0>.

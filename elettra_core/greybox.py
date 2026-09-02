@@ -425,6 +425,7 @@ class HybridGreyboxQRF:
         qrf: Any,
         selected_features: Sequence[str],
         prediction_stack: str,
+        qrf_reference_occupancy_percent: float | None = None,
     ) -> None:
         if prediction_stack not in {"vecto-g2", "vecto-g0-transfer"}:
             raise ValueError("HybridGreyboxQRF requires a VECTO prediction stack")
@@ -440,6 +441,19 @@ class HybridGreyboxQRF:
         self.qrf = qrf
         self.selected_features = list(selected_features)
         self.prediction_stack = prediction_stack
+        if qrf_reference_occupancy_percent is None:
+            self.qrf_reference_occupancy_percent = None
+        else:
+            reference = float(qrf_reference_occupancy_percent)
+            if (
+                isinstance(qrf_reference_occupancy_percent, bool)
+                or not math.isfinite(reference)
+                or not 0 <= reference <= 100
+            ):
+                raise ValueError(
+                    "qrf_reference_occupancy_percent must be finite and between 0 and 100"
+                )
+            self.qrf_reference_occupancy_percent = reference
 
     def _qrf_frame(self, X: pd.DataFrame, greybox_total: np.ndarray) -> pd.DataFrame:
         frame = X.drop(
@@ -476,6 +490,7 @@ class HybridGreyboxQRF:
         *,
         aux_energy_fn: Callable[[pd.DataFrame], Any] | None,
         override_mass: np.ndarray | None = None,
+        qrf_reference_mass: np.ndarray | None = None,
         quantiles: str | Sequence[float] | None = "mean",
     ) -> PredictionComponents:
         mechanical, fixed_internal = self.greybox.predict_components(
@@ -483,8 +498,23 @@ class HybridGreyboxQRF:
         )
         external = self._external_auxiliary(X, aux_energy_fn)
         fixed = fixed_internal + external.fixed_auxiliary_kwh
-        greybox_total = mechanical + fixed_internal
-        qrf_frame = self._qrf_frame(X, greybox_total)
+        if self.qrf_reference_occupancy_percent is None:
+            if qrf_reference_mass is not None:
+                raise ValueError(
+                    "qrf_reference_mass cannot be used by an unanchored model"
+                )
+            qrf_greybox_total = mechanical + fixed_internal
+        else:
+            if qrf_reference_mass is None:
+                raise ValueError(
+                    "anchored QRF models require qrf_reference_mass"
+                )
+            reference_mechanical, reference_fixed = self.greybox.predict_components(
+                X,
+                override_mass=qrf_reference_mass,
+            )
+            qrf_greybox_total = reference_mechanical + reference_fixed
+        qrf_frame = self._qrf_frame(X, qrf_greybox_total)
         qrf_residual = np.asarray(
             self.qrf.predict(qrf_frame, quantiles=quantiles)
             if quantiles is not None
@@ -514,10 +544,12 @@ class HybridGreyboxQRF:
         quantiles: str | Sequence[float] | None = None,
         aux_energy_fn: Callable[[pd.DataFrame], Any] | None = None,
         override_mass: np.ndarray | None = None,
+        qrf_reference_mass: np.ndarray | None = None,
     ) -> np.ndarray:
         return self.predict_components(
             X,
             aux_energy_fn=aux_energy_fn,
             override_mass=override_mass,
+            qrf_reference_mass=qrf_reference_mass,
             quantiles=quantiles,
         ).total_kwh
