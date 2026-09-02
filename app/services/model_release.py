@@ -824,6 +824,7 @@ def model_release_runtime_metadata() -> dict[str, Any]:
                         "release_manifest_sha256": validated["manifest_sha256"],
                         "metadata_sha256": validated["metadata_sha256"],
                         "artifact_count": len(validated["artifact_identities"]),
+                        **_validated_runtime_contract(validated),
                     }
                     for model_name, validated in sorted(
                         _validated_model_releases.items()
@@ -832,3 +833,35 @@ def model_release_runtime_metadata() -> dict[str, Any]:
             }
         )
     return metadata
+
+
+def _validated_runtime_contract(validated: dict[str, Any]) -> dict[str, Any]:
+    """Expose the immutable mass and comfort-policy semantics of a model."""
+
+    stack_release = validated["stack_release"]
+    model_metadata = validated["metadata"]
+    contract = model_metadata.get("prediction_stack_contract")
+    contract = contract if isinstance(contract, dict) else {}
+    if stack_release.stack is PredictionStack.LEGACY:
+        estimator = model_metadata.get("passenger_load_estimator")
+        estimator = estimator if isinstance(estimator, dict) else {}
+        config = estimator.get("config")
+        config = config if isinstance(config, dict) else {}
+        passenger_mass = config.get(
+            "passenger_weight_kg",
+            estimator.get("passenger_weight_kg", 70.0),
+        )
+    else:
+        passenger_mass = model_metadata.get("passenger_mass_kg")
+    prior = model_metadata.get("passenger_prior")
+    prior = prior if isinstance(prior, dict) else {}
+    return {
+        "prediction_stack": stack_release.stack.value,
+        "deployment_tier": stack_release.deployment_tier,
+        "passenger_mass_kg": float(passenger_mass),
+        "qrf_reference_occupancy_percent": prior.get(
+            "qrf_reference_occupancy_percent"
+        ),
+        "training_comfort_policy": contract.get("training_comfort_policy"),
+        "transfer_policy": contract.get("transfer_policy"),
+    }

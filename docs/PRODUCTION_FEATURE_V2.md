@@ -11,12 +11,11 @@ GTFS_ELEVATION_PROFILES_BUCKET=elevation-profiles-gtfs
 ELEVATION_PROFILES_BUCKET=elevation-profiles
 ELEVATION_PROFILES_RELEASE=roaddeck-v3.3-20260828-db39527
 LEGACY_CONSUMPTION_MODEL_RELEASE=greybox_qrf_production_core_v2_roaddeck_v3_3_physical_mass_20260831
-# Leave both VECTO variables empty until their immutable v2.2 releases pass preflight.
-VECTO_G2_CONSUMPTION_MODEL_RELEASE=
-VECTO_G0_TRANSFER_MODEL_RELEASE=
-DEFAULT_PREDICTION_STACK=legacy
-ENABLE_EXPERIMENTAL_PREDICTION_STACKS=false
-ELETTRA_CORE_SOURCE_COMMIT=<commit-pointed-to-by-elettra-core-v2.2.0>
+VECTO_G2_CONSUMPTION_MODEL_RELEASE=greybox_qrf_g2_vecto_hess_v3_hbefa_slope_20260902-r4
+VECTO_G0_TRANSFER_MODEL_RELEASE=greybox_qrf_g0_datadriven_to_vecto_complete_hess_v3_hbefa_slope_20260902-r4
+DEFAULT_PREDICTION_STACK=vecto-g2
+ENABLE_EXPERIMENTAL_PREDICTION_STACKS=true
+ELETTRA_CORE_SOURCE_COMMIT=269aa8d73ab2bd06e17eab9ed7df5d74e8b2a871
 ELEVATION_AUX_PROFILE_ALGORITHM=road-snap-v3.3-topology
 ELEVATION_AUX_ROADS_RELEASE=swisstlm3d_2026-02-24
 ```
@@ -25,14 +24,14 @@ Startup fails for a partial profile/model configuration, mixed singleton and
 registry variables, a missing legacy release, a default stack without a model,
 an experimental default, missing auxiliary pins, or an incompatible GTFS
 manifest. Registering any VECTO stack also requires the exact 40-character
-commit named by `elettra-core-v2.2.0`; model provenance must match it.
+commit named by `elettra-core-v2.2.1`; model provenance must match it.
 The same commit is embedded at image build time in
 `/etc/elettra-core-image-commit`. Startup requires the deployment pin, model
 metadata and image-owned revision to be identical; build with:
 
 ```bash
 docker build \
-  --build-arg ELETTRA_CORE_SOURCE_COMMIT="$(git rev-parse 'elettra-core-v2.2.0^{}')" \
+  --build-arg ELETTRA_CORE_SOURCE_COMMIT="$(git rev-parse 'elettra-core-v2.2.1^{}')" \
   --label org.opencontainers.image.source-backend-commit="$(git rev-parse HEAD)" \
   -t elettra-backend:"$(git rev-parse HEAD)" .
 ```
@@ -41,9 +40,9 @@ and JSON files it actually ships. Startup compares that digest with the
 installed package and with model metadata, so a caller-supplied Git SHA cannot
 attest unrelated bytes.
 
-After acceptance, the planned G2 registry value is
-`greybox_qrf_g2_vbz_ogd_hbefa_core_v2_2_20260901-r1`; registering it does not
-change `DEFAULT_PREDICTION_STACK=legacy`.
+The constrained G2 release is intentionally the default after its controlled
+VBZ holdout regression and HBEFA slope constraint have been reviewed. The
+legacy release remains registered for an environment-only rollback.
 
 `vecto-g0-transfer` is selectable only when the experimental flag is
 true and is never allowed as the default. A request may provide
@@ -95,8 +94,8 @@ Both the metadata JSON and release JSON must carry the same core provenance:
 ```json
 {
   "elettra_core": {
-    "package_version": "2.2.0",
-    "tag": "elettra-core-v2.2.0",
+    "package_version": "2.2.1",
+    "tag": "elettra-core-v2.2.1",
     "source_commit": "<40-lowercase-hex>",
     "source_tree_sha256": "<64-lowercase-hex>"
   }
@@ -164,16 +163,17 @@ G2 metadata and release JSON also carry the same `passenger_prior` object:
     "hvac_weighting": "duration",
     "matching_policy": "vbz-ogd-gtfs-v1",
     "primary_secondary_distance_coverage": 0.8,
-    "passenger_mass_kg": 70.0
+    "passenger_mass_kg": 68.0
   }
 }
 ```
 
-The correction must be strictly inside `(0.8, 1.2)`, matching coverage must
-be at least 80%, and the serialized artifact reference occupancy must exactly
-equal the manifest. The backend never reads OGD rows: it reconstructs the
-reference mass from the selected bus model, this scalar occupancy and the
-shared 70 kg passenger-mass contract.
+The correction is fixed to `s=1`, matching coverage must be at least 80%, and
+the serialized artifact reference occupancy must exactly equal the manifest.
+The backend never reads OGD rows: it reconstructs the reference mass from the
+selected bus model, this scalar occupancy and the shared 68 kg passenger-mass
+contract. Historical legacy artifacts remain on their serialized mass
+convention (70 kg when it was not explicitly recorded).
 
 The corresponding `auxiliary_estimator` blocks are:
 
@@ -244,8 +244,9 @@ identity, not only the default model.
 ## Static and per-prediction diagnostics
 
 `/health` exposes static runtime information: available stacks and tiers,
-model releases, auxiliary contract, template release/checksum and validated
-model digests. Request-dependent inputs cannot truthfully be represented by a
+model releases, auxiliary contract, template release/checksum, validated model
+digests, passenger mass and training/transfer comfort policies.
+Request-dependent inputs cannot truthfully be represented by a
 single process health value. Actual bus length, selected template length,
 passengers, GHI, heating mode, climatic row, powers and unmatched thermal
 demand are therefore persisted in each prediction run under

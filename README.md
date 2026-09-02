@@ -415,7 +415,7 @@ Reload is **not** recommended for production.
 (See 15.0 for preferred external DB run.)
 ```bash
 docker build \
-  --build-arg ELETTRA_CORE_SOURCE_COMMIT="$(git rev-parse 'elettra-core-v2.2.0^{}')" \
+  --build-arg ELETTRA_CORE_SOURCE_COMMIT="$(git rev-parse 'elettra-core-v2.2.1^{}')" \
   --label org.opencontainers.image.source-backend-commit="$(git rev-parse HEAD)" \
   -t elettra-backend:"$(git rev-parse HEAD)" .
 # Preferred: use host networking with elevation data

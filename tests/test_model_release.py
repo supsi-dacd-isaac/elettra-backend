@@ -443,6 +443,61 @@ def test_model_release_pins_manifest_and_all_artifacts(configured):
     model_release.probe_configured_model_immutable(client=client)
 
 
+def test_health_contract_exposes_vecto_mass_and_setpoint_policy():
+    release = PredictionStackRelease(
+        stack=PredictionStack.VECTO_G2,
+        model_release="g2-release",
+        auxiliary_estimator=VECTO_HVAC_AUXILIARY_ESTIMATOR,
+        fixed_auxiliary_owner="model",
+        deployment_tier="production",
+    )
+    contract = model_release._validated_runtime_contract(
+        {
+            "stack_release": release,
+            "metadata": {
+                "passenger_mass_kg": PASSENGER_MASS_KG,
+                "passenger_prior": {
+                    "qrf_reference_occupancy_percent": 21.5,
+                },
+                "prediction_stack_contract": {
+                    "training_comfort_policy": TRAINING_COMFORT_POLICY,
+                    "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+                },
+            },
+        }
+    )
+    assert contract == {
+        "prediction_stack": "vecto-g2",
+        "deployment_tier": "production",
+        "passenger_mass_kg": 68.0,
+        "qrf_reference_occupancy_percent": 21.5,
+        "training_comfort_policy": TRAINING_COMFORT_POLICY,
+        "transfer_policy": VECTO_G2_TRANSFER_POLICY,
+    }
+
+
+def test_health_contract_preserves_legacy_serialized_passenger_mass():
+    release = PredictionStackRelease(
+        stack=PredictionStack.LEGACY,
+        model_release="legacy-release",
+        auxiliary_estimator=LEGACY_AUXILIARY_ESTIMATOR,
+        fixed_auxiliary_owner="legacy",
+        deployment_tier="production",
+    )
+    contract = model_release._validated_runtime_contract(
+        {
+            "stack_release": release,
+            "metadata": {
+                "passenger_load_estimator": {
+                    "config": {"passenger_weight_kg": 70.0}
+                }
+            },
+        }
+    )
+    assert contract["passenger_mass_kg"] == 70.0
+    assert contract["prediction_stack"] == "legacy"
+
+
 def test_model_release_rejects_missing_commit_manifest(configured):
     objects, _release = _release_objects()
     del objects[f"{PREFIX}{MODEL}_release.json"]
