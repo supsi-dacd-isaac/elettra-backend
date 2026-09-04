@@ -6,6 +6,9 @@ import pytest
 from app.utils import trip_statistics as backend_features
 from elettra_core import (
     FEATURE_CONTRACT_VERSION,
+    FEATURE_CONTRACT_V2,
+    HBEFA_INSPIRED_FEATURE_COLUMNS,
+    RAW_TRIP_FEATURE_COLUMNS_V2,
     add_distance_columns,
     combine_elevation_profiles,
     combine_trip_schedules,
@@ -79,7 +82,7 @@ def test_golden_feature_contract_and_backend_adapter_parity():
     difficulty_stats = extract_route_difficulty_metrics_from_elevation(profile)
 
     expected_3d = 100.0 + math.hypot(150.0, 15.0) + 150.0
-    assert FEATURE_CONTRACT_VERSION == "2.0.0"
+    assert FEATURE_CONTRACT_VERSION == "3.0.0"
     assert global_stats["total_horizontal_distance_m"] == 400.0
     assert global_stats["total_distance_m"] == pytest.approx(expected_3d)
     assert global_stats["total_duration_minutes"] == 15.0
@@ -88,6 +91,17 @@ def test_golden_feature_contract_and_backend_adapter_parity():
     assert global_stats["end_time_minutes"] == 495.0
     assert segment_stats["num_segments"] == 3
     assert difficulty_stats["pct_uphill_segments"] == pytest.approx(100 / 3)
+    assert difficulty_stats["grade_distance_share_neg1_pos1"] == pytest.approx(0.625)
+    assert difficulty_stats["grade_distance_share_ge_pos5"] == pytest.approx(0.375)
+    assert sum(
+        difficulty_stats[column]
+        for column in HBEFA_INSPIRED_FEATURE_COLUMNS
+        if column.startswith("grade_distance_share_")
+    ) == pytest.approx(1.0)
+    assert difficulty_stats["road_distance_share_unknown"] == 1.0
+    assert segment_stats["scheduled_speed_distance_share_lt_10"] == 1.0
+    assert global_stats["scheduled_stop_density_per_km"] == pytest.approx(10.0)
+    assert global_stats["scheduled_dwell_time_fraction"] == pytest.approx(4 / 15)
 
     # The backend compatibility module must expose the exact canonical callables,
     # not a copied implementation that can drift.
@@ -253,6 +267,12 @@ def test_runtime_rejects_a_model_from_another_feature_contract(caplog):
             "categorical_feature_contract": categorical_feature_contract(),
         }
     )
+    validate_model_feature_contract(
+        {
+            "feature_contract_version": FEATURE_CONTRACT_V2,
+            "categorical_feature_contract": categorical_feature_contract(),
+        }
+    )
     with pytest.raises(ValueError, match="incompatible"):
         validate_model_feature_contract({"feature_contract_version": "1.0.0"})
     with pytest.raises(ValueError, match="no categorical"):
@@ -307,6 +327,43 @@ def test_contract_metadata_is_not_in_the_runtime_model_frame():
         )
     )
     pd.testing.assert_frame_equal(frame.drop(columns="trip_id"), expected)
+
+
+def test_contract_v2_projection_remains_byte_order_compatible():
+    from elettra_core import prepare_model_feature_row
+
+    schedule = _short_segment_schedule()
+    profile = _elevation_profile()
+    stats = {
+        **compute_global_trip_statistics_combined(schedule, profile),
+        **extract_stop_to_stop_statistics_for_schedule(schedule, profile),
+        **extract_route_difficulty_metrics_from_elevation(profile),
+    }
+    frame = prepare_model_feature_row(
+        stats,
+        {
+            "bus_length_m": 12.0,
+            "bus_battery_kwh": 350.0,
+            "avg_temp_outside_celsius": 10.0,
+        },
+        feature_contract_version=FEATURE_CONTRACT_V2,
+    )
+
+    assert tuple(frame.columns[: len(RAW_TRIP_FEATURE_COLUMNS_V2)]) == (
+        RAW_TRIP_FEATURE_COLUMNS_V2
+    )
+    assert not set(HBEFA_INSPIRED_FEATURE_COLUMNS) & set(frame.columns)
+
+
+def test_road_width_proxies_are_exhaustive_and_use_starting_sample():
+    profile = _elevation_profile()
+    profile["road_objektart"] = ["3 m", "6 m", "8 m", "ignored final"]
+    features = extract_route_difficulty_metrics_from_elevation(profile)
+
+    assert features["road_distance_share_local"] == pytest.approx(0.25)
+    assert features["road_distance_share_distributor"] == pytest.approx(0.375)
+    assert features["road_distance_share_trunk_city"] == pytest.approx(0.375)
+    assert features["road_distance_share_unknown"] == 0.0
 
 
 def test_runtime_feature_preparation_fails_if_a_canonical_statistic_is_missing():

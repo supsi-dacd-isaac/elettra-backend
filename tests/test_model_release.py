@@ -28,6 +28,7 @@ from elettra_core import (
     HybridGreyboxQRF,
     LinearGreyBox,
     PASSENGER_MASS_KG,
+    __version__ as ELETTRA_CORE_VERSION,
     categorical_feature_contract,
     source_tree_sha256,
 )
@@ -291,8 +292,8 @@ def _vecto_release_objects(
         ),
     )
     core = {
-        "package_version": "2.2.1",
-        "tag": "elettra-core-v2.2.1",
+        "package_version": ELETTRA_CORE_VERSION,
+        "tag": f"elettra-core-v{ELETTRA_CORE_VERSION}",
         "source_commit": core_commit,
         "source_tree_sha256": source_tree_sha256(),
     }

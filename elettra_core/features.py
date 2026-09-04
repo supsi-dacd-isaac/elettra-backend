@@ -18,16 +18,41 @@ and make GTFS distance release-dependent.
 from __future__ import annotations
 
 from math import asin, cos, radians, sin, sqrt
-from typing import Iterable, Sequence
+import re
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 import pandas as pd
 
 
-FEATURE_CONTRACT_VERSION = "2.0.0"
+FEATURE_CONTRACT_VERSION = "3.0.0"
 _EARTH_RADIUS_M = 6_371_000.0
 _DISTANCE_TOLERANCE_M = 1e-6
 MIN_GRADE_RUN_M = 1.0
+
+GRADE_DISTANCE_SHARE_COLUMNS = (
+    "grade_distance_share_lt_neg5",
+    "grade_distance_share_neg5_neg3",
+    "grade_distance_share_neg3_neg1",
+    "grade_distance_share_neg1_pos1",
+    "grade_distance_share_pos1_pos3",
+    "grade_distance_share_pos3_pos5",
+    "grade_distance_share_ge_pos5",
+)
+ROAD_DISTANCE_SHARE_COLUMNS = (
+    "road_distance_share_local",
+    "road_distance_share_distributor",
+    "road_distance_share_trunk_city",
+    "road_distance_share_unknown",
+)
+SCHEDULED_SPEED_DISTANCE_SHARE_COLUMNS = (
+    "scheduled_speed_distance_share_lt_10",
+    "scheduled_speed_distance_share_10_20",
+    "scheduled_speed_distance_share_20_30",
+    "scheduled_speed_distance_share_ge_30",
+)
+_GRADE_SHARE_BOUNDARIES = np.asarray([-0.05, -0.03, -0.01, 0.01, 0.03, 0.05])
+_SPEED_SHARE_BOUNDARIES_KMH = np.asarray([10.0, 20.0, 30.0])
 
 
 def parse_gtfs_hms_to_seconds(value: str) -> int:
@@ -76,6 +101,113 @@ def _finite_numeric_values(dataframe: pd.DataFrame, column: str) -> np.ndarray:
     if not np.isfinite(values).all():
         raise ValueError(f"Elevation profile contains non-finite {column!r} values")
     return values
+
+
+def classify_road_width_proxy(value: Any) -> str:
+    """Map swissTLM ``road_objektart`` width labels to an audit proxy.
+
+    These labels are descriptive inputs only: they are not HBEFA traffic
+    situations and never depend on measured or predicted energy.  Width 3/4 m
+    maps to ``local``, 6 m to ``distributor`` and at least 8 m to
+    ``trunk_city``.  Missing, malformed and other values remain ``unknown``.
+    """
+    if value is None or isinstance(value, (bool, np.bool_)):
+        return "unknown"
+    width: float | None = None
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        numeric = float(value)
+        if np.isfinite(numeric):
+            width = numeric
+    else:
+        text = str(value).strip().lower().replace(",", ".")
+        if text and text not in {"nan", "none", "null"}:
+            matches = re.findall(
+                r"(?<![0-9.])([0-9]+(?:\.[0-9]+)?)\s*m(?:\b|_)", text
+            )
+            if len(matches) == 1:
+                width = float(matches[0])
+    if width in {3.0, 4.0}:
+        return "local"
+    if width == 6.0:
+        return "distributor"
+    if width is not None and width >= 8.0:
+        return "trunk_city"
+    return "unknown"
+
+
+def _distance_shares(
+    values: np.ndarray,
+    distances: np.ndarray,
+    *,
+    boundaries: np.ndarray,
+    columns: Sequence[str],
+) -> dict[str, float]:
+    """Return exhaustive distance shares with strict finite-value gates."""
+    values = np.asarray(values, dtype=float)
+    distances = np.asarray(distances, dtype=float)
+    if values.shape != distances.shape:
+        raise ValueError("Distance-share values and weights have different shapes")
+    if not np.isfinite(values).all() or not np.isfinite(distances).all():
+        raise ValueError("Distance-share inputs contain non-finite values")
+    if (distances < 0).any():
+        raise ValueError("Distance-share weights must be non-negative")
+    total = float(distances.sum())
+    if total <= _DISTANCE_TOLERANCE_M:
+        return {column: 0.0 for column in columns}
+    buckets = np.digitize(values, boundaries)
+    shares = np.bincount(
+        buckets, weights=distances, minlength=len(columns)
+    ).astype(float) / total
+    if len(shares) != len(columns) or not np.isclose(
+        shares.sum(), 1.0, rtol=0.0, atol=1e-12
+    ):
+        raise ValueError("Distance shares are not exhaustive")
+    return {column: float(value) for column, value in zip(columns, shares)}
+
+
+def extract_route_exposure_features(elevation_df: pd.DataFrame) -> dict[str, float]:
+    """Extract signed-grade and road-width-proxy distance shares.
+
+    Grade is rise over horizontal run.  Positive sub-metre steps, for which a
+    local grade would be unstable, are assigned to the neutral ``[-1,+1)``
+    band.  Each road segment inherits ``road_objektart`` from its starting
+    profile sample, matching the external-validation audit convention.
+    """
+    profile, horizontal, _ = _profile_distance_arrays(elevation_df)
+    horizontal_steps = np.maximum(np.diff(horizontal), 0.0)
+    altitude_steps = np.diff(profile["altitude_m"].to_numpy(dtype=float))
+    positive = horizontal_steps > _DISTANCE_TOLERANCE_M
+    total = float(horizontal_steps[positive].sum())
+    if total <= _DISTANCE_TOLERANCE_M:
+        output = {column: 0.0 for column in GRADE_DISTANCE_SHARE_COLUMNS}
+        output.update({column: 0.0 for column in ROAD_DISTANCE_SHARE_COLUMNS})
+        return output
+
+    grades = np.zeros_like(horizontal_steps)
+    eligible = horizontal_steps >= MIN_GRADE_RUN_M
+    grades[eligible] = altitude_steps[eligible] / horizontal_steps[eligible]
+    output = _distance_shares(
+        grades[positive],
+        horizontal_steps[positive],
+        boundaries=_GRADE_SHARE_BOUNDARIES,
+        columns=GRADE_DISTANCE_SHARE_COLUMNS,
+    )
+
+    if "road_objektart" in profile:
+        policies = profile["road_objektart"].iloc[:-1].map(
+            classify_road_width_proxy
+        ).to_numpy(dtype=object)
+    else:
+        policies = np.full(len(horizontal_steps), "unknown", dtype=object)
+    for policy, column in zip(
+        ("local", "distributor", "trunk_city", "unknown"),
+        ROAD_DISTANCE_SHARE_COLUMNS,
+    ):
+        output[column] = float(horizontal_steps[positive & (policies == policy)].sum() / total)
+    road_sum = sum(output[column] for column in ROAD_DISTANCE_SHARE_COLUMNS)
+    if not np.isclose(road_sum, 1.0, rtol=0.0, atol=1e-12):
+        raise ValueError("Road-width proxy shares are not exhaustive")
+    return output
 
 
 def _horizontal_distance_from_coordinates(dataframe: pd.DataFrame) -> np.ndarray:
@@ -268,6 +400,14 @@ def compute_global_trip_statistics_combined(
     driving_hours = max(float(stats["driving_time_minutes"]), 0.0) / 60
     stats["average_speed_kmh"] = travelled_distance / 1000 / duration_hours if duration_hours else 0.0
     stats["driving_average_speed_kmh"] = travelled_distance / 1000 / driving_hours if driving_hours else 0.0
+    stats["scheduled_stop_density_per_km"] = (
+        len(trip_schedule) / (horizontal_distance / 1000)
+        if horizontal_distance > _DISTANCE_TOLERANCE_M
+        else 0.0
+    )
+    stats["scheduled_dwell_time_fraction"] = (
+        dwell_seconds / total_seconds if total_seconds > 0 else 0.0
+    )
 
     altitudes = profile["altitude_m"].to_numpy(dtype=float)
     altitude_steps = np.diff(altitudes)
@@ -511,7 +651,7 @@ def extract_stop_to_stop_statistics_for_schedule(
     gradients = values("mean_gradient")
     max_gradients = values("max_gradient")
     dwell_times = values("dwell_time_at_end_minutes")
-    return {
+    statistics = {
         "num_segments": len(segments),
         "mean_segment_distance_m": float(np.mean(distances)),
         "median_segment_distance_m": float(np.median(distances)),
@@ -543,6 +683,15 @@ def extract_stop_to_stop_statistics_for_schedule(
         "num_steep_segments_10pct_threshold": sum(abs(value) > 0.10 for value in max_gradients),
         "variance_segment_gradients": float(np.var(gradients)),
     }
+    statistics.update(
+        _distance_shares(
+            np.asarray(speeds, dtype=float),
+            np.asarray(horizontal_distances, dtype=float),
+            boundaries=_SPEED_SHARE_BOUNDARIES_KMH,
+            columns=SCHEDULED_SPEED_DISTANCE_SHARE_COLUMNS,
+        )
+    )
+    return statistics
 
 
 def extract_route_difficulty_metrics_from_elevation(elevation_df: pd.DataFrame) -> dict:
@@ -606,7 +755,7 @@ def extract_route_difficulty_metrics_from_elevation(elevation_df: pd.DataFrame) 
         + ratio_6_plus * 0.3
         + min(frequency / 10, 1.0) * 0.1
     )
-    return {
+    result = {
         "roughness_index": roughness,
         "pct_uphill_segments": pct_uphill,
         "pct_downhill_segments": pct_downhill,
@@ -619,3 +768,5 @@ def extract_route_difficulty_metrics_from_elevation(elevation_df: pd.DataFrame) 
         "elevation_change_frequency_per_km": float(frequency),
         "route_complexity_score": float(complexity),
     }
+    result.update(extract_route_exposure_features(profile))
+    return result

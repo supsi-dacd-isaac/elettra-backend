@@ -15,9 +15,15 @@ ELEVATION_PROFILE_CATEGORIES = (
 )
 ELEVATION_PROFILE_BASELINE = ELEVATION_PROFILE_CATEGORIES[0]
 
-# Ordered raw model contract: 61 route/schedule statistics plus three pieces of
-# inference context. Contract v2 releases contain exactly these 64 columns.
-RAW_TRIP_FEATURE_COLUMNS = (
+# Ordered raw model contract.  Contract v2 releases contain 61 route/schedule
+# statistics plus three pieces of inference context.  Contract v3 adds only
+# deterministic route and schedule descriptors that are available identically
+# during training and inference.
+FEATURE_CONTRACT_V2 = "2.0.0"
+FEATURE_CONTRACT_V3 = "3.0.0"
+SUPPORTED_FEATURE_CONTRACT_VERSIONS = (FEATURE_CONTRACT_V2, FEATURE_CONTRACT_V3)
+
+RAW_TRIP_FEATURE_COLUMNS_V2 = (
     "start_time_minutes", "end_time_minutes", "total_number_of_stops",
     "total_duration_minutes", "total_dwell_time_minutes", "driving_time_minutes",
     "total_horizontal_distance_m", "total_distance_m", "average_speed_kmh",
@@ -42,40 +48,115 @@ RAW_TRIP_FEATURE_COLUMNS = (
     "significant_elevation_changes", "elevation_change_frequency_per_km",
     "route_complexity_score",
 )
+
+HBEFA_INSPIRED_FEATURE_COLUMNS = (
+    "grade_distance_share_lt_neg5",
+    "grade_distance_share_neg5_neg3",
+    "grade_distance_share_neg3_neg1",
+    "grade_distance_share_neg1_pos1",
+    "grade_distance_share_pos1_pos3",
+    "grade_distance_share_pos3_pos5",
+    "grade_distance_share_ge_pos5",
+    "road_distance_share_local",
+    "road_distance_share_distributor",
+    "road_distance_share_trunk_city",
+    "road_distance_share_unknown",
+    "scheduled_speed_distance_share_lt_10",
+    "scheduled_speed_distance_share_10_20",
+    "scheduled_speed_distance_share_20_30",
+    "scheduled_speed_distance_share_ge_30",
+    "scheduled_stop_density_per_km",
+    "scheduled_dwell_time_fraction",
+)
+
+RAW_TRIP_FEATURE_COLUMNS_V3 = (
+    RAW_TRIP_FEATURE_COLUMNS_V2 + HBEFA_INSPIRED_FEATURE_COLUMNS
+)
 MODEL_CONTEXT_COLUMNS = (
     "bus_length_m",
     "bus_battery_kwh",
     "avg_temp_outside_celsius",
 )
-RAW_MODEL_FEATURE_COLUMNS = RAW_TRIP_FEATURE_COLUMNS + MODEL_CONTEXT_COLUMNS
+RAW_MODEL_FEATURE_COLUMNS_V2 = RAW_TRIP_FEATURE_COLUMNS_V2 + MODEL_CONTEXT_COLUMNS
+RAW_MODEL_FEATURE_COLUMNS_V3 = RAW_TRIP_FEATURE_COLUMNS_V3 + MODEL_CONTEXT_COLUMNS
+
+RAW_TRIP_FEATURE_COLUMNS_BY_VERSION = {
+    FEATURE_CONTRACT_V2: RAW_TRIP_FEATURE_COLUMNS_V2,
+    FEATURE_CONTRACT_V3: RAW_TRIP_FEATURE_COLUMNS_V3,
+}
+RAW_MODEL_FEATURE_COLUMNS_BY_VERSION = {
+    FEATURE_CONTRACT_V2: RAW_MODEL_FEATURE_COLUMNS_V2,
+    FEATURE_CONTRACT_V3: RAW_MODEL_FEATURE_COLUMNS_V3,
+}
+
+# Unqualified names intentionally mean the latest contract for new code.
+RAW_TRIP_FEATURE_COLUMNS = RAW_TRIP_FEATURE_COLUMNS_V3
+RAW_MODEL_FEATURE_COLUMNS = RAW_MODEL_FEATURE_COLUMNS_V3
 
 
-def prepare_model_feature_frame(dataframe: pd.DataFrame) -> pd.DataFrame:
-    """Validate and order an unencoded contract-v2 model feature frame."""
-    missing = [column for column in RAW_MODEL_FEATURE_COLUMNS if column not in dataframe]
+def raw_trip_feature_columns(feature_contract_version: str) -> tuple[str, ...]:
+    """Return ordered route/schedule columns for a supported contract."""
+    try:
+        return RAW_TRIP_FEATURE_COLUMNS_BY_VERSION[str(feature_contract_version)]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported feature contract {feature_contract_version!r}; "
+            f"supported={SUPPORTED_FEATURE_CONTRACT_VERSIONS}"
+        ) from exc
+
+
+def raw_model_feature_columns(feature_contract_version: str) -> tuple[str, ...]:
+    """Return ordered raw model columns for a supported contract."""
+    try:
+        return RAW_MODEL_FEATURE_COLUMNS_BY_VERSION[str(feature_contract_version)]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported feature contract {feature_contract_version!r}; "
+            f"supported={SUPPORTED_FEATURE_CONTRACT_VERSIONS}"
+        ) from exc
+
+
+def prepare_model_feature_frame(
+    dataframe: pd.DataFrame,
+    *,
+    feature_contract_version: str = FEATURE_CONTRACT_V3,
+) -> pd.DataFrame:
+    """Validate and order an unencoded model feature frame by contract."""
+    columns = raw_model_feature_columns(feature_contract_version)
+    missing = [column for column in columns if column not in dataframe]
     if missing:
-        raise ValueError(f"Missing contract-v2 model features: {missing}")
-    unexpected = [column for column in dataframe if column not in RAW_MODEL_FEATURE_COLUMNS]
+        raise ValueError(
+            f"Missing contract-{feature_contract_version} model features: {missing}"
+        )
+    unexpected = [column for column in dataframe if column not in columns]
     if unexpected:
-        raise ValueError(f"Unexpected contract-v2 model features: {unexpected}")
-    return dataframe.loc[:, RAW_MODEL_FEATURE_COLUMNS].copy()
+        raise ValueError(
+            f"Unexpected contract-{feature_contract_version} model features: {unexpected}"
+        )
+    return dataframe.loc[:, columns].copy()
 
 
 def prepare_model_feature_row(
-    statistics: dict[str, Any], context: dict[str, Any]
+    statistics: dict[str, Any],
+    context: dict[str, Any],
+    *,
+    feature_contract_version: str = FEATURE_CONTRACT_V3,
 ) -> pd.DataFrame:
     """Build one strict raw model row from canonical statistics and context."""
+    trip_columns = raw_trip_feature_columns(feature_contract_version)
+    model_columns = raw_model_feature_columns(feature_contract_version)
     missing_statistics = [
-        column for column in RAW_TRIP_FEATURE_COLUMNS if column not in statistics
+        column for column in trip_columns if column not in statistics
     ]
     missing_context = [column for column in MODEL_CONTEXT_COLUMNS if column not in context]
     if missing_statistics or missing_context:
         raise ValueError(
-            "Missing contract-v2 inputs: "
+            f"Missing contract-{feature_contract_version} inputs: "
             f"statistics={missing_statistics}, context={missing_context}"
         )
     return prepare_model_feature_frame(
-        pd.DataFrame([{**statistics, **context}], columns=RAW_MODEL_FEATURE_COLUMNS)
+        pd.DataFrame([{**statistics, **context}], columns=model_columns),
+        feature_contract_version=feature_contract_version,
     )
 
 

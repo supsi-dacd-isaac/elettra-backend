@@ -9,7 +9,11 @@ import numpy as np
 from typing import Dict, List, Any, Optional
 import logging
 
-from elettra_core import encode_categorical_features, prepare_model_feature_row
+from elettra_core import (
+    FEATURE_CONTRACT_VERSION,
+    encode_categorical_features,
+    prepare_model_feature_row,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -160,11 +164,12 @@ def prepare_features_from_trip_stats(
     battery_capacity_kwh: float,
     external_temp_celsius: float,
     additional_params: Optional[Dict[str, Any]] = None,
+    feature_contract_version: str = FEATURE_CONTRACT_VERSION,
 ) -> pd.DataFrame:
-    """Prepare strict contract-v2 model inputs with shared train/serve logic."""
+    """Prepare strict versioned model inputs with shared train/serve logic."""
     if additional_params:
         raise ValueError(
-            "additional_params are not part of feature contract v2; use the explicit "
+            "additional_params are not part of a versioned feature contract; use the explicit "
             "legacy preparation function for a legacy model"
         )
     rows = []
@@ -179,13 +184,23 @@ def prepare_features_from_trip_stats(
         statistics = trip_stat.get("statistics", {}).get("statistics")
         if not statistics:
             raise ValueError(f"Missing canonical statistics for trip {trip_id!r}")
-        rows.append(prepare_model_feature_row(statistics, context))
+        rows.append(
+            prepare_model_feature_row(
+                statistics,
+                context,
+                feature_contract_version=feature_contract_version,
+            )
+        )
         trip_ids.append(trip_id)
     if not rows:
         return pd.DataFrame()
     frame = encode_categorical_features(pd.concat(rows, ignore_index=True))
     frame.insert(0, "trip_id", trip_ids)
-    logger.info("Prepared strict contract-v2 features for %d trips", len(frame))
+    logger.info(
+        "Prepared strict contract-%s features for %d trips",
+        feature_contract_version,
+        len(frame),
+    )
     return frame
 
 

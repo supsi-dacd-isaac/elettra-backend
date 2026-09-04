@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple, Callable, Union
 import logging
 
-from elettra_core import FEATURE_CONTRACT_VERSION, categorical_feature_contract
+from elettra_core import (
+    FEATURE_CONTRACT_VERSION,
+    SUPPORTED_FEATURE_CONTRACT_VERSIONS,
+    categorical_feature_contract,
+)
 from elettra_core.greybox import HybridGreyboxQRF
 from app.services.runtime_release import runtime_release_configuration
 from .minio_utils import download_model_from_minio, build_model_path
@@ -60,12 +64,12 @@ def validate_model_feature_contract(metadata: Optional[Dict[str, Any]]) -> None:
 
     Existing production models predate versioned feature metadata and remain
     usable only in compatibility mode.  Once the release/model pair is pinned,
-    metadata is mandatory and must match contract v2 exactly.
+    metadata is mandatory and must declare a runtime-supported contract.
     """
     if not metadata or "feature_contract_version" not in metadata:
         if runtime_release_configuration().production_v2_active:
             raise ValueError(
-                "Production feature contract v2 requires model metadata with "
+                "Production feature contract requires model metadata with "
                 "feature_contract_version"
             )
         logger.warning(
@@ -74,15 +78,16 @@ def validate_model_feature_contract(metadata: Optional[Dict[str, Any]]) -> None:
         )
         return
     model_version = str(metadata["feature_contract_version"])
-    if model_version != FEATURE_CONTRACT_VERSION:
+    if model_version not in SUPPORTED_FEATURE_CONTRACT_VERSIONS:
         raise ValueError(
             "Model feature contract is incompatible with this runtime: "
-            f"model={model_version!r}, runtime={FEATURE_CONTRACT_VERSION!r}"
+            f"model={model_version!r}, "
+            f"supported={SUPPORTED_FEATURE_CONTRACT_VERSIONS!r}"
         )
     model_categorical_contract = metadata.get("categorical_feature_contract")
     if model_categorical_contract is None:
         raise ValueError(
-            "Contract-v2 model metadata has no categorical_feature_contract"
+            "Versioned model metadata has no categorical_feature_contract"
         )
     runtime_categorical_contract = categorical_feature_contract()
     if model_categorical_contract != runtime_categorical_contract:
@@ -249,7 +254,12 @@ class ConsumptionPredictor:
             bus_length_m=bus_length_m,
             battery_capacity_kwh=battery_capacity_kwh,
             external_temp_celsius=external_temp_celsius,
-            additional_params=additional_params
+            additional_params=additional_params,
+            feature_contract_version=(
+                str(self.metadata.get("feature_contract_version"))
+                if self.metadata and self.metadata.get("feature_contract_version")
+                else FEATURE_CONTRACT_VERSION
+            ),
         )
         
         # Greybox models require additional columns and a superset of features

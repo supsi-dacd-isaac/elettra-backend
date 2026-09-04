@@ -14,9 +14,10 @@ import numpy as np
 from elettra_core import (
     FEATURE_CONTRACT_VERSION,
     GREYBOX_PRED_FEATURE,
-    RAW_MODEL_FEATURE_COLUMNS,
+    SUPPORTED_FEATURE_CONTRACT_VERSIONS,
     __version__ as ELETTRA_CORE_VERSION,
     categorical_feature_contract,
+    raw_model_feature_columns,
     source_tree_sha256,
 )
 from elettra_core.greybox import (
@@ -46,6 +47,10 @@ VECTO_ACCEPTANCE_TYPE = "vecto-model-release-acceptance-v1"
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
 ELETTRA_CORE_TAG = f"elettra-core-v{ELETTRA_CORE_VERSION}"
+COMPATIBLE_CORE_FEATURE_CONTRACTS = {
+    "2.2.1": "2.0.0",
+    ELETTRA_CORE_VERSION: FEATURE_CONTRACT_VERSION,
+}
 
 
 class ModelReleaseValidationError(RuntimeError):
@@ -62,17 +67,21 @@ _validated_artifact_identities: dict[str, tuple[Any, ...]] | None = None
 _validated_model_releases: dict[str, dict[str, Any]] = {}
 
 
-def _servable_selected_features() -> set[str]:
+def _servable_selected_features(feature_contract_version: str) -> set[str]:
     categorical = categorical_feature_contract()["elevation_profile_type"]
     return (
-        set(RAW_MODEL_FEATURE_COLUMNS)
+        set(raw_model_feature_columns(feature_contract_version))
         - {"elevation_profile_type"}
         | set(categorical["dummy_columns"])
         | {GREYBOX_PRED_FEATURE}
     )
 
 
-def _validate_selected_features(selected_features: Any) -> list[str]:
+def _validate_selected_features(
+    selected_features: Any,
+    *,
+    feature_contract_version: str = FEATURE_CONTRACT_VERSION,
+) -> list[str]:
     if (
         not isinstance(selected_features, list)
         or not selected_features
@@ -93,10 +102,13 @@ def _validate_selected_features(selected_features: Any) -> list[str]:
         "bus_battery_kwh",
     }
     rejected = sorted(set(selected_features) & forbidden)
-    unavailable = sorted(set(selected_features) - _servable_selected_features())
+    unavailable = sorted(
+        set(selected_features) - _servable_selected_features(feature_contract_version)
+    )
     if rejected or unavailable:
         raise ModelReleaseValidationError(
-            "VECTO model selected_features cannot be served by feature contract v2: "
+            "VECTO model selected_features cannot be served by feature contract "
+            f"{feature_contract_version}: "
             f"forbidden={rejected}, unavailable={unavailable}"
         )
     return selected_features
@@ -286,7 +298,8 @@ def _validate_loaded_model_artifact(
             f"Stack {stack_release.stack.value!r} requires HybridGreyboxQRF"
         )
     selected_features = _validate_selected_features(
-        metadata.get("selected_features")
+        metadata.get("selected_features"),
+        feature_contract_version=str(metadata.get("feature_contract_version")),
     )
     if model.prediction_stack != stack_release.stack.value:
         raise ModelReleaseValidationError(
@@ -417,7 +430,8 @@ def _validate_one_model_release(
     if (
         release.get("schema_version") != MODEL_RELEASE_SCHEMA_VERSION
         or release.get("release_id") != model_name
-        or release.get("feature_contract_version") != FEATURE_CONTRACT_VERSION
+        or release.get("feature_contract_version")
+        not in SUPPORTED_FEATURE_CONTRACT_VERSIONS
         or not isinstance(release.get("categorical_feature_contract"), dict)
         or not isinstance(publication, dict)
         or publication.get("object_prefix") != expected_prefix
@@ -524,22 +538,41 @@ def _validate_one_model_release(
     runtime_configuration = runtime_release_configuration()
     runtime_core_commit = runtime_configuration.elettra_core_source_commit
     runtime_core_tree_sha256 = source_tree_sha256()
-    if stack_release.stack is not PredictionStack.LEGACY and (
-        not isinstance(core_provenance, dict)
-        or core_provenance.get("package_version") != ELETTRA_CORE_VERSION
-        or core_provenance.get("tag") != ELETTRA_CORE_TAG
-        or not isinstance(core_provenance.get("source_commit"), str)
-        or _GIT_SHA_PATTERN.fullmatch(core_provenance["source_commit"]) is None
-        or core_provenance["source_commit"] != runtime_core_commit
-        or core_provenance.get("source_tree_sha256") != runtime_core_tree_sha256
-        or runtime_configuration.elettra_core_image_tree_sha256
-        != runtime_core_tree_sha256
-        or release.get("elettra_core") != core_provenance
-    ):
-        raise ModelReleaseValidationError(
-            "VECTO model metadata/manifest does not pin the runtime "
-            f"{ELETTRA_CORE_TAG} release, source commit and installed source tree"
+    if stack_release.stack is not PredictionStack.LEGACY:
+        package_version = (
+            core_provenance.get("package_version")
+            if isinstance(core_provenance, dict)
+            else None
         )
+        model_contract = metadata.get("feature_contract_version")
+        common_provenance_valid = (
+            isinstance(core_provenance, dict)
+            and COMPATIBLE_CORE_FEATURE_CONTRACTS.get(package_version)
+            == model_contract
+            and core_provenance.get("tag") == f"elettra-core-v{package_version}"
+            and isinstance(core_provenance.get("source_commit"), str)
+            and _GIT_SHA_PATTERN.fullmatch(core_provenance["source_commit"])
+            is not None
+            and isinstance(core_provenance.get("source_tree_sha256"), str)
+            and _SHA256_PATTERN.fullmatch(core_provenance["source_tree_sha256"])
+            is not None
+            and release.get("elettra_core") == core_provenance
+        )
+        current_runtime_valid = (
+            package_version != ELETTRA_CORE_VERSION
+            or (
+                core_provenance.get("source_commit") == runtime_core_commit
+                and core_provenance.get("source_tree_sha256")
+                == runtime_core_tree_sha256
+                and runtime_configuration.elettra_core_image_tree_sha256
+                == runtime_core_tree_sha256
+            )
+        ) if isinstance(core_provenance, dict) else False
+        if not common_provenance_valid or not current_runtime_valid:
+            raise ModelReleaseValidationError(
+                "VECTO model metadata/manifest does not pin a runtime-compatible "
+                "elettra-core release, source commit/tree and feature contract"
+            )
 
     feature_release = metadata.get("feature_release")
     if not isinstance(feature_release, dict):
@@ -587,7 +620,7 @@ def _validate_one_model_release(
                 for key, value in expected_acceptance_artifacts.items()
             )
             or acceptance_candidate.get("feature_contract_version")
-            != FEATURE_CONTRACT_VERSION
+            != metadata.get("feature_contract_version")
             or acceptance_candidate.get("feature_release_manifest_sha256")
             != feature_release.get("manifest_sha256")
             or not isinstance(acceptance_test_set, dict)

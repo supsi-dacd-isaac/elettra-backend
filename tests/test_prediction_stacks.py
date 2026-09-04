@@ -43,6 +43,7 @@ from app.models import PredictionRuns
 from simulation.consumption_prediction import ConsumptionPredictor
 from simulation.greybox_models import CombinedGreyboxQRF
 from elettra_core import (
+    FEATURE_CONTRACT_VERSION,
     AuxiliaryEnergyComponents,
     CappedRegenAffineGreyBox,
     HybridGreyboxQRF,
@@ -512,6 +513,7 @@ def _features() -> pd.DataFrame:
 
 def _artifact_metadata(model, selected_features=None):
     metadata = {
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "selected_features": list(
             selected_features
             if selected_features is not None
