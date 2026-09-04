@@ -77,13 +77,14 @@ services:
     # command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   elettra-frontend-staging:
-    image: ${ELETTRA_FRONTEND_IMAGE:-ghcr.io/supsi-ide/elettra@sha256:26fffd2e50c438d82f774ca2e371e131dabfd4af532ea60012aa6d9b77edd026}
+    image: ${ELETTRA_FRONTEND_IMAGE:-ghcr.io/supsi-ide/elettra@sha256:8868bc89a95f835f7a89399cefff25527af14e005245ed237bb790c8b9089933}
     container_name: elettra-frontend-staging
     restart: unless-stopped
     ports:
       - "${ELETTRA_STAGING_BIND_ADDRESS:-0.0.0.0}:${ELETTRA_STAGING_PORT:-55558}:80"
     environment:
       API_BACKEND_URL: ${ELETTRA_FRONTEND_API_BACKEND_URL:-http://app:8000}
+      CARTO_API_KEY: ${CARTO_API_KEY:?CARTO_API_KEY is required}
     depends_on:
       app:
         condition: service_started
