@@ -238,6 +238,21 @@ TEST_REPORT_COLOR=1 pytest -k auth
 Reports appear in `tests/reports/` as both `.txt` and `.json`.
 See `tests/README.md` for details / adding new suites.
 
+### 11.1 Release gate
+
+Backend releases are created by `.github/workflows/container-release.yml`.
+For a new release, update `config/elettra-config.image.yaml`, merge the commit
+to `main`, then push a matching semantic-version tag such as `v1.0.2`. The
+workflow verifies the tag and application version, initializes a clean
+PostgreSQL database, and runs pytest before publishing the multi-architecture
+GHCR image. The GitHub Release job depends on both verification and image
+publication, so a failed test or build cannot publish a release.
+
+The workflow can also be run manually from GitHub Actions to exercise the CI
+test environment without publishing an image or release. Tests requiring the
+deployment GTFS dataset, OSRM, MinIO or private model artifacts remain explicit
+opt-in integration tests and are reported as skipped on the hosted runner.
+
 ---
 ## 12. Development Tips
 - Configuration: ensure `ELETTRA_CONFIG_FILE` is set *before* starting `main.py`.

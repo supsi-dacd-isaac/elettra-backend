@@ -12,8 +12,8 @@ __report_module__ = "trip_statistics"
 TEST_LOGIN_EMAIL = os.getenv("TEST_LOGIN_EMAIL", "test@supsi.ch")
 TEST_LOGIN_PASSWORD = os.getenv("TEST_LOGIN_PASSWORD", ">tha0-!UdLb.hZ@aP)*x")
 ELEVATION_IT_TRIP_ID = os.getenv("ELEVATION_IT_TRIP_ID", "5adc5823-61b8-4f7f-a953-13e93fb1f7fa")
-TEST_TRIP_STATISTICS_ID1 = os.getenv("TEST_TRIP_STATISTICS_ID1", "aead2c47-ae3c-4740-8895-8eec54c3aecb")
-TEST_TRIP_STATISTICS_ID2 = os.getenv("TEST_TRIP_STATISTICS_ID2", "c99e99a4-2167-4967-bf7a-af94a6278c4f")
+TEST_TRIP_STATISTICS_ID1 = os.getenv("TEST_TRIP_STATISTICS_ID1")
+TEST_TRIP_STATISTICS_ID2 = os.getenv("TEST_TRIP_STATISTICS_ID2")
 AUTH_BASE = "/auth"
 
 
@@ -39,6 +39,8 @@ def auth_headers(token: str) -> dict:
 
 def test_trip_statistics_single_trip(client, record):
     """Test computing combined statistics for a single trip (still single response)"""
+    if not TEST_TRIP_STATISTICS_ID1:
+        pytest.skip("TEST_TRIP_STATISTICS_ID1 is required")
     
     # Get authentication token
     token = get_auth_token(client)
@@ -113,6 +115,8 @@ def test_trip_statistics_single_trip(client, record):
 
 def test_trip_statistics_multiple_trips(client, record):
     """Test computing combined statistics for two trips (single response)"""
+    if not TEST_TRIP_STATISTICS_ID1 or not TEST_TRIP_STATISTICS_ID2:
+        pytest.skip("TEST_TRIP_STATISTICS_ID1 and TEST_TRIP_STATISTICS_ID2 are required")
     
     # Get authentication token
     token = get_auth_token(client)

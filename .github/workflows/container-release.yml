@@ -1,0 +1,242 @@
+name: Test and release backend container
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  IMAGE_NAME: ghcr.io/supsi-dacd-isaac/elettra-backend
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: elettra
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admin -d elettra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ELETTRA_CONFIG_FILE: config/elettra-config.image.yaml
+      ELETTRA_TEST_ENV_FILE: /dev/null
+      ELETTRA_TESTING: "1"
+      DATABASE_URL: postgresql+asyncpg://admin:admin@127.0.0.1:5432/elettra
+      APP_SECRET_KEY: ci-release-test-secret-key
+      TEST_LOGIN_EMAIL: ci-release@example.com
+      TEST_LOGIN_PASSWORD: CI-release-gate_Str0ng!
+      TEST_AGENCY_ID: 11111111-1111-4111-8111-111111111111
+      PGPASSWORD: admin
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must use the form vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::Release tags must point to a commit contained in main."
+            exit 1
+          }
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest pytest-asyncio
+
+      - name: Verify application version matches tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          tag_version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          config = yaml.safe_load(Path("config/elettra-config.image.yaml").read_text())
+          app_version = str(config["app"]["version"])
+          if app_version != tag_version:
+              raise SystemExit(
+                  f"release tag {tag_version!r} does not match app version {app_version!r}"
+              )
+          PY
+
+      - name: Initialize test database
+        run: |
+          psql -h 127.0.0.1 -U admin -d elettra \
+            -v ON_ERROR_STOP=1 -f db/elettra_schema_init.sql
+          psql -h 127.0.0.1 -U admin -d elettra \
+            -v ON_ERROR_STOP=1 -f tests/ci_seed.sql
+
+      - name: Run test suite
+        run: python -m pytest -q
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports-${{ github.run_id }}
+          path: tests/reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish-image:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      core_tag: ${{ steps.core.outputs.tag }}
+      core_commit: ${{ steps.core.outputs.commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Resolve frozen Elettra core provenance
+        id: core
+        shell: bash
+        run: |
+          core_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          core_tag="elettra-core-v${core_version}"
+          core_commit="$(git rev-parse "${core_tag}^{commit}")"
+          git merge-base --is-ancestor "$core_commit" HEAD || {
+            echo "::error::Frozen core tag $core_tag is not contained in the release commit."
+            exit 1
+          }
+          echo "tag=$core_tag" >> "$GITHUB_OUTPUT"
+          echo "commit=$core_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Elettra backend
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            ELETTRA_CORE_SOURCE_COMMIT=${{ steps.core.outputs.commit }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
+
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - verify
+      - publish-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published image identity
+        env:
+          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+          EXPECTED_CORE_COMMIT: ${{ needs.publish-image.outputs.core_commit }}
+        run: |
+          image_ref="${IMAGE_NAME}@${IMAGE_DIGEST}"
+          docker pull "$image_ref"
+          docker run --rm \
+            --entrypoint python \
+            -e EXPECTED_APP_VERSION="${GITHUB_REF_NAME#v}" \
+            -e EXPECTED_CORE_COMMIT \
+            "$image_ref" \
+            -c 'from pathlib import Path; import os; from app.core.config import get_cached_settings; actual_version = get_cached_settings().app_version; expected_version = os.environ["EXPECTED_APP_VERSION"]; actual_core = Path("/etc/elettra-core-image-commit").read_text().strip(); expected_core = os.environ["EXPECTED_CORE_COMMIT"]; assert actual_version == expected_version, f"image version {actual_version!r} != {expected_version!r}"; assert actual_core == expected_core, f"image core {actual_core!r} != {expected_core!r}"; print(f"verified app {actual_version}, core {actual_core}")'
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+          CORE_TAG: ${{ needs.publish-image.outputs.core_tag }}
+          CORE_COMMIT: ${{ needs.publish-image.outputs.core_commit }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Elettra Backend ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --notes "Container: ${IMAGE_NAME}@${IMAGE_DIGEST}
+
+          Frozen VECTO core: ${CORE_TAG} at ${CORE_COMMIT}."
