@@ -62,23 +62,6 @@ def ensure_bus_model(client: TestClient, token: str) -> str:
     return r.json()["id"]
 
 
-@pytest.fixture(autouse=True)
-def cleanup_buses(client):
-    yield
-    try:
-        token = get_auth_token(client)
-        if not token:
-            return
-        hdrs = auth_headers(token)
-        r = client.get(f"{API_BASE}/buses/", headers=hdrs)
-        if r.status_code == 200:
-            for b in r.json():
-                if b.get("name", "").startswith("Test Bus") or b.get("name", "").startswith("Updated Bus"):
-                    client.delete(f"{API_BASE}/buses/{b['id']}", headers=hdrs)
-    except Exception:
-        pass
-
-
 def test_create_read_update_delete_bus(client: TestClient, record):
     token = get_auth_token(client)
     if not token:
@@ -87,39 +70,54 @@ def test_create_read_update_delete_bus(client: TestClient, record):
     hdrs = auth_headers(token)
     user_id = current_user_id(client, token)
     model_id = ensure_bus_model(client, token)
+    suffix = uuid.uuid4().hex[:10]
+    bus_name = f"Test Bus {suffix}"
+    updated_name = f"Updated Bus {suffix}"
+    bus_id = None
 
-    # Create
-    r = client.post(f"{API_BASE}/buses/", json={
-        "user_id": user_id,
-        "name": "Test Bus 1",
-        "specs": {"range_km": 250},
-        "bus_model_id": model_id
-    }, headers=hdrs)
-    record("bus_create", r.status_code == 200, f"status={r.status_code}")
-    bus_id = r.json()["id"]
+    try:
+        # Create
+        r = client.post(f"{API_BASE}/buses/", json={
+            "user_id": user_id,
+            "name": bus_name,
+            "specs": {"range_km": 250},
+            "bus_model_id": model_id
+        }, headers=hdrs)
+        if r.status_code == 200:
+            bus_id = r.json()["id"]
+        record("bus_create", r.status_code == 200, f"status={r.status_code}")
 
-    # List
-    r = client.get(f"{API_BASE}/buses/", headers=hdrs)
-    record("bus_list", r.status_code == 200 and any(b["id"] == bus_id for b in r.json()), f"status={r.status_code}")
+        # List
+        r = client.get(f"{API_BASE}/buses/?skip=0&limit=1000", headers=hdrs)
+        record("bus_list", r.status_code == 200 and any(b["id"] == bus_id for b in r.json()), f"status={r.status_code}")
 
-    # Get
-    r = client.get(f"{API_BASE}/buses/{bus_id}", headers=hdrs)
-    record("bus_get", r.status_code == 200 and r.json()["id"] == bus_id, f"status={r.status_code}")
+        # Get
+        r = client.get(f"{API_BASE}/buses/{bus_id}", headers=hdrs)
+        record("bus_get", r.status_code == 200 and r.json()["id"] == bus_id, f"status={r.status_code}")
 
-    # Update
-    r = client.put(f"{API_BASE}/buses/{bus_id}", json={"name": "Updated Bus 1"}, headers=hdrs)
-    ok = r.status_code == 200 and r.json()["name"] == "Updated Bus 1"
-    record("bus_update", ok, f"status={r.status_code}")
+        # Update
+        r = client.put(f"{API_BASE}/buses/{bus_id}", json={"name": updated_name}, headers=hdrs)
+        ok = r.status_code == 200 and r.json()["name"] == updated_name
+        record("bus_update", ok, f"status={r.status_code}")
 
-    # Delete bus
-    r = client.delete(f"{API_BASE}/buses/{bus_id}", headers=hdrs)
-    record("bus_delete", r.status_code == 200, f"status={r.status_code}")
-    # Verify bus deleted
-    r = client.get(f"{API_BASE}/buses/{bus_id}", headers=hdrs)
-    record("bus_verify_deleted", r.status_code == 404, f"status={r.status_code}")
-    # Also delete the model that was created for this test
-    r = client.delete(f"{API_BASE}/bus-models/{model_id}", headers=hdrs)
-    record("bus_cleanup_model", r.status_code == 200, f"status={r.status_code}")
+        # Delete bus
+        deleted_bus_id = bus_id
+        r = client.delete(f"{API_BASE}/buses/{deleted_bus_id}", headers=hdrs)
+        if r.status_code == 200:
+            bus_id = None
+        record("bus_delete", r.status_code == 200, f"status={r.status_code}")
+        # Verify bus deleted
+        r = client.get(f"{API_BASE}/buses/{deleted_bus_id}", headers=hdrs)
+        record("bus_verify_deleted", r.status_code == 404, f"status={r.status_code}")
+        # Also delete the model that was created for this test
+        r = client.delete(f"{API_BASE}/bus-models/{model_id}", headers=hdrs)
+        record("bus_cleanup_model", r.status_code == 200, f"status={r.status_code}")
+        model_id = None
+    finally:
+        if bus_id is not None:
+            client.delete(f"{API_BASE}/buses/{bus_id}", headers=hdrs)
+        if model_id is not None:
+            client.delete(f"{API_BASE}/bus-models/{model_id}", headers=hdrs)
 
 
 def test_bus_not_found(client: TestClient, record):

@@ -166,12 +166,16 @@ def test_trip_statistics_invalid_trip(client, record):
     )
     
     try:
-        assert response.status_code == 200
-        result = response.json()
-        assert result["error"] is not None or len(result["statistics"]) == 0
-        
-        error_msg = result.get('error', 'No stops found')
-        record("trip_statistics_invalid_trip", True, f"Correctly handled non-existent trip: {error_msg}")
+        assert response.status_code == 422
+        detail = response.json().get("detail", "")
+        assert fake_trip_id in detail
+        assert "sequence is incomplete" in detail
+
+        record(
+            "trip_statistics_invalid_trip",
+            True,
+            f"Correctly rejected incomplete trip sequence: {detail}",
+        )
     except AssertionError as e:
         record("trip_statistics_invalid_trip", False, str(e))
 
@@ -219,4 +223,3 @@ def test_trip_statistics_empty_list(client, record):
         record("trip_statistics_empty_list", True, "Empty trip list handled correctly")
     except AssertionError as e:
         record("trip_statistics_empty_list", False, str(e))
-

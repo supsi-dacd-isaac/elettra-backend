@@ -4,6 +4,7 @@ from fastapi import Response
 import pytest
 
 import main
+from elettra_core import FEATURE_CONTRACT_VERSION
 
 
 # The shared API TestClient stubs external startup dependencies for the broad
@@ -159,7 +160,10 @@ async def test_health_is_200_only_after_schema_and_minio_preflights(monkeypatch)
         "required_algorithm": None,
         "required_roads_release": None,
     }
-    assert payload.services["application"].metadata["feature_contract_version"] == "2.0.0"
+    assert (
+        payload.services["application"].metadata["feature_contract_version"]
+        == FEATURE_CONTRACT_VERSION
+    )
     assert payload.services["consumption_model"].metadata["model_release"] is None
 
 

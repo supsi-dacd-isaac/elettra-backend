@@ -15,6 +15,7 @@ fi
 
 # Set PYTHONPATH
 export PYTHONPATH="$SCRIPT_DIR:$PYTHONPATH"
+export ELETTRA_TESTING=1
 
 # Load environment variables from test.env if it exists
 if [ -f "tests/test.env" ]; then

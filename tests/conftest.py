@@ -16,7 +16,39 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Load environment variables from .env file if it exists
+# Mark the process before importing the application.  app.database uses this
+# flag to avoid reusing asyncpg connections across the independent event loops
+# created by TestClient, pytest-asyncio and AnyIO.
+os.environ["ELETTRA_TESTING"] = "1"
+
+# Deployment release pins describe the running image, not the test process.
+# Keeping them in the environment makes otherwise isolated unit tests depend on
+# the developer's local .env.  Tests for these settings install their own values
+# with monkeypatch.
+if os.getenv("ELETTRA_TEST_USE_DEPLOYMENT_ENV") != "1":
+    for key in (
+        "GTFS_ELEVATION_PROFILES_BUCKET",
+        "ELEVATION_PROFILES_RELEASE",
+        "CONSUMPTION_MODEL_RELEASE",
+        "LEGACY_CONSUMPTION_MODEL_RELEASE",
+        "VECTO_G2_CONSUMPTION_MODEL_RELEASE",
+        "VECTO_G0_TRANSFER_MODEL_RELEASE",
+        "DEFAULT_PREDICTION_STACK",
+        "ENABLE_EXPERIMENTAL_PREDICTION_STACKS",
+        "ELETTRA_CORE_SOURCE_COMMIT",
+        "ELETTRA_CORE_IMAGE_COMMIT",
+        "ELETTRA_CORE_IMAGE_TREE_SHA256",
+        "ELEVATION_AUX_PROFILE_ALGORITHM",
+        "ELEVATION_AUX_ROADS_RELEASE",
+    ):
+        os.environ.pop(key, None)
+
+# ``DEBUG`` is a common shell variable and Pydantic would otherwise interpret
+# it as the application's nested app.debug setting.
+os.environ.pop("DEBUG", None)
+
+# Load test environment variables without ever falling back to the deployment
+# .env file.
 
 def load_env_file(env_path: Path):
     """Load environment variables from .env file"""
@@ -33,12 +65,14 @@ def load_env_file(env_path: Path):
                     value = value.strip('"\'')
                     os.environ[key.strip()] = value
 
-# Try to load .env files in order of preference
-env_files = [
-    PROJECT_ROOT / ".env",
-    PROJECT_ROOT / "tests" / "test.env",
-    PROJECT_ROOT / ".env.test"
-]
+# ELETTRA_TEST_ENV_FILE allows CI to provide an explicit file.  Local checkouts
+# retain the historical tests/test.env convention.
+explicit_test_env = os.getenv("ELETTRA_TEST_ENV_FILE")
+env_files = (
+    [Path(explicit_test_env).expanduser()]
+    if explicit_test_env
+    else [PROJECT_ROOT / "tests" / "test.env", PROJECT_ROOT / ".env.test"]
+)
 
 for env_file in env_files:
     if env_file.exists():

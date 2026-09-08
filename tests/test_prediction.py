@@ -36,9 +36,14 @@ BUS_MODEL_SPECS = {
             "temperature_celsius": [-5, 0, 5, 10, 15, 20, 25],
             "consumption_kw": [24, 16, 12, 8, 9, 10, 16],
         },
-        "diesel_heating": {
-            "temperature_celsius": [-20, -10, 0, 10, 15, 20, 25],
-            "consumption_kw": [8, 8, 8, 8, 9, 10, 16],
+        "diesel": {
+            "p_base_kw": 8,
+            "t_ref_celsius": 10,
+            "cop": {
+                "temperature_celsius": [-20, -10, 0, 10],
+                "values": [1.8, 2.0, 2.2, 2.5],
+            },
+            "diesel_heater_efficiency": 0.83,
         },
     },
 }
@@ -844,7 +849,7 @@ def test_weight_override_occupancy(client: TestClient, prediction_env, record):
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
 def test_auxiliary_model_selection(client: TestClient, prediction_env, record):
-    """At -5°C: default draws 24 kW (electric heating), diesel_heating draws 8 kW (diesel heater
+    """At -5°C: default draws 24 kW (electric heating), diesel draws 8 kW (diesel heater
     takes over heating, only base electrical load remains). Both curves converge above ~10°C."""
     token = prediction_env["token"]
     sid = prediction_env["shift_id"]
@@ -856,7 +861,7 @@ def test_auxiliary_model_selection(client: TestClient, prediction_env, record):
     )
     run_dsl, _ = _submit_and_wait(
         client, token, sid, bmid,
-        auxiliary_heating_type="diesel_heating", external_temp_celsius=-5,
+        auxiliary_heating_type="diesel", external_temp_celsius=-5,
     )
 
     aux_def = run_def["summary"]["total_auxiliary_kwh"]
@@ -903,14 +908,14 @@ def test_auxiliary_model_selection(client: TestClient, prediction_env, record):
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
 def test_auxiliary_diesel_nonzero_above_threshold(client: TestClient, prediction_env, record):
-    """diesel_heating at 20°C draws 10 kW (same as default) → non-zero auxiliary."""
+    """diesel at 20°C draws 10 kW (same as default) → non-zero auxiliary."""
     token = prediction_env["token"]
     sid = prediction_env["shift_id"]
     bmid = prediction_env["bus_model_id"]
 
     run_warm, _ = _submit_and_wait(
         client, token, sid, bmid,
-        auxiliary_heating_type="diesel_heating", external_temp_celsius=20,
+        auxiliary_heating_type="diesel", external_temp_celsius=20,
     )
 
     aux = run_warm["summary"]["total_auxiliary_kwh"]

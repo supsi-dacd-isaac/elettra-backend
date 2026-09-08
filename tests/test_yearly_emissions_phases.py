@@ -20,7 +20,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from main import app
 from app.routers.yearly_analysis import (
     _scale_indicator_phases,
     _allocate_phases_by_share,
@@ -405,12 +404,6 @@ class TestRealLcaApiResponse:
 # Integration tests with mocked LCA API
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(app) as c:
-        yield c
-
-
 def _get_auth_token(client: TestClient) -> str | None:
     import os
     credentials = [
@@ -540,7 +533,7 @@ def test_yearly_analysis(client, auth_data):
         finally:
             await conn.close()
 
-    result = asyncio.get_event_loop().run_until_complete(setup())
+    result = asyncio.run(setup())
     yield result
 
     async def teardown():
@@ -561,7 +554,7 @@ def test_yearly_analysis(client, auth_data):
         finally:
             await conn.close()
 
-    asyncio.get_event_loop().run_until_complete(teardown())
+    asyncio.run(teardown())
 
 
 @pytest.fixture(scope="module")
@@ -660,7 +653,7 @@ def test_diesel_yearly_analysis(client, auth_data):
         finally:
             await conn.close()
 
-    result = asyncio.get_event_loop().run_until_complete(setup())
+    result = asyncio.run(setup())
     yield result
 
     async def teardown():
@@ -681,7 +674,7 @@ def test_diesel_yearly_analysis(client, auth_data):
         finally:
             await conn.close()
 
-    asyncio.get_event_loop().run_until_complete(teardown())
+    asyncio.run(teardown())
 
 
 class TestEmissionsPhaseIntegration:
