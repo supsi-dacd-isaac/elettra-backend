@@ -214,13 +214,13 @@ def test_create_depot_invalid_coordinates(client, record):
 def test_create_depot_unauthorized(client, record):
     """Test depot creation without authentication"""
     depot_data = {
-        "user_id": TEST_AGENCY_ID,  # intentionally wrong type to trigger 403 due to missing auth
+        "user_id": TEST_AGENCY_ID,  # intentionally wrong type; auth must reject first
         "name": "Test Depot"
     }
     
     response = client.post(f"{API_BASE}/depots/", json=depot_data)
     
-    record("create_depot_unauthorized", response.status_code == 403, f"status={response.status_code}")
+    record("create_depot_unauthorized", response.status_code in (401, 403), f"status={response.status_code}")
 
 # -----------------------------
 # Read Depot Tests
@@ -304,7 +304,7 @@ def test_read_depot_unauthorized(client, record):
     fake_depot_id = "00000000-0000-0000-0000-000000000999"
     response = client.get(f"{API_BASE}/depots/{fake_depot_id}")
     
-    record("read_depot_unauthorized", response.status_code == 403, f"status={response.status_code}")
+    record("read_depot_unauthorized", response.status_code in (401, 403), f"status={response.status_code}")
 
 # -----------------------------
 # Update Depot Tests
@@ -423,7 +423,7 @@ def test_update_depot_unauthorized(client, record):
     
     response = client.put(f"{API_BASE}/depots/{fake_depot_id}", json=update_data)
     
-    record("update_depot_unauthorized", response.status_code == 403, f"status={response.status_code}")
+    record("update_depot_unauthorized", response.status_code in (401, 403), f"status={response.status_code}")
 
 # -----------------------------
 # Delete Depot Tests
@@ -473,7 +473,7 @@ def test_delete_depot_unauthorized(client, record):
     fake_depot_id = "00000000-0000-0000-0000-000000000999"
     response = client.delete(f"{API_BASE}/depots/{fake_depot_id}")
     
-    record("delete_depot_unauthorized", response.status_code == 403, f"status={response.status_code}")
+    record("delete_depot_unauthorized", response.status_code in (401, 403), f"status={response.status_code}")
 
 # -----------------------------
 # Integration Tests

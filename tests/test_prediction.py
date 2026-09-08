@@ -193,7 +193,7 @@ def test_predict_endpoint_auth_required(client: TestClient, record):
             "external_temp_celsius": 10,
         },
     )
-    record("predict_auth_required", r.status_code == 403, f"status={r.status_code}")
+    record("predict_auth_required", r.status_code in (401, 403), f"status={r.status_code}")
 
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)

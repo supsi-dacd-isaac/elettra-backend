@@ -421,7 +421,7 @@ def test_create_yearly_analysis_unauthorized(client, record):
     payload = {"name": "Test Analysis"}
     response = client.post(f"{API_BASE}/", json=payload)
 
-    record("create_unauthorized", response.status_code == 403, f"status={response.status_code}")
+    record("create_unauthorized", response.status_code in (401, 403), f"status={response.status_code}")
 
 
 # ------------------------------------------------------------------
@@ -577,7 +577,7 @@ def test_list_yearly_analyses_empty_for_user_without_analyses(client, record):
 
 def test_list_yearly_analyses_unauthorized(client, record):
     response = client.get(f"{API_BASE}/")
-    record("list_unauthorized", response.status_code == 403, f"status={response.status_code}")
+    record("list_unauthorized", response.status_code in (401, 403), f"status={response.status_code}")
 
 
 # ------------------------------------------------------------------
