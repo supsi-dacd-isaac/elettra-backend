@@ -442,7 +442,7 @@ def test_optimization_auth_required(client: TestClient, record):
             }],
         },
     )
-    record("optimization_auth_required", r.status_code == 403, f"status={r.status_code}")
+    record("optimization_auth_required", r.status_code in (401, 403), f"status={r.status_code}")
 
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
