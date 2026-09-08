@@ -30,11 +30,6 @@ LATITUDE = Decimal("-54.32109")
 LONGITUDE = Decimal("-123.45678")
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
 async def _cleanup() -> None:
     async with AsyncSessionLocal() as db:
         await db.execute(
@@ -58,7 +53,7 @@ async def _cleanup() -> None:
         await db.commit()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_apply_resume_cluster_provenance_and_rollback():
     await _cleanup()
     start = datetime(2030, 1, 1, tzinfo=timezone.utc)

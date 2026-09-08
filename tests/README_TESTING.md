@@ -45,11 +45,12 @@ The test environment variables are defined in `tests/test.env`. This file contai
 ### Environment File Priority
 
 The system looks for environment files in this order:
-1. `.env` (project root)
-2. `tests/test.env` 
-3. `.env.test` (project root)
+1. the file named by `ELETTRA_TEST_ENV_FILE`, when set;
+2. `tests/test.env`;
+3. `.env.test` (project root).
 
-The first file found will be used.
+The first file found will be used. The deployment `.env` is deliberately never
+loaded by pytest, so production release pins cannot change unit-test behaviour.
 
 ### Customizing Test Environment
 

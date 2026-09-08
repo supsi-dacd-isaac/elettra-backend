@@ -487,11 +487,14 @@ def fleet_env(client: TestClient):
         "charging_stations_config": charging_stations_config,
         "depot_stations_config": depot_stations_config,
         "name_to_stop_ids": name_to_stop_ids,
+        "optimization_run_ids": [],
     }
 
     yield env
 
     # Teardown
+    for run_id in env["optimization_run_ids"]:
+        client.delete(f"{SIM_BASE}/optimization-runs/{run_id}", headers=hdrs)
     for sr in shift_records:
         client.delete(f"{API_BASE}/shifts/{sr['shift_id']}", headers=hdrs)
     for bus_id in bus_ids.values():
@@ -537,6 +540,7 @@ def test_fleet_charging_only(client: TestClient, fleet_env, record):
     stations = fleet_env["charging_stations_config"]
 
     body = {
+        "name": "Fleet charging-only integration test",
         "mode": "charging_only",
         "shift_ids": all_shift_ids,
         "prediction_run_ids": all_pred_ids,
@@ -555,6 +559,7 @@ def test_fleet_charging_only(client: TestClient, fleet_env, record):
     )
     assert r.status_code == 200, f"charging_only submit failed: {r.text}"
     run_id = r.json()["optimization_run_id"]
+    fleet_env["optimization_run_ids"].append(run_id)
     data = wait_for_optimization(client, token, run_id, max_wait=900)
 
     res = data.get("results", {})
@@ -587,6 +592,7 @@ def test_fleet_battery_only(client: TestClient, fleet_env, record):
     ]
 
     body = {
+        "name": "Fleet battery-only integration test",
         "mode": "battery_only",
         "shift_ids": all_shift_ids,
         "prediction_run_ids": all_pred_ids,
@@ -605,6 +611,7 @@ def test_fleet_battery_only(client: TestClient, fleet_env, record):
     )
     assert r.status_code == 200, f"battery_only submit failed: {r.text}"
     run_id = r.json()["optimization_run_id"]
+    fleet_env["optimization_run_ids"].append(run_id)
     data = wait_for_optimization(client, token, run_id, max_wait=900)
 
     res = data.get("results", {})
@@ -629,6 +636,7 @@ def test_fleet_joint(client: TestClient, fleet_env, record):
     stations = fleet_env["charging_stations_config"]
 
     body = {
+        "name": "Fleet joint integration test",
         "mode": "joint",
         "shift_ids": all_shift_ids,
         "prediction_run_ids": all_pred_ids,
@@ -650,6 +658,7 @@ def test_fleet_joint(client: TestClient, fleet_env, record):
     )
     assert r.status_code == 200, f"joint submit failed: {r.text}"
     run_id = r.json()["optimization_run_id"]
+    fleet_env["optimization_run_ids"].append(run_id)
     data = wait_for_optimization(client, token, run_id, max_wait=900)
 
     res = data.get("results", {})
@@ -695,6 +704,7 @@ def test_depot_charging_utilized(client: TestClient, fleet_env, record):
     r = client.post(
         f"{SIM_BASE}/optimization-runs/",
         json={
+            "name": "Fleet depot-charging integration test",
             "mode": "battery_only",
             "shift_ids": subset_shift_ids,
             "prediction_run_ids": subset_pred_ids,
@@ -710,6 +720,7 @@ def test_depot_charging_utilized(client: TestClient, fleet_env, record):
     )
     assert r.status_code == 200, f"depot charging submit failed: {r.text}"
     run_id = r.json()["optimization_run_id"]
+    fleet_env["optimization_run_ids"].append(run_id)
     data = wait_for_optimization(client, token, run_id, max_wait=600)
 
     completed = data["status"] == "completed"

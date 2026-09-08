@@ -130,6 +130,146 @@ def _cleanup_owned_records(
     asyncio.run(_cleanup_owned_records_async(yearly_analysis_ids, optimization_run_ids, user_ids))
 
 
+async def _insert_energy_test_analyses_async(user_id: str) -> dict:
+    """Create deterministic default/diesel analyses for aggregate endpoints."""
+    import asyncpg
+
+    conn = await asyncpg.connect(_dsn_for_asyncpg())
+    try:
+        shift_id = await conn.fetchval(
+            """SELECT s.id FROM shifts s
+               JOIN buses b ON b.id = s.bus_id
+               WHERE b.user_id = $1::uuid
+               LIMIT 1""",
+            user_id,
+        )
+        if shift_id is None:
+            shift_id = await conn.fetchval("SELECT id FROM shifts LIMIT 1")
+        if shift_id is None:
+            pytest.skip("No shifts available for yearly aggregate tests")
+
+        async with conn.transaction():
+            suffix = uuid.uuid4().hex[:10]
+            bus_model_id = await conn.fetchval(
+                """INSERT INTO buses_models (name, specs, user_id)
+                   VALUES ($1, $2::jsonb, $3::uuid)
+                   RETURNING id""",
+                f"Yearly aggregate test model {suffix}",
+                json.dumps({"size": "13m Standard", "bus_length_m": 12}),
+                user_id,
+            )
+            optimization_run_id = await conn.fetchval(
+                """INSERT INTO optimization_runs
+                       (user_id, bus_model_id, mode, status, input_params)
+                   VALUES ($1::uuid, $2::uuid, 'joint', 'completed', '{}'::jsonb)
+                   RETURNING id""",
+                user_id,
+                bus_model_id,
+            )
+
+            scenarios = [
+                {"temperature": -10, "occurrences": 30},
+                {"temperature": 0, "occurrences": 60},
+                {"temperature": 10, "occurrences": 90},
+                {"temperature": 20, "occurrences": 120},
+                {"temperature": 30, "occurrences": 65},
+            ]
+            analyses: dict[str, dict[str, str]] = {}
+            for heating_type in ("default", "diesel"):
+                yearly_analysis_id = await conn.fetchval(
+                    """INSERT INTO yearly_analysis
+                           (optimization_run_id, name, features)
+                       VALUES ($1::uuid, $2, $3::jsonb)
+                       RETURNING id""",
+                    optimization_run_id,
+                    f"Yearly aggregate test {heating_type} {suffix}",
+                    json.dumps({
+                        "scenarios": scenarios,
+                        "config": {"auxiliary_heating_type": heating_type},
+                    }),
+                )
+
+                for scenario in scenarios:
+                    temperature = scenario["temperature"]
+                    summary = {
+                        "total_consumption_kwh": (
+                            260.0 - temperature * 2
+                            if heating_type == "default"
+                            else 220.0 - temperature
+                        ),
+                        "total_distance_km": 180.0,
+                        "total_auxiliary_kwh": max(0.0, 50.0 - temperature * 2),
+                        "total_drivetrain_kwh": 180.0,
+                    }
+                    if heating_type == "diesel":
+                        diesel_fuel_kwh = max(0.0, 60.0 - temperature * 2)
+                        summary.update({
+                            "total_diesel_fuel_kwh": diesel_fuel_kwh,
+                            "diesel_heating": {
+                                "diesel_fuel_kwh": diesel_fuel_kwh,
+                                "diesel_heater_efficiency": 0.85,
+                            },
+                        })
+
+                    await conn.execute(
+                        """INSERT INTO prediction_runs
+                               (user_id, shift_id, bus_model_id,
+                                yearly_analysis_id, model_name,
+                                prediction_stack, external_temp_celsius,
+                                auxiliary_heating_type, occupancy_percent,
+                                summary, status)
+                           VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+                                   'yearly-aggregate-test-v1', 'vecto-g2',
+                                   $5, $6, 50, $7::jsonb, 'completed')""",
+                        user_id,
+                        shift_id,
+                        bus_model_id,
+                        yearly_analysis_id,
+                        temperature,
+                        heating_type,
+                        json.dumps(summary),
+                    )
+
+                analyses[heating_type] = {"id": str(yearly_analysis_id)}
+
+        return {
+            "analyses": analyses,
+            "optimization_run_id": str(optimization_run_id),
+            "bus_model_id": str(bus_model_id),
+        }
+    finally:
+        await conn.close()
+
+
+async def _cleanup_energy_test_analyses_async(resource_ids: dict) -> None:
+    import asyncpg
+
+    yearly_analysis_ids = [
+        value["id"] for value in resource_ids["analyses"].values()
+    ]
+    conn = await asyncpg.connect(_dsn_for_asyncpg())
+    try:
+        async with conn.transaction():
+            await conn.execute(
+                "DELETE FROM prediction_runs WHERE yearly_analysis_id = ANY($1::uuid[])",
+                yearly_analysis_ids,
+            )
+            await conn.execute(
+                "DELETE FROM yearly_analysis WHERE id = ANY($1::uuid[])",
+                yearly_analysis_ids,
+            )
+            await conn.execute(
+                "DELETE FROM optimization_runs WHERE id = $1::uuid",
+                resource_ids["optimization_run_id"],
+            )
+            await conn.execute(
+                "DELETE FROM buses_models WHERE id = $1::uuid",
+                resource_ids["bus_model_id"],
+            )
+    finally:
+        await conn.close()
+
+
 def get_auth_token(client: TestClient) -> str | None:
     response = client.post(f"{AUTH_BASE}/login", json={
         "email": TEST_LOGIN_EMAIL,
@@ -150,6 +290,23 @@ def create_test_analysis(client: TestClient, token: str, name: str = "Test Analy
     if response.status_code == 200:
         return response.json()["id"]
     return None
+
+
+@pytest.fixture(scope="module")
+def yearly_energy_analyses(client):
+    """Own the data used by energy, cost and emissions integration tests."""
+    token = get_auth_token(client)
+    if not token:
+        pytest.skip("Could not authenticate for yearly aggregate tests")
+    response = client.get("/auth/me", headers=get_auth_headers(token))
+    if response.status_code != 200:
+        pytest.skip("Could not resolve the test user for yearly aggregate tests")
+
+    resources = asyncio.run(
+        _insert_energy_test_analyses_async(response.json()["id"])
+    )
+    yield resources["analyses"]
+    asyncio.run(_cleanup_energy_test_analyses_async(resources))
 
 
 @pytest.fixture(autouse=True)
@@ -548,18 +705,15 @@ def test_energy_summary_no_predictions(client, record):
     client.delete(f"{API_BASE}/{analysis_id}", headers=headers)
 
 
-def test_energy_summary_with_real_diesel_data(client, record):
-    """Test energy summary GET on the existing diesel yearly analysis (if present)."""
+def test_energy_summary_with_real_diesel_data(client, record, yearly_energy_analyses):
+    """Test energy summary GET on deterministic VECTO diesel data."""
     token = get_auth_token(client)
     if not token:
         record("energy_summary_diesel_auth_failed", False, "Could not get auth token")
         return
 
     headers = get_auth_headers(token)
-    diesel_ya = _find_yearly_analysis_by_heating_type(client, headers, "diesel")
-    if diesel_ya is None:
-        record("energy_summary_diesel_skip", True, "No diesel yearly analysis found (skipped)")
-        return
+    diesel_ya = yearly_energy_analyses["diesel"]
 
     ya_id = diesel_ya["id"]
     resp = client.get(f"{API_BASE}/{ya_id}/energy-summary", headers=headers)
@@ -611,7 +765,7 @@ def test_energy_summary_with_real_diesel_data(client, record):
         )
 
 
-def test_energy_summary_post_persists(client, record):
+def test_energy_summary_post_persists(client, record, yearly_energy_analyses):
     """Test POST energy-summary stores energy_summary in features."""
     token = get_auth_token(client)
     if not token:
@@ -619,37 +773,7 @@ def test_energy_summary_post_persists(client, record):
         return
 
     headers = get_auth_headers(token)
-    # Walk every page; load the detail to inspect ``features``.
-    target_ya = None
-    skip = 0
-    limit = 100
-    while target_ya is None:
-        response = client.get(
-            f"{API_BASE}/?skip={skip}&limit={limit}",
-            headers=headers,
-        )
-        if response.status_code != 200:
-            record("energy_summary_post_list_failed", False, f"status={response.status_code}")
-            return
-        payload = response.json()
-        for item in payload.get("items", []):
-            detail = client.get(f"{API_BASE}/{item['id']}", headers=headers)
-            if detail.status_code != 200:
-                continue
-            full = detail.json()
-            features = full.get("features", {}) or {}
-            if features.get("scenarios"):
-                target_ya = full
-                break
-        if target_ya or not payload.get("has_next"):
-            break
-        skip += limit
-
-    if target_ya is None:
-        record("energy_summary_post_skip", True, "No yearly analysis with scenarios found (skipped)")
-        return
-
-    ya_id = target_ya["id"]
+    ya_id = yearly_energy_analyses["default"]["id"]
     resp = client.post(f"{API_BASE}/{ya_id}/energy-summary", headers=headers)
     record("energy_summary_post_200", resp.status_code == 200, f"status={resp.status_code}")
     if resp.status_code != 200:
@@ -717,39 +841,7 @@ def test_costs_no_predictions(client, record):
     client.delete(f"{API_BASE}/{analysis_id}", headers=headers)
 
 
-def _find_yearly_analysis_by_heating_type(client, headers, heating_type):
-    """Helper: find the first yearly analysis with the given heating type.
-
-    The list endpoint is paginated and excludes ``features``, so we walk the
-    pages and load each candidate's detail to inspect features.
-    """
-    skip = 0
-    limit = 100
-    while True:
-        response = client.get(
-            f"{API_BASE}/?skip={skip}&limit={limit}",
-            headers=headers,
-        )
-        if response.status_code != 200:
-            return None
-        payload = response.json()
-        for item in payload.get("items", []):
-            detail = client.get(f"{API_BASE}/{item['id']}", headers=headers)
-            if detail.status_code != 200:
-                continue
-            full = detail.json()
-            features = full.get("features", {}) or {}
-            config = features.get("config", {})
-            ht = config.get("auxiliary_heating_type", "default")
-            has_scenarios = bool(features.get("scenarios"))
-            if ht == heating_type and has_scenarios:
-                return full
-        if not payload.get("has_next"):
-            return None
-        skip += limit
-
-
-def test_costs_default_no_diesel_heating(client, record):
+def test_costs_default_no_diesel_heating(client, record, yearly_energy_analyses):
     """For auxiliary_heating_type=default, diesel heating OPEX must be zero."""
     token = get_auth_token(client)
     if not token:
@@ -757,10 +849,7 @@ def test_costs_default_no_diesel_heating(client, record):
         return
 
     headers = get_auth_headers(token)
-    ya = _find_yearly_analysis_by_heating_type(client, headers, "default")
-    if ya is None:
-        record("costs_default_skip", True, "No default yearly analysis found (skipped)")
-        return
+    ya = yearly_energy_analyses["default"]
 
     resp = client.get(
         f"{API_BASE}/{ya['id']}/costs",
@@ -793,7 +882,7 @@ def test_costs_default_no_diesel_heating(client, record):
     )
 
 
-def test_costs_diesel_mixed_case(client, record):
+def test_costs_diesel_mixed_case(client, record, yearly_energy_analyses):
     """For auxiliary_heating_type=diesel, mixed e-bus must have non-zero diesel heating OPEX."""
     token = get_auth_token(client)
     if not token:
@@ -801,10 +890,7 @@ def test_costs_diesel_mixed_case(client, record):
         return
 
     headers = get_auth_headers(token)
-    ya = _find_yearly_analysis_by_heating_type(client, headers, "diesel")
-    if ya is None:
-        record("costs_diesel_skip", True, "No diesel yearly analysis found (skipped)")
-        return
+    ya = yearly_energy_analyses["diesel"]
 
     resp = client.get(
         f"{API_BASE}/{ya['id']}/costs",
@@ -893,7 +979,7 @@ def test_costs_diesel_mixed_case(client, record):
     )
 
 
-def test_costs_diesel_cold_scenarios(client, record):
+def test_costs_diesel_cold_scenarios(client, record, yearly_energy_analyses):
     """Cold scenarios in diesel mode must have non-zero diesel-heating costs."""
     token = get_auth_token(client)
     if not token:
@@ -901,10 +987,7 @@ def test_costs_diesel_cold_scenarios(client, record):
         return
 
     headers = get_auth_headers(token)
-    ya = _find_yearly_analysis_by_heating_type(client, headers, "diesel")
-    if ya is None:
-        record("costs_cold_skip", True, "No diesel yearly analysis found (skipped)")
-        return
+    ya = yearly_energy_analyses["diesel"]
 
     resp = client.get(
         f"{API_BASE}/{ya['id']}/costs",
@@ -945,7 +1028,7 @@ def test_costs_diesel_cold_scenarios(client, record):
     )
 
 
-def test_costs_with_custom_params(client, record):
+def test_costs_with_custom_params(client, record, yearly_energy_analyses):
     """Verify that custom economic parameters override defaults."""
     token = get_auth_token(client)
     if not token:
@@ -953,12 +1036,7 @@ def test_costs_with_custom_params(client, record):
         return
 
     headers = get_auth_headers(token)
-    ya = _find_yearly_analysis_by_heating_type(client, headers, "diesel")
-    if ya is None:
-        ya = _find_yearly_analysis_by_heating_type(client, headers, "default")
-    if ya is None:
-        record("costs_custom_skip", True, "No yearly analysis found (skipped)")
-        return
+    ya = yearly_energy_analyses["diesel"]
 
     resp_default = client.get(
         f"{API_BASE}/{ya['id']}/costs",
@@ -1043,7 +1121,7 @@ def test_emissions_no_predictions(client, record):
     client.delete(f"{API_BASE}/{analysis_id}", headers=headers)
 
 
-def test_emissions_default_no_diesel_heating(client, record):
+def test_emissions_default_no_diesel_heating(client, record, yearly_energy_analyses):
     """For auxiliary_heating_type=default, diesel-heating emission contribution must be zero."""
     token = get_auth_token(client)
     if not token:
@@ -1051,10 +1129,7 @@ def test_emissions_default_no_diesel_heating(client, record):
         return
 
     headers = get_auth_headers(token)
-    ya = _find_yearly_analysis_by_heating_type(client, headers, "default")
-    if ya is None:
-        record("emissions_default_skip", True, "No default yearly analysis found (skipped)")
-        return
+    ya = yearly_energy_analyses["default"]
 
     resp = client.get(
         f"{API_BASE}/{ya['id']}/emissions",
@@ -1097,7 +1172,7 @@ def test_emissions_default_no_diesel_heating(client, record):
     )
 
 
-def test_emissions_diesel_mixed_case(client, record):
+def test_emissions_diesel_mixed_case(client, record, yearly_energy_analyses):
     """For auxiliary_heating_type=diesel, mixed e-bus must have non-zero diesel-heating emissions."""
     token = get_auth_token(client)
     if not token:
@@ -1105,10 +1180,7 @@ def test_emissions_diesel_mixed_case(client, record):
         return
 
     headers = get_auth_headers(token)
-    ya = _find_yearly_analysis_by_heating_type(client, headers, "diesel")
-    if ya is None:
-        record("emissions_diesel_skip", True, "No diesel yearly analysis found (skipped)")
-        return
+    ya = yearly_energy_analyses["diesel"]
 
     resp = client.get(
         f"{API_BASE}/{ya['id']}/emissions",
@@ -1185,7 +1257,7 @@ def test_emissions_diesel_mixed_case(client, record):
     )
 
 
-def test_emissions_diesel_cold_scenarios(client, record):
+def test_emissions_diesel_cold_scenarios(client, record, yearly_energy_analyses):
     """Cold scenarios in diesel mode must have non-zero diesel-heating CO2 emissions."""
     token = get_auth_token(client)
     if not token:
@@ -1193,10 +1265,7 @@ def test_emissions_diesel_cold_scenarios(client, record):
         return
 
     headers = get_auth_headers(token)
-    ya = _find_yearly_analysis_by_heating_type(client, headers, "diesel")
-    if ya is None:
-        record("emissions_cold_skip", True, "No diesel yearly analysis found (skipped)")
-        return
+    ya = yearly_energy_analyses["diesel"]
 
     resp = client.get(
         f"{API_BASE}/{ya['id']}/emissions",
@@ -1232,7 +1301,7 @@ def test_emissions_diesel_cold_scenarios(client, record):
     )
 
 
-def test_emissions_default_vs_diesel_differ(client, record):
+def test_emissions_default_vs_diesel_differ(client, record, yearly_energy_analyses):
     """Mixed e-bus emissions must differ from default (full-electric) when diesel heating is active."""
     token = get_auth_token(client)
     if not token:
@@ -1240,12 +1309,8 @@ def test_emissions_default_vs_diesel_differ(client, record):
         return
 
     headers = get_auth_headers(token)
-    ya_default = _find_yearly_analysis_by_heating_type(client, headers, "default")
-    ya_diesel = _find_yearly_analysis_by_heating_type(client, headers, "diesel")
-
-    if ya_default is None or ya_diesel is None:
-        record("emissions_diff_skip", True, "Need both default and diesel yearly analyses (skipped)")
-        return
+    ya_default = yearly_energy_analyses["default"]
+    ya_diesel = yearly_energy_analyses["diesel"]
 
     resp_def = client.get(
         f"{API_BASE}/{ya_default['id']}/emissions",
