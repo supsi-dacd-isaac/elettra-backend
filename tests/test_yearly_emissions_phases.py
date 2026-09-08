@@ -29,6 +29,7 @@ from app.routers.yearly_analysis import (
     _get_configured_diesel_lca_vehicle,
     _LCA_PHASES,
 )
+from app.services.diesel_heating import diesel_heating_fuel_profile
 
 
 # ---------------------------------------------------------------------------
@@ -623,24 +624,30 @@ def test_diesel_yearly_analysis(client, auth_data):
             for sc in scenarios:
                 temp = sc["temperature"]
                 diesel_liters = max(0, 5.0 - temp * 0.3)
+                diesel_fuel_kwh = (
+                    diesel_liters
+                    * diesel_heating_fuel_profile()["energy_density_kwh_per_liter"]
+                )
                 summary = json_mod.dumps({
                     "total_consumption_kwh": 250.0 - temp * 2,
                     "total_distance_km": 180.0,
                     "total_auxiliary_kwh": max(0, 50.0 - temp * 3),
                     "total_drivetrain_kwh": 200.0,
+                    "total_diesel_fuel_kwh": diesel_fuel_kwh,
                     "diesel_heating": {
-                        "diesel_fuel_kwh": diesel_liters * 9.8,
+                        "diesel_fuel_kwh": diesel_fuel_kwh,
                         "diesel_liters": diesel_liters,
                         "diesel_heater_efficiency": 0.85,
-                    } if diesel_liters > 0 else None,
+                    },
                 })
                 await conn.execute(
                     """INSERT INTO prediction_runs
                        (user_id, shift_id, bus_model_id, yearly_analysis_id,
-                        model_name, external_temp_celsius, auxiliary_heating_type,
-                        occupancy_percent, summary, status)
+                        model_name, prediction_stack, external_temp_celsius,
+                        auxiliary_heating_type, occupancy_percent, summary, status)
                        VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
-                               'test_model', $5, 'diesel', 50, $6::jsonb, 'completed')""",
+                               'test_model', 'vecto-g2', $5, 'diesel', 50,
+                               $6::jsonb, 'completed')""",
                     user_id, shift_id, bus_model_id, ya_id,
                     temp, summary,
                 )
