@@ -30,6 +30,10 @@ from app.models import (
     YearlyAnalysisWeatherRevisions,
 )
 from app.services.prediction import predict_shift_consumption
+from app.services.diesel_heating import (
+    diesel_heating_fuel_profile,
+    resolve_diesel_heating_quantity,
+)
 from app.services.runtime_release import LEGACY_AUXILIARY_ESTIMATOR
 
 
@@ -481,6 +485,9 @@ def _build_energy_summary_blob(
     }
     diesel_fuel_kwh = 0.0
     diesel_liters = 0.0
+    diesel_statuses: list[str] = []
+    diesel_sources: set[str] = set()
+    diesel_reasons: set[str] = set()
     component_summary_keys = {
         "mechanical_greybox_kwh": "total_mechanical_greybox_kwh",
         "qrf_residual_kwh": "total_qrf_residual_kwh",
@@ -506,6 +513,28 @@ def _build_energy_summary_blob(
         annual_components = {
             key: value * occurrences for key, value in daily_components.items()
         }
+        quantity = resolve_diesel_heating_quantity(
+            summary,
+            prediction_stack=stack,
+            diesel_heating_expected=global_aux_type == "diesel",
+        )
+        if global_aux_type == "diesel":
+            diesel_statuses.append(quantity.data_status)
+            if quantity.liters_source:
+                diesel_sources.add(quantity.liters_source)
+            if quantity.reason:
+                diesel_reasons.add(quantity.reason)
+        scenario_diesel = None
+        if global_aux_type == "diesel":
+            raw_diesel = summary.get("diesel_heating") or {}
+            scenario_diesel = {
+                "diesel_fuel_kwh": quantity.fuel_kwh,
+                "diesel_liters": quantity.liters,
+                "diesel_heater_efficiency": float(
+                    raw_diesel.get("diesel_heater_efficiency", 0.0)
+                ),
+                **quantity.metadata(),
+            }
         scenario_rows.append(
             {
                 "prediction_run_id": str(run.id),
@@ -524,7 +553,7 @@ def _build_energy_summary_blob(
                 }
                 if daily_components
                 else None,
-                "diesel_heating": summary.get("diesel_heating"),
+                "diesel_heating": scenario_diesel,
                 "annual_electric_kwh": round(daily_energy * occurrences, 4),
                 "annual_distance_km": round(daily_distance * occurrences, 4),
                 "annual_auxiliary_kwh": round(daily_aux * occurrences, 4),
@@ -534,15 +563,15 @@ def _build_energy_summary_blob(
                 }
                 if annual_components
                 else None,
-                "annual_diesel_fuel_kwh": round(
-                    float((summary.get("diesel_heating") or {}).get("diesel_fuel_kwh", 0.0))
-                    * occurrences,
-                    4,
+                "annual_diesel_fuel_kwh": (
+                    round(quantity.fuel_kwh * occurrences, 4)
+                    if quantity.fuel_kwh is not None
+                    else None
                 ),
-                "annual_diesel_liters": round(
-                    float((summary.get("diesel_heating") or {}).get("diesel_liters", 0.0))
-                    * occurrences,
-                    4,
+                "annual_diesel_liters": (
+                    round(quantity.liters * occurrences, 4)
+                    if quantity.liters is not None
+                    else None
                 ),
             }
         )
@@ -552,18 +581,49 @@ def _build_energy_summary_blob(
         totals["drivetrain_kwh"] += daily_drivetrain * occurrences
         for key, value in annual_components.items():
             totals[key] = totals.get(key, 0.0) + value
-        diesel = summary.get("diesel_heating") or {}
-        diesel_fuel_kwh += float(diesel.get("diesel_fuel_kwh", 0.0)) * occurrences
-        diesel_liters += float(diesel.get("diesel_liters", 0.0)) * occurrences
+        if quantity.fuel_kwh is not None:
+            diesel_fuel_kwh += quantity.fuel_kwh * occurrences
+        if quantity.liters is not None:
+            diesel_liters += quantity.liters * occurrences
     diesel_summary = None
-    if diesel_fuel_kwh or diesel_liters:
+    if global_aux_type == "diesel":
+        diesel_status = (
+            "available"
+            if all(status == "available" for status in diesel_statuses)
+            else (
+                "unavailable"
+                if all(status != "available" for status in diesel_statuses)
+                else "partial"
+            )
+        )
+        profile = diesel_heating_fuel_profile()
         diesel_summary = {
-            "diesel_fuel_kwh": round(diesel_fuel_kwh, 4),
-            "diesel_liters": round(diesel_liters, 4),
+            "diesel_fuel_kwh": (
+                round(diesel_fuel_kwh, 4) if diesel_status == "available" else None
+            ),
+            "diesel_liters": (
+                round(diesel_liters, 4) if diesel_status == "available" else None
+            ),
+            "data_status": diesel_status,
+            "quantity_state": (
+                "unknown"
+                if diesel_status != "available"
+                else ("zero" if diesel_fuel_kwh == 0 and diesel_liters == 0 else "positive")
+            ),
+            "liters_sources": sorted(diesel_sources),
+            "reasons": sorted(diesel_reasons),
+            "fuel_profile_version": profile["version"],
+            "energy_density_kwh_per_liter": profile[
+                "energy_density_kwh_per_liter"
+            ],
         }
-        totals["diesel_fuel_kwh"] = diesel_fuel_kwh
-        totals["diesel_liters"] = diesel_liters
-        totals["combined_final_energy_kwh"] = totals["electric_kwh"] + diesel_fuel_kwh
+        totals["diesel_fuel_kwh"] = diesel_summary["diesel_fuel_kwh"]
+        totals["diesel_liters"] = diesel_summary["diesel_liters"]
+        totals["combined_final_energy_kwh"] = (
+            totals["electric_kwh"] + diesel_fuel_kwh
+            if diesel_status == "available"
+            else None
+        )
     return {
         "auxiliary_heating_type": global_aux_type,
         "prediction_stacks": [provenance[0]] if provenance else [],
@@ -571,8 +631,12 @@ def _build_energy_summary_blob(
         "auxiliary_estimator_releases": (
             [provenance[2]] if provenance and provenance[2] else []
         ),
-        "yearly_totals": {key: round(value, 4) for key, value in totals.items()},
+        "yearly_totals": {
+            key: round(value, 4) if value is not None else None
+            for key, value in totals.items()
+        },
         "yearly_diesel_heating": diesel_summary,
+        "diesel_heating_data": diesel_summary,
         "scenarios": scenario_rows,
     }
 

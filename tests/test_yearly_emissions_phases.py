@@ -897,12 +897,8 @@ class TestEmissionsPhaseIntegration:
         assert gwp.get("energyChain") is not None
         assert gwp["energyChain"] > 0
 
-    def test_diesel_heating_not_injected_into_phases(self, client, auth_data, test_diesel_yearly_analysis):
-        """diesel_heating is NOT attributed to any lifecycle phase.
-
-        Phase-share allocation distributes only the electric-side total across
-        phases.  diesel_heating is added to the overall total but not to any phase.
-        """
+    def test_diesel_heating_is_attributed_to_wtw_phases(self, client, auth_data, test_diesel_yearly_analysis):
+        """Heater direct and upstream impacts reconcile with the mixed total."""
         headers = {"Authorization": f"Bearer {auth_data['token']}"}
 
         with patch(
@@ -939,16 +935,19 @@ class TestEmissionsPhaseIntegration:
         phase_sum = sum(
             gwp[k] for k in PHASE_KEYS if gwp.get(k) is not None
         )
-        # phase_sum ≈ electric (not total)
-        assert abs(phase_sum - gwp["electric"]) < 1.0, (
-            f"phase_sum={phase_sum}, electric={gwp['electric']}"
+        assert abs(phase_sum - gwp["total"]) < 1.0
+
+        liters = data["assumptions"]["yearly_diesel_heating_liters"]
+        methodology = data["diesel_heating_methodology"]
+        direct_factor = methodology["factors"]["gwp100a"]["direct"]
+        upstream_factor = methodology["factors"]["gwp100a"]["energyChain"]
+        raw_direct_share = MOCK_LCA_IMPACT_EBUS["gwp100a"]["direct"]
+        raw_sum = sum(MOCK_LCA_IMPACT_EBUS["gwp100a"].values())
+        expected_electric_direct = gwp["electric"] * raw_direct_share / raw_sum
+        assert gwp["direct"] == pytest.approx(
+            expected_electric_direct + liters * direct_factor, abs=0.1
         )
-        # total = phase_sum + diesel_heating
-        assert abs(gwp["total"] - (phase_sum + dh)) < 1.0, (
-            f"total={gwp['total']}, phase_sum={phase_sum}, dh={dh}"
-        )
-        # phases alone do NOT include diesel_heating
-        assert phase_sum < gwp["total"]
+        assert gwp["energyChain"] > liters * upstream_factor
 
     def test_total_equals_phase_sum_default_mode(self, client, auth_data, test_yearly_analysis):
         """In default (no diesel heating) mode, total == sum of phases == electric."""
@@ -1229,7 +1228,7 @@ class TestCompletePayload:
             )
 
     def test_lifecycle_breakdown_consistency(self, client, auth_data, test_diesel_yearly_analysis):
-        """Lifecycle: phase_sum = electric_side, total = phase_sum + diesel_heating."""
+        """Lifecycle phases include both electric-side and heater WTW."""
         data = self._get_response_with_lca(
             client, auth_data, test_diesel_yearly_analysis["ya_id"]
         )
@@ -1239,9 +1238,9 @@ class TestCompletePayload:
 
         eb = lb["ebus"]
         assert eb["phase_sum"] is not None
-        assert abs(eb["phase_sum"] - eb["electric_side"]) < 1.0
-        assert abs(eb["total"] - (eb["phase_sum"] + eb["diesel_heating"])) < 1.0
-        assert eb["phase_sum_represents"] == "electric_side_only"
+        assert abs(eb["phase_sum"] - eb["total"]) < 1.0
+        assert abs(eb["total"] - (eb["electric_side"] + eb["diesel_heating"])) < 1.0
+        assert eb["phase_sum_represents"] == "electric_side_and_diesel_heating"
         assert eb["diesel_heating"] > 0
 
     def test_lifecycle_diesel_comparator_unavailable(self, client, auth_data, test_yearly_analysis):

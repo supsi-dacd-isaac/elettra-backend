@@ -11,12 +11,148 @@
   },
 
   "diesel_heating": {
-    "_doc": "Per liter of diesel burned in an auxiliary heater (lifecycle including upstream). NOx and PM are lower than engine combustion because heaters use clean catalytic burners.",
-    "gwp100a_g_per_liter": 3170.0,
-    "nox_mg_per_liter": 500.0,
-    "pm10_mg_per_liter": 20.0,
-    "primaryEnergy_mj_per_liter": 42.5,
-    "primaryEnergyNonRenewable_mj_per_liter": 41.0
+    "_doc": "Versioned well-to-wheel factors for the auxiliary fuel-fired heater. Direct exhaust measurements and upstream fuel-chain inventories are kept separate; this is not a complete vehicle LCA.",
+    "methodology_version": "diesel-heating-wtw-v1.0.0",
+    "fuel_profile": {
+      "version": "ch-average-diesel-2025-mobitool-3.1-v1",
+      "description": "Mobitool 3.1 average Swiss diesel blend: 94.1% fossil diesel and 5.9% used-cooking-oil biodiesel by volume.",
+      "fossil_diesel_volume_fraction": 0.941,
+      "used_cooking_oil_biodiesel_volume_fraction": 0.059,
+      "fossil_diesel_density_kg_per_liter": 0.83,
+      "biodiesel_density_kg_per_liter": 0.88,
+      "fossil_diesel_lhv_mj_per_kg": 43.0,
+      "biodiesel_lhv_mj_per_kg": 38.0,
+      "energy_density_mj_per_liter": 35.55725,
+      "energy_density_kwh_per_liter": 9.87701388888889,
+      "source": "Mobitool factors v3.1",
+      "source_url": "https://assets.energieschweiz.ch/f/174202/x/b0861efe32/mobitool-faktoren-v3-1.xlsx"
+    },
+    "sources": {
+      "mobitool": {
+        "name": "Mobitool factors",
+        "version": "3.1 (2025-04-08)",
+        "url": "https://assets.energieschweiz.ch/f/174202/x/b0861efe32/mobitool-faktoren-v3-1.xlsx",
+        "sha256": "778e1a936399ed072f4cc6ce6458b82c045fbea3b181b82b0fbf036bd49f7304",
+        "workbook_cells": {
+          "blend": "fuel blend!F12:G12",
+          "fuel_properties": "fuels and tailpipe emissions!B6:F7",
+          "upstream_characterization": "characterization factors!D128:I129"
+        }
+      },
+      "heater_measurements": {
+        "name": "Humphries et al., Diesel Fuel-Fired Heater Emissions from a Battery Electric Transit Bus in Real-World Conditions",
+        "version": "SAE 2024-01-5011",
+        "url": "https://doi.org/10.4271/2024-01-5011",
+        "tables": {
+          "nox": "Table 9",
+          "tpm": "Table 5"
+        }
+      },
+      "nox_convention": {
+        "name": "ecoinvent LCIA implementation",
+        "version": "ecoinvent data v2.0",
+        "url": "https://support.ecoinvent.org/hubfs/Knowledge%20Base/Database/Releases/LCIA%20methods_ecoinvent%20version%202.pdf"
+      }
+    },
+    "assumptions": [
+      "VECTO fuel energy is converted once from kWh to liters; heater efficiency has already been applied when VECTO determines fuel demand.",
+      "Biogenic CO2 has a zero GWP100a characterization factor in the adopted Mobitool method.",
+      "Measured total particulate matter is used as an explicit proxy for PM10."
+    ],
+    "limitations": [
+      "Direct NOx and particulate measurements come from one heater and are not measurements of the simulated fleet.",
+      "Direct N2O was not available in the heater study and CH4 is excluded from this direct GWP model; GWP100a is therefore an estimate rather than a complete measured greenhouse-gas inventory.",
+      "No heater-specific start, temperature, duty-cycle or ageing correction is applied.",
+      "The PM10 observed range contains two valid stationary tests and is not a confidence interval."
+    ],
+    "source_data": {
+      "upstream_per_kg": {
+        "fossil_diesel": {
+          "gwp100a": 655.0,
+          "nox": 2691.0,
+          "pm10": 56.0,
+          "primaryEnergy": 55.46,
+          "primaryEnergyNonRenewable": 55.3140772
+        },
+        "used_cooking_oil_biodiesel": {
+          "gwp100a": 576.14389,
+          "nox": 3197.9391,
+          "pm10": 83.731987,
+          "primaryEnergy": 55.912152,
+          "primaryEnergyNonRenewable": 16.35508250303
+        }
+      },
+      "direct": {
+        "gwp100a": {
+          "fossil_co2_kg_per_kg": 3.15,
+          "biogenic_co2_kg_per_kg": 2.79
+        },
+        "nox": {
+          "no_g": [3.55, 3.30, 3.90],
+          "no2_g": [0.30, 0.26, 0.31],
+          "fuel_liters": [1.79, 1.63, 2.00],
+          "no_to_no2_molecular_mass_ratio": 1.5332049150006164
+        },
+        "pm10_proxy": {
+          "tpm_mg": [105.7, 19.6],
+          "fuel_liters": [0.96, 0.97]
+        }
+      }
+    },
+    "factors": {
+      "gwp100a": {
+        "unit": "g CO2-eq/L",
+        "direct": 2460.2445,
+        "energyChain": 541.4880407688,
+        "total": 3001.7325407688,
+        "direct_convention": "Fossil CO2 only; biogenic CO2 has characterization factor zero in Mobitool.",
+        "upstream_source": "Mobitool factors v3.1",
+        "direct_source": "Mobitool factors v3.1 fuel properties"
+      },
+      "nox": {
+        "unit": "mg NO2-eq/L",
+        "direct": 3201.467312962,
+        "energyChain": 2267.788728072,
+        "total": 5469.256041034,
+        "direct_convention": "NO mass converted to NO2-equivalent with 46.0055/30.0061 molecular-mass ratio, then added to measured NO2 mass; pooled over 5.42 L.",
+        "upstream_convention": "Mobitool/UVEK/ecoinvent elementary flow Nitrogen oxides (NOx as NO2).",
+        "upstream_source": "Mobitool factors v3.1",
+        "direct_source": "Humphries et al. 2024, SAE 2024-01-5011, Table 9",
+        "direct_source_url": "https://doi.org/10.4271/2024-01-5011"
+      },
+      "pm10": {
+        "unit": "mg PM10/L",
+        "direct": 64.9222797927,
+        "energyChain": 48.08504476504,
+        "total": 113.00732455774,
+        "observed_wtw_min": 68.2912303321,
+        "observed_wtw_max": 158.1892114317,
+        "uncertainty_note": "Observed range from two valid stationary TPM tests; not a confidence interval. Central value is pooled mass divided by pooled fuel volume.",
+        "upstream_source": "Mobitool factors v3.1",
+        "direct_source": "Humphries et al. 2024, SAE 2024-01-5011, Table 5",
+        "direct_source_url": "https://doi.org/10.4271/2024-01-5011"
+      },
+      "primaryEnergy": {
+        "unit": "MJ/L",
+        "direct": 0.0,
+        "energyChain": 46.21888273184,
+        "total": 46.21888273184,
+        "upstream_source": "Mobitool factors v3.1",
+        "note": "Total primary energy already includes the fuel resource energy content; LHV is not added again."
+      },
+      "primaryEnergyNonRenewable": {
+        "unit": "MJ/L",
+        "direct": 0.0,
+        "energyChain": 44.05110959907332,
+        "total": 44.05110959907332,
+        "upstream_source": "Mobitool factors v3.1"
+      }
+    },
+    "gwp100a_g_per_liter": 3001.7325407688,
+    "nox_mg_per_liter": 5469.256041034,
+    "pm10_mg_per_liter": 113.00732455774,
+    "primaryEnergy_mj_per_liter": 46.21888273184,
+    "primaryEnergyNonRenewable_mj_per_liter": 44.05110959907332
   },
 
   "diesel_bus": {

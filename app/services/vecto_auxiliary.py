@@ -18,6 +18,10 @@ from elettra_core.vecto_templates import (
     vecto_template_auxiliary_power,
 )
 
+from app.services.diesel_heating import (
+    diesel_heating_fuel_profile,
+    diesel_liters_from_kwh,
+)
 from app.services.runtime_release import PredictionStack, PredictionStackRelease
 
 
@@ -28,6 +32,8 @@ class VectoAuxiliaryBinding:
 
     def metadata(self) -> dict[str, object]:
         result = self.estimate.result
+        fuel_profile = diesel_heating_fuel_profile()
+        canonical_liters_per_hour = diesel_liters_from_kwh(result.p_fuel_kw)
         return {
             "release_id": self.estimate.release_id,
             "release_sha256": self.estimate.release_sha256,
@@ -44,7 +50,15 @@ class VectoAuxiliaryBinding:
             "hvac_electrical_power_kw": result.p_hvac_electrical_kw,
             "fixed_auxiliary_power_kw": result.p_baseline_kw,
             "diesel_fuel_power_kw": result.p_fuel_kw,
-            "diesel_liters_per_hour": self.estimate.fuel_l_per_hour,
+            "diesel_liters_per_hour": canonical_liters_per_hour,
+            "diesel_liters_source": "application_fuel_profile",
+            "diesel_fuel_profile_version": fuel_profile["version"],
+            "diesel_energy_density_kwh_per_liter": fuel_profile[
+                "energy_density_kwh_per_liter"
+            ],
+            "vecto_release_legacy_diesel_liters_per_hour": (
+                self.estimate.fuel_l_per_hour
+            ),
             "uncovered_thermal_power_kw": self.estimate.unmet_thermal_demand_kw,
         }
 
@@ -100,11 +114,15 @@ def build_vecto_auxiliary_binding(
         ):
             raise ValueError("Trip durations must be finite and non-negative")
         result = estimate.result
+        diesel_fuel_kwh = result.p_fuel_kw * duration_hours
         return AuxiliaryEnergyComponents(
             hvac_electrical_kwh=result.p_hvac_electrical_kw * duration_hours,
             fixed_auxiliary_kwh=result.p_baseline_kw * duration_hours,
-            diesel_fuel_kwh=result.p_fuel_kw * duration_hours,
-            diesel_liters=estimate.fuel_l_per_hour * duration_hours,
+            diesel_fuel_kwh=diesel_fuel_kwh,
+            diesel_liters=np.asarray(
+                [diesel_liters_from_kwh(value) for value in diesel_fuel_kwh],
+                dtype=float,
+            ),
             uncovered_thermal_kwh=(
                 estimate.unmet_thermal_demand_kw * duration_hours
             ),

@@ -44,6 +44,9 @@ from app.schemas.lca import (
     PrimaryEnergySide,
     SavingsBlock,
     SavingsItem,
+    DieselHeatingMethodologyMetadata,
+    EmissionsDataCompleteness,
+    EmissionsScopeCompleteness,
 )
 from app.schemas.responses import (
     YearlyEnergySummaryResponse,
@@ -63,6 +66,12 @@ from app.services.yearly_weather_recalculation import (
     prediction_run_provenance,
     require_uniform_prediction_provenance,
     resolve_analysis_weather_binding,
+)
+from app.services.diesel_heating import (
+    diesel_heating_config,
+    diesel_heating_factor,
+    diesel_heating_fuel_profile,
+    resolve_diesel_heating_quantity,
 )
 
 logger = logging.getLogger(__name__)
@@ -803,6 +812,9 @@ async def _build_energy_summary(
     yearly_diesel_fuel_kwh = 0.0
     yearly_diesel_liters = 0.0
     has_any_diesel = False
+    diesel_quantity_statuses: list[str] = []
+    diesel_liters_sources: set[str] = set()
+    diesel_quantity_reasons: set[str] = set()
     yearly_components: dict[str, float] = {}
     component_summary_keys = {
         "mechanical_greybox_kwh": "total_mechanical_greybox_kwh",
@@ -833,26 +845,46 @@ async def _build_energy_summary(
             key: value * occurrences for key, value in daily_components.items()
         }
 
-        dh = summary.get("diesel_heating")
-        daily_diesel_fuel = 0.0
-        daily_diesel_liters = 0.0
+        diesel_expected = global_aux_type == "diesel"
+        quantity = resolve_diesel_heating_quantity(
+            summary,
+            prediction_stack=stack,
+            diesel_heating_expected=diesel_expected,
+        )
+        daily_diesel_fuel: float | None = None
+        daily_diesel_liters: float | None = None
         scenario_dh = None
-        if dh:
+        if diesel_expected:
             has_any_diesel = True
-            daily_diesel_fuel = float(dh.get("diesel_fuel_kwh", 0))
-            daily_diesel_liters = float(dh.get("diesel_liters", 0))
+            diesel_quantity_statuses.append(quantity.data_status)
+            if quantity.liters_source:
+                diesel_liters_sources.add(quantity.liters_source)
+            if quantity.reason:
+                diesel_quantity_reasons.add(quantity.reason)
+            daily_diesel_fuel = quantity.fuel_kwh
+            daily_diesel_liters = quantity.liters
+            dh = summary.get("diesel_heating") or {}
             scenario_dh = {
                 "diesel_fuel_kwh": daily_diesel_fuel,
                 "diesel_liters": daily_diesel_liters,
                 "diesel_heater_efficiency": float(dh.get("diesel_heater_efficiency", 0)),
+                **quantity.metadata(),
             }
 
         annual_electric = daily_electric * occurrences
         annual_distance = daily_distance * occurrences
         annual_aux = daily_aux * occurrences
         annual_dt = daily_dt * occurrences
-        annual_diesel_fuel = daily_diesel_fuel * occurrences
-        annual_diesel_liters = daily_diesel_liters * occurrences
+        annual_diesel_fuel = (
+            daily_diesel_fuel * occurrences
+            if daily_diesel_fuel is not None
+            else None
+        )
+        annual_diesel_liters = (
+            daily_diesel_liters * occurrences
+            if daily_diesel_liters is not None
+            else None
+        )
 
         scenario_summaries.append({
             "prediction_run_id": pr.id,
@@ -881,16 +913,26 @@ async def _build_energy_summary(
             }
             if annual_components
             else None,
-            "annual_diesel_fuel_kwh": round(annual_diesel_fuel, 4),
-            "annual_diesel_liters": round(annual_diesel_liters, 4),
+            "annual_diesel_fuel_kwh": (
+                round(annual_diesel_fuel, 4)
+                if annual_diesel_fuel is not None
+                else None
+            ),
+            "annual_diesel_liters": (
+                round(annual_diesel_liters, 4)
+                if annual_diesel_liters is not None
+                else None
+            ),
         })
 
         yearly_electric_kwh += annual_electric
         yearly_distance_km += annual_distance
         yearly_auxiliary_kwh += annual_aux
         yearly_drivetrain_kwh += annual_dt
-        yearly_diesel_fuel_kwh += annual_diesel_fuel
-        yearly_diesel_liters += annual_diesel_liters
+        if annual_diesel_fuel is not None:
+            yearly_diesel_fuel_kwh += annual_diesel_fuel
+        if annual_diesel_liters is not None:
+            yearly_diesel_liters += annual_diesel_liters
         for key, value in annual_components.items():
             yearly_components[key] = yearly_components.get(key, 0.0) + value
 
@@ -900,11 +942,28 @@ async def _build_energy_summary(
         "auxiliary_kwh": round(yearly_auxiliary_kwh, 4),
         "drivetrain_kwh": round(yearly_drivetrain_kwh, 4),
     }
+    diesel_data_status = "available"
+    if has_any_diesel and any(status != "available" for status in diesel_quantity_statuses):
+        diesel_data_status = (
+            "unavailable"
+            if all(status != "available" for status in diesel_quantity_statuses)
+            else "partial"
+        )
     if has_any_diesel:
-        yearly_totals["diesel_fuel_kwh"] = round(yearly_diesel_fuel_kwh, 4)
-        yearly_totals["diesel_liters"] = round(yearly_diesel_liters, 4)
-        yearly_totals["combined_final_energy_kwh"] = round(
-            yearly_electric_kwh + yearly_diesel_fuel_kwh, 4
+        yearly_totals["diesel_fuel_kwh"] = (
+            round(yearly_diesel_fuel_kwh, 4)
+            if diesel_data_status == "available"
+            else None
+        )
+        yearly_totals["diesel_liters"] = (
+            round(yearly_diesel_liters, 4)
+            if diesel_data_status == "available"
+            else None
+        )
+        yearly_totals["combined_final_energy_kwh"] = (
+            round(yearly_electric_kwh + yearly_diesel_fuel_kwh, 4)
+            if diesel_data_status == "available"
+            else None
         )
     if yearly_components:
         yearly_totals.update(
@@ -913,9 +972,26 @@ async def _build_energy_summary(
 
     yearly_diesel_heating = None
     if has_any_diesel:
+        fuel_profile = diesel_heating_fuel_profile()
         yearly_diesel_heating = {
-            "diesel_fuel_kwh": round(yearly_diesel_fuel_kwh, 4),
-            "diesel_liters": round(yearly_diesel_liters, 4),
+            "diesel_fuel_kwh": yearly_totals["diesel_fuel_kwh"],
+            "diesel_liters": yearly_totals["diesel_liters"],
+            "data_status": diesel_data_status,
+            "quantity_state": (
+                "unknown"
+                if diesel_data_status != "available"
+                else (
+                    "zero"
+                    if yearly_diesel_fuel_kwh == 0 and yearly_diesel_liters == 0
+                    else "positive"
+                )
+            ),
+            "liters_sources": sorted(diesel_liters_sources),
+            "reasons": sorted(diesel_quantity_reasons),
+            "fuel_profile_version": fuel_profile["version"],
+            "energy_density_kwh_per_liter": fuel_profile[
+                "energy_density_kwh_per_liter"
+            ],
         }
 
     return {
@@ -929,6 +1005,7 @@ async def _build_energy_summary(
         "scenarios": scenario_summaries,
         "yearly_totals": yearly_totals,
         "yearly_diesel_heating": yearly_diesel_heating,
+        "diesel_heating_data": yearly_diesel_heating,
     }
 
 
@@ -1041,6 +1118,7 @@ async def compute_and_store_yearly_energy_summary(
         ],
         "yearly_totals": summary_data["yearly_totals"],
         "yearly_diesel_heating": summary_data["yearly_diesel_heating"],
+        "diesel_heating_data": summary_data["diesel_heating_data"],
         "scenarios": [
             {
                 "prediction_run_id": str(s["prediction_run_id"]),
@@ -1257,8 +1335,20 @@ async def get_yearly_costs(
 
     yearly_km = float(yt["distance_km"])
     yearly_electric_kwh = float(yt["electric_kwh"])
-    yearly_diesel_liters = float(yt.get("diesel_liters", 0))
-    yearly_diesel_fuel_kwh = float(yt.get("diesel_fuel_kwh", 0))
+    diesel_data = energy.get("diesel_heating_data") or {}
+    if aux_type == "diesel" and diesel_data.get("data_status") != "available":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "diesel_heating_consumption_unavailable",
+                "message": (
+                    "Diesel-heating costs require an available canonical litre quantity."
+                ),
+                "reasons": diesel_data.get("reasons", []),
+            },
+        )
+    yearly_diesel_liters = float(yt.get("diesel_liters") or 0)
+    yearly_diesel_fuel_kwh = float(yt.get("diesel_fuel_kwh") or 0)
 
     # -- 2. Resolve economic parameters ---------------------------------
     epk = _econ_or(energy_price_per_kwh, "energy_price_per_kwh")
@@ -1455,8 +1545,8 @@ async def get_yearly_costs(
         sc_daily_km = float(sc.get("daily_distance_km", 0))
 
         dh = sc.get("diesel_heating") or {}
-        sc_daily_dh_liters = float(dh.get("diesel_liters", 0))
-        sc_annual_dh_liters = float(sc.get("annual_diesel_liters", 0))
+        sc_daily_dh_liters = float(dh.get("diesel_liters") or 0)
+        sc_annual_dh_liters = float(sc.get("annual_diesel_liters") or 0)
 
         sc_e_energy_cost = epk * sc_annual_electric
         sc_e_maint_cost = e_maint_cpk * sc_annual_km
@@ -1500,6 +1590,13 @@ async def get_yearly_costs(
             yearly_distance_km=round(yearly_km, 4),
             yearly_diesel_heating_liters=round(yearly_diesel_liters, 4),
             yearly_diesel_heating_fuel_kwh=round(yearly_diesel_fuel_kwh, 4),
+            diesel_heating_fuel_profile_version=diesel_data.get(
+                "fuel_profile_version"
+            ),
+            diesel_heating_energy_density_kwh_per_liter=diesel_data.get(
+                "energy_density_kwh_per_liter"
+            ),
+            diesel_heating_liters_sources=diesel_data.get("liters_sources", []),
             diesel_heating_maintenance_factor=dhmf,
             electric_maint_cost_per_km_chf=round(e_maint_cpk, 6),
             diesel_comparator_maint_cost_per_km_chf=round(d_maint_cpk, 6),
@@ -1523,15 +1620,17 @@ _INDICATORS = (
 
 _INDICATOR_UNITS: dict[str, str] = {
     "gwp100a": "g CO\u2082-eq",
-    "nox": "mg NOx",
+    "nox": "mg NO\u2082-eq",
     "pm10": "mg PM10",
-    "primaryEnergy": "MJ oil-eq",
-    "primaryEnergyNonRenewable": "MJ oil-eq",
+    "primaryEnergy": "MJ",
+    "primaryEnergyNonRenewable": "MJ",
 }
 
 
 def _ef(section: str, indicator: str) -> float:
     """Look up a single emission factor from emission_defaults.json."""
+    if section == "diesel_heating":
+        return diesel_heating_factor(indicator)
     ef = _load_emission_defaults()[section]
     suffix_map = {
         "gwp100a": "gwp100a_g",
@@ -1543,6 +1642,12 @@ def _ef(section: str, indicator: str) -> float:
     prefix = suffix_map[indicator]
     per_unit = "per_kwh" if section == "electricity" else "per_liter"
     return float(ef[f"{prefix}_{per_unit}"])
+
+
+def _diesel_heating_phase_factor(indicator: str, phase: str) -> float:
+    """Return a versioned heater factor without falling back to legacy totals."""
+
+    return diesel_heating_factor(indicator, phase)
 
 
 @router.get(
@@ -1568,7 +1673,7 @@ def _ef(section: str, indicator: str) -> float:
         ``×`` **diesel_bus** factors — legacy full-diesel vehicle, not heater-only.
 
         **Response units** (see each indicator's ``unit`` field): yearly totals are
-        **g CO₂-eq**, **mg NOx**, **mg PM₁₀**, **MJ oil-eq** per year for the whole
+        **g CO₂-eq**, **mg NO₂-eq**, **mg PM₁₀**, **MJ** per year for the whole
         analysis. Per-scenario CO₂ fields (``gwp100a_*_kg``) are **kg/year** for that
         scenario only.
 
@@ -1626,8 +1731,14 @@ async def get_yearly_emissions(
 
     yearly_km = float(yt["distance_km"])
     yearly_electric_kwh = float(yt["electric_kwh"])
-    yearly_diesel_liters = float(yt.get("diesel_liters", 0))
-    yearly_diesel_fuel_kwh = float(yt.get("diesel_fuel_kwh", 0))
+    diesel_data = energy.get("diesel_heating_data") or {}
+    diesel_consumption_status = (
+        str(diesel_data.get("data_status", "unavailable"))
+        if aux_type == "diesel"
+        else "not_applicable"
+    )
+    yearly_diesel_liters = float(yt.get("diesel_liters") or 0)
+    yearly_diesel_fuel_kwh = float(yt.get("diesel_fuel_kwh") or 0)
 
     # -- 2. Diesel comparator consumption (same regression as costs) -----
     dc_a = _econ_or(diesel_consumption_per_m, "diesel_consumption_per_m")
@@ -1701,9 +1812,17 @@ async def get_yearly_emissions(
         el_val = yearly_electric_kwh * el_factor
 
         dh_val = 0.0
-        if aux_type == "diesel" and yearly_diesel_liters > 0:
-            dh_factor = _ef("diesel_heating", ind)
+        dh_direct = 0.0
+        dh_energy_chain = 0.0
+        if aux_type == "diesel" and diesel_consumption_status == "available":
+            dh_factor = _diesel_heating_phase_factor(ind, "total")
             dh_val = yearly_diesel_liters * dh_factor
+            dh_direct = yearly_diesel_liters * _diesel_heating_phase_factor(
+                ind, "direct"
+            )
+            dh_energy_chain = yearly_diesel_liters * _diesel_heating_phase_factor(
+                ind, "energyChain"
+            )
 
         ebus_total = el_val + dh_val
 
@@ -1714,8 +1833,20 @@ async def get_yearly_emissions(
             indicator_data = ebus_impact.get(ind)
             if isinstance(indicator_data, dict):
                 ebus_phases = _allocate_phases_by_share(indicator_data, el_val)
-                # total = phase_sum (≈ el_val) + diesel_heating
-                ebus_total = ebus_phases["total"] + dh_val
+                ebus_total = float(ebus_phases["total"]) + dh_val
+
+        # Attribute the heater WTW total to the only phases supported by the
+        # source data.  If electric-side phases are unavailable, these two
+        # values remain useful while the overall phase decomposition is partial.
+        if aux_type == "diesel" and diesel_consumption_status == "available":
+            ebus_phases["direct"] = (
+                float(ebus_phases["direct"] or 0.0) + dh_direct
+            )
+            ebus_phases["energyChain"] = (
+                float(ebus_phases["energyChain"] or 0.0) + dh_energy_chain
+            )
+            if ebus_phases.get("total") is not None:
+                ebus_phases["total"] = float(ebus_phases["total"]) + dh_val
 
         ebus_indicators[ind] = YearlyEmissionsIndicator(
             unit=unit,
@@ -1769,8 +1900,8 @@ async def get_yearly_emissions(
     for sc in energy["scenarios"]:
         sc_annual_electric = float(sc.get("annual_electric_kwh", 0))
         dh = sc.get("diesel_heating") or {}
-        sc_daily_dh_liters = float(dh.get("diesel_liters", 0))
-        sc_annual_dh_liters = float(sc.get("annual_diesel_liters", 0))
+        sc_daily_dh_liters = float(dh.get("diesel_liters") or 0)
+        sc_annual_dh_liters = float(sc.get("annual_diesel_liters") or 0)
 
         sc_gwp_el_g = sc_annual_electric * el_gwp_factor
         sc_gwp_dh_g = sc_annual_dh_liters * dh_gwp_factor if aux_type == "diesel" else 0.0
@@ -1834,7 +1965,9 @@ async def get_yearly_emissions(
         ))
 
     # 6b. Mixed-case decomposition
-    mixed_available = aux_type == "diesel" and yearly_diesel_liters > 0
+    mixed_available = (
+        aux_type == "diesel" and diesel_consumption_status == "available"
+    )
     mixed_indicators: Dict[str, MixedCaseIndicator] = {}
     for ind in _INDICATORS:
         el_v = ebus_indicators[ind].electric
@@ -1853,7 +1986,9 @@ async def get_yearly_emissions(
         available=mixed_available,
         yearly_electric_kwh=round(yearly_electric_kwh, 4),
         electric_kwh_per_100km=electric_kwh_per_100km,
-        yearly_diesel_heating_liters=round(yearly_diesel_liters, 4) if mixed_available else 0.0,
+        yearly_diesel_heating_liters=(
+            round(yearly_diesel_liters, 4) if mixed_available else None
+        ),
         indicators=mixed_indicators,
     )
 
@@ -1903,7 +2038,17 @@ async def get_yearly_emissions(
                 infrastructure=gwp_ebus.infrastructure,
             ),
             phase_sum=ebus_phase_sum,
-            phase_sum_represents="electric_side_only",
+            phase_sum_represents=(
+                "electric_side_and_diesel_heating"
+                if ebus_impact is not None and aux_type == "diesel"
+                and diesel_consumption_status == "available"
+                else (
+                    "diesel_heating_only"
+                    if ebus_impact is None and aux_type == "diesel"
+                    and diesel_consumption_status == "available"
+                    else "electric_side_only"
+                )
+            ),
         ),
         diesel_comparator=LifecycleDieselComparator(
             available=diesel_phases_available,
@@ -1994,6 +2139,14 @@ async def get_yearly_emissions(
         else:
             lca_phase_reason = "unexpected_lca_response"
 
+    heater_config = diesel_heating_config()
+    data_reasons = list(diesel_data.get("reasons", []))
+    data_status = (
+        "complete"
+        if diesel_consumption_status in {"available", "not_applicable"}
+        else "partial"
+    )
+
     return YearlyEmissionsResponse(
         yearly_analysis_id=yearly_analysis_id,
         auxiliary_heating_type=aux_type,
@@ -2001,6 +2154,29 @@ async def get_yearly_emissions(
         ebus=ebus_indicators,
         diesel_comparator=diesel_indicators,
         annual_saving=annual_saving,
+        data_completeness=EmissionsDataCompleteness(
+            status=data_status,
+            diesel_consumption_status=diesel_consumption_status,
+            diesel_factor_status="available",
+            reasons=data_reasons,
+        ),
+        scope_completeness=EmissionsScopeCompleteness(
+            status="partial",
+            boundary="Operational electric-side model plus diesel-heater WTW",
+            limitation=(
+                "The electric-side operational total is allocated with Mobitool "
+                "phase shares; this response is not an absolute full-vehicle LCA."
+            ),
+        ),
+        diesel_heating_methodology=DieselHeatingMethodologyMetadata(
+            methodology_version=heater_config["methodology_version"],
+            boundary="Well-to-wheel auxiliary diesel heater",
+            fuel_profile=heater_config["fuel_profile"],
+            factors=heater_config["factors"],
+            sources=heater_config["sources"],
+            assumptions=heater_config["assumptions"],
+            limitations=heater_config["limitations"],
+        ),
         assumptions=YearlyEmissionsAssumptions(
             auxiliary_heating_type=aux_type,
             prediction_stacks=energy.get("prediction_stacks", []),
@@ -2011,6 +2187,14 @@ async def get_yearly_emissions(
             yearly_electric_kwh=round(yearly_electric_kwh, 4),
             yearly_diesel_heating_liters=round(yearly_diesel_liters, 4),
             yearly_diesel_heating_fuel_kwh=round(yearly_diesel_fuel_kwh, 4),
+            diesel_heating_data_status=diesel_consumption_status,
+            diesel_heating_liters_sources=diesel_data.get("liters_sources", []),
+            diesel_heating_fuel_profile_version=diesel_data.get(
+                "fuel_profile_version"
+            ),
+            diesel_heating_energy_density_kwh_per_liter=diesel_data.get(
+                "energy_density_kwh_per_liter"
+            ),
             yearly_distance_km=round(yearly_km, 4),
             electricity_gwp100a_g_per_kwh=_ef("electricity", "gwp100a"),
             diesel_heating_gwp100a_g_per_liter=_ef("diesel_heating", "gwp100a"),

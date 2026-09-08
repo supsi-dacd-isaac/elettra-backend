@@ -319,10 +319,11 @@ class YearlyEmissionsIndicator(BaseModel):
     ``electric`` = yearly_electric_kwh × emission factor (energy-based);
     ``diesel_heating`` = yearly_diesel_liters × emission factor (energy-based).
 
-    **total**: ``sum(lifecycle phases) + diesel_heating``.
-    When lifecycle phases are unavailable, ``total = electric +
-    diesel_heating``.  The ``diesel_heating`` component is NOT
-    attributed to any specific lifecycle phase.
+    **total**: ``electric + diesel_heating``. Heater exhaust impacts are
+    attributed to ``direct`` and upstream fuel impacts to ``energyChain``.
+    When electric lifecycle phases are available, the returned phase sum
+    reconciles with ``total``; otherwise heater phase values remain a partial
+    decomposition.
     """
 
     unit: str
@@ -429,9 +430,9 @@ class YearlyEmissionsAssumptions(BaseModel):
     ``electric`` and ``diesel_heating`` are energy-based operational
     indicators (yearly_kwh × factor, yearly_liters × factor).
 
-    When ``auxiliary_heating_type`` is ``"diesel"``, the ``diesel_heating``
-    component is included in the indicator ``total`` but is NOT attributed
-    to any specific lifecycle phase.
+    When ``auxiliary_heating_type`` is ``"diesel"``, the heater contribution
+    is included in the indicator ``total`` and split between ``direct`` and
+    ``energyChain`` according to the versioned WTW factors.
     """
 
     auxiliary_heating_type: str
@@ -441,6 +442,10 @@ class YearlyEmissionsAssumptions(BaseModel):
     yearly_electric_kwh: float
     yearly_diesel_heating_liters: float
     yearly_diesel_heating_fuel_kwh: float
+    diesel_heating_data_status: str = "not_applicable"
+    diesel_heating_liters_sources: List[str] = Field(default_factory=list)
+    diesel_heating_fuel_profile_version: Optional[str] = None
+    diesel_heating_energy_density_kwh_per_liter: Optional[float] = None
     yearly_distance_km: float
     electricity_gwp100a_g_per_kwh: float
     diesel_heating_gwp100a_g_per_liter: float
@@ -484,6 +489,69 @@ class YearlyEmissionsAssumptions(BaseModel):
     )
 
 
+class DieselHeatingFactorMetadata(BaseModel):
+    unit: str
+    direct: float
+    energyChain: float
+    total: float
+    observed_wtw_min: Optional[float] = None
+    observed_wtw_max: Optional[float] = None
+    uncertainty_note: Optional[str] = None
+    direct_convention: Optional[str] = None
+    upstream_convention: Optional[str] = None
+    upstream_source: Optional[str] = None
+    direct_source: Optional[str] = None
+    direct_source_url: Optional[str] = None
+    note: Optional[str] = None
+
+
+class DieselHeatingFuelProfileMetadata(BaseModel):
+    version: str
+    description: str
+    fossil_diesel_volume_fraction: float
+    used_cooking_oil_biodiesel_volume_fraction: float
+    fossil_diesel_density_kg_per_liter: float
+    biodiesel_density_kg_per_liter: float
+    fossil_diesel_lhv_mj_per_kg: float
+    biodiesel_lhv_mj_per_kg: float
+    energy_density_mj_per_liter: float
+    energy_density_kwh_per_liter: float
+    source: str
+    source_url: str
+
+
+class DieselHeatingSourceMetadata(BaseModel):
+    name: str
+    version: str
+    url: str
+    sha256: Optional[str] = None
+    workbook_cells: Dict[str, str] = Field(default_factory=dict)
+    tables: Dict[str, str] = Field(default_factory=dict)
+
+
+class DieselHeatingMethodologyMetadata(BaseModel):
+    methodology_version: str
+    boundary: str
+    fuel_profile: DieselHeatingFuelProfileMetadata
+    factors: Dict[str, DieselHeatingFactorMetadata]
+    sources: Dict[str, DieselHeatingSourceMetadata]
+    assumptions: List[str] = Field(default_factory=list)
+    limitations: List[str] = Field(default_factory=list)
+
+
+class EmissionsDataCompleteness(BaseModel):
+    status: str
+    diesel_consumption_status: str
+    diesel_factor_status: str
+    reasons: List[str] = Field(default_factory=list)
+
+
+class EmissionsScopeCompleteness(BaseModel):
+    status: str
+    boundary: str
+    limitation: str
+
+
 class YearlyEmissionsResponse(BaseModel):
     """Yearly emissions comparison: mixed e-bus vs full-diesel comparator.
 
@@ -508,6 +576,9 @@ class YearlyEmissionsResponse(BaseModel):
     )
     assumptions: YearlyEmissionsAssumptions
     scenarios: List[YearlyEmissionsScenario]
+    data_completeness: EmissionsDataCompleteness
+    scope_completeness: EmissionsScopeCompleteness
+    diesel_heating_methodology: DieselHeatingMethodologyMetadata
 
     # --- New complete-payload sections ---
 
