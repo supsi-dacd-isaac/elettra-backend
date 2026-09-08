@@ -33,6 +33,7 @@ RUN case "${ELETTRA_CORE_SOURCE_COMMIT}" in \
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    ELETTRA_CONFIG_FILE=/app/config/elettra-config.docker.yaml \
     PATH="/home/elettra/.local/bin:$PATH"
 
 # Install runtime dependencies only

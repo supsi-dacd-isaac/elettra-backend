@@ -399,7 +399,7 @@ ALTER TABLE public.trip_predictions OWNER TO admin;
 CREATE TABLE public.optimization_runs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
-    bus_model_id uuid NOT NULL,
+    bus_model_id uuid,
     mode text NOT NULL,
     status text DEFAULT 'pending' NOT NULL,
     input_params jsonb NOT NULL,
@@ -407,6 +407,7 @@ CREATE TABLE public.optimization_runs (
     results jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     completed_at timestamp with time zone,
+    name text,
     CONSTRAINT optimization_runs_mode_check CHECK ((mode = ANY (ARRAY['battery_only'::text, 'charging_only'::text, 'joint'::text])))
 );
 
