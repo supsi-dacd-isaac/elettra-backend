@@ -317,6 +317,9 @@ class YearlyCostAssumptions(BaseModel):
     yearly_distance_km: float
     yearly_diesel_heating_liters: float
     yearly_diesel_heating_fuel_kwh: float
+    diesel_heating_fuel_profile_version: Optional[str] = None
+    diesel_heating_energy_density_kwh_per_liter: Optional[float] = None
+    diesel_heating_liters_sources: list[str] = Field(default_factory=list)
     diesel_heating_maintenance_factor: float = Field(
         description=(
             "Fraction of electric maintenance OPEX applied as diesel-heating "

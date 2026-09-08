@@ -195,9 +195,15 @@ class ShiftInfoResponse(BaseModel):
 
 class ScenarioDieselHeating(BaseModel):
     """Diesel-heating quantities for a single temperature scenario."""
-    diesel_fuel_kwh: float
-    diesel_liters: float
+    diesel_fuel_kwh: Optional[float] = None
+    diesel_liters: Optional[float] = None
     diesel_heater_efficiency: float
+    data_status: str = "available"
+    quantity_state: str = "positive"
+    liters_source: Optional[str] = None
+    reason: Optional[str] = None
+    fuel_profile_version: Optional[str] = None
+    energy_density_kwh_per_liter: Optional[float] = None
 
 
 class EnergyComponentBreakdown(BaseModel):
@@ -230,14 +236,20 @@ class ScenarioEnergySummary(BaseModel):
     annual_auxiliary_kwh: float
     annual_drivetrain_kwh: float
     annual_components: Optional[EnergyComponentBreakdown] = None
-    annual_diesel_fuel_kwh: float
-    annual_diesel_liters: float
+    annual_diesel_fuel_kwh: Optional[float] = None
+    annual_diesel_liters: Optional[float] = None
 
 
 class YearlyDieselHeatingTotals(BaseModel):
     """Aggregated yearly diesel-heating quantities across all scenarios."""
-    diesel_fuel_kwh: float
-    diesel_liters: float
+    diesel_fuel_kwh: Optional[float] = None
+    diesel_liters: Optional[float] = None
+    data_status: str = "available"
+    quantity_state: str = "positive"
+    liters_sources: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    fuel_profile_version: Optional[str] = None
+    energy_density_kwh_per_liter: Optional[float] = None
 
 
 class YearlyEnergySummaryResponse(BaseModel):
@@ -250,6 +262,7 @@ class YearlyEnergySummaryResponse(BaseModel):
     scenarios: list[ScenarioEnergySummary]
     yearly_totals: dict
     yearly_diesel_heating: Optional[YearlyDieselHeatingTotals] = None
+    diesel_heating_data: Optional[YearlyDieselHeatingTotals] = None
 
 
 # ---------------------------------------------------------------------------

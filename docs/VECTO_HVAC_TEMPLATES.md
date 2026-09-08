@@ -162,8 +162,14 @@ provenance and should be persisted by the caller.
 `auxiliary_heating_type="diesel"` declares a 30 kW fuel heater alongside the
 electrical R744 heat pump. VECTO's heating-distribution tables decide the load
 split. `p_fuel_kw` is reported separately and never added to battery energy.
-The adapter also reports `fuel_l_per_hour = p_fuel_kw / 9.94 kWh/L`; 9.94 is
+The frozen template also reports `fuel_l_per_hour = p_fuel_kw / 9.94 kWh/L`; 9.94 is
 the frozen lower-heating-value assumption for diesel, not a VECTO constant.
+
+Application endpoints do not use that historical litre estimate as the
+current fuel quantity. They retain `p_fuel_kw`/fuel kWh as the physical source
+of truth and apply the versioned application fuel profile documented in
+`DIESEL_HEATING_EMISSIONS.md`. This preserves the immutable template release
+while keeping energy summaries, costs and emissions on one litre conversion.
 
 `auxiliary_heating_type="default"` sets fuel-heater capacity to zero. The R744
 heat pump remains present. A backend using this scenario must report unmet

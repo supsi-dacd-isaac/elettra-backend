@@ -3,7 +3,7 @@
 # and APP_SECRET_KEY; docker-compose.external.yml requires both at render time.
 app:
   name: "Elettra Backend"
-  version: "1.0.0"
+  version: "1.0.1"
   debug: false
 
 database:
