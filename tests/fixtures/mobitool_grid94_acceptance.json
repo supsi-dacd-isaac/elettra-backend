@@ -1,0 +1,4274 @@
+{
+  "methodology_version": "mobitool-parameterized-grid94-v1",
+  "status": "incomplete",
+  "vehicles": [
+    {
+      "shift_id": "acceptance-9",
+      "bus_length_m": 9,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "NMC",
+      "lifetime_bus": 12,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.3718,
+      "diesel_heating_liters": 500,
+      "reference_size": "9m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 12255319.148936171,
+          "diesel_heating": 1500866.2703844002,
+          "other_lifecycle": 14026642.034596508,
+          "phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 12526063.16932057,
+            "maintenance": 1009053.2105263157,
+            "vehicle": 7922495.308467175,
+            "endOfLife": 538358.7898382593,
+            "infrastructure": 4556734.725764758
+          },
+          "total": 27782827.45391708,
+          "diesel_comparator_phases": {
+            "direct": 55385738.96593893,
+            "directNonExhaust": 0,
+            "energyChain": 12079515.213470392,
+            "maintenance": 1210863.852631579,
+            "vehicle": 3439860.1465785154,
+            "endOfLife": 119456.89557227939,
+            "infrastructure": 3727150.9910825226
+          },
+          "diesel_comparator_total": 75962586.06527422,
+          "diesel_heating_phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 270744.02038440004,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 95878441.69515958,
+          "diesel_heating": 2734628.020517,
+          "other_lifecycle": 40491279.776696734,
+          "phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 97012336.05919558,
+            "maintenance": 1121876.7894736843,
+            "vehicle": 25111516.608025596,
+            "endOfLife": 767194.131780816,
+            "infrastructure": 13490692.247416636
+          },
+          "total": 139104349.49237332,
+          "diesel_comparator_phases": {
+            "direct": 20861452.797900002,
+            "directNonExhaust": 0,
+            "energyChain": 50589830.94583018,
+            "maintenance": 1346252.147368421,
+            "vehicle": 5792264.819194389,
+            "endOfLife": 204172.2585552439,
+            "infrastructure": 10851458.596452681
+          },
+          "diesel_comparator_total": 89645431.56530091,
+          "diesel_heating_phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 1133894.364036,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 2318263.63092383,
+          "diesel_heating": 56503.662278870004,
+          "other_lifecycle": 13544045.95159741,
+          "phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 2590902.437383245,
+            "energyChain": 2342306.15330635,
+            "maintenance": 352555.61578947364,
+            "vehicle": 6745616.432414486,
+            "endOfLife": 73135.80934279099,
+            "infrastructure": 3781835.6566674137
+          },
+          "total": 15918813.24480011,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 3659836.6878669197,
+            "energyChain": 1072681.1786185123,
+            "maintenance": 423066.7389473684,
+            "vehicle": 3810943.2363412245,
+            "endOfLife": 10938.946074345231,
+            "infrastructure": 3073784.879400222
+          },
+          "diesel_comparator_total": 12051251.667248592,
+          "diesel_heating_phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 0,
+            "energyChain": 24042.52238252,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 896144.5073537235,
+          "diesel_heating": 23109.44136592,
+          "other_lifecycle": 330768.1876233299,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 595253.9487196435,
+            "maintenance": 43705.24421052632,
+            "vehicle": 129296.82217950962,
+            "endOfLife": 6018.608085447375,
+            "infrastructure": 151747.5131478466
+          },
+          "total": 1250022.1363429734,
+          "diesel_comparator_phases": {
+            "direct": 793211.133,
+            "directNonExhaust": 0,
+            "energyChain": 237839.70298188677,
+            "maintenance": 52446.29305263158,
+            "vehicle": 59105.67850005157,
+            "endOfLife": 523.8002658850339,
+            "infrastructure": 127875.10577753134
+          },
+          "diesel_comparator_total": 1271001.7135779862,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 23109.44136592,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 693562.376440532,
+          "diesel_heating": 22025.55479953666,
+          "other_lifecycle": 301712.93145477475,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 391587.9312400687,
+            "maintenance": 36441.26405110527,
+            "vehicle": 117489.05148583559,
+            "endOfLife": 5549.414567330169,
+            "infrastructure": 142233.20135050372
+          },
+          "total": 1017300.8626948434,
+          "diesel_comparator_phases": {
+            "direct": 749198.3413200001,
+            "directNonExhaust": 0,
+            "energyChain": 233493.8116161276,
+            "maintenance": 43729.516861326316,
+            "vehicle": 54136.33719167236,
+            "endOfLife": 516.7934348442499,
+            "infrastructure": 118816.55075619004
+          },
+          "diesel_comparator_total": 1199891.3511801607,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 22025.55479953666,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [],
+      "upstream_requests": [
+        {
+          "vehicle_id": "66a8f492-dbb9-43dc-8170-4f01c7be31a7",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "ef0397b8a473f62258a3a562f515647d95c9985c86e7ef443595fa8831f13215",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.20233909356725147,
+              "vehicle": 0.5985963989792111,
+              "endOfLife": 0.027863926321515624,
+              "infrastructure": 0.7025347830918823
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.168709555792154,
+              "vehicle": 0.5439307939159055,
+              "endOfLife": 0.025691734108010043,
+              "infrastructure": 0.6584870432893691
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 16.81755350877193,
+              "vehicle": 132.0415884744529,
+              "endOfLife": 8.972646497304323,
+              "infrastructure": 75.94557876274597
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 43.181707289720755,
+              "energyChain": 0,
+              "maintenance": 5.875926929824561,
+              "vehicle": 112.42694054024143,
+              "endOfLife": 1.2189301557131833,
+              "infrastructure": 63.03059427779023
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 40.41918049259191,
+              "energyChain": 0,
+              "maintenance": 2.2708594736842107,
+              "vehicle": 96.92701483975894,
+              "endOfLife": 1.9191409752939235,
+              "infrastructure": 19.472280351793966
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.188642524342873e-10,
+              "energyChain": 0,
+              "maintenance": 13.330194736842106,
+              "vehicle": 146.1532508155385,
+              "endOfLife": 2.674129599602347,
+              "infrastructure": 351.8777189667748
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 18.69794649122807,
+              "vehicle": 418.5252768004266,
+              "endOfLife": 12.7865688630136,
+              "infrastructure": 224.84487079027727
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 115.60242737699677,
+              "energyChain": 0,
+              "maintenance": 44.61062894736842,
+              "vehicle": 387.7959095648057,
+              "endOfLife": 14.637652697377622,
+              "infrastructure": 201.71372096754135
+            }
+          }
+        },
+        {
+          "vehicle_id": "66a8f492-dbb9-43dc-8170-4f01c7be31a7",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "1e3cacb94e2efc0fd1ac85f30b904c79ed74dc708b3d10617a6a8fdce10cdf35",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.2889056595503474,
+              "maintenance": 0.20233909356725147,
+              "vehicle": 0.5985963989792111,
+              "endOfLife": 0.027863926321515624,
+              "infrastructure": 0.7025347830918823
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 1.545416734029125,
+              "maintenance": 0.168709555792154,
+              "vehicle": 0.5439307939159055,
+              "endOfLife": 0.025691734108010043,
+              "infrastructure": 0.6584870432893691
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 161.92,
+              "maintenance": 16.81755350877193,
+              "vehicle": 132.0415884744529,
+              "endOfLife": 8.972646497304323,
+              "infrastructure": 75.94557876274597
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 43.181707289720755,
+              "energyChain": 30.6294142614614,
+              "maintenance": 5.875926929824561,
+              "vehicle": 112.42694054024143,
+              "endOfLife": 1.2189301557131833,
+              "infrastructure": 63.03059427779023
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 40.41918049259191,
+              "energyChain": 39.8882132871255,
+              "maintenance": 2.2708594736842107,
+              "vehicle": 96.92701483975894,
+              "endOfLife": 1.9191409752939235,
+              "infrastructure": 19.472280351793966
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.188642524342873e-10,
+              "energyChain": 451.49951414698353,
+              "maintenance": 13.330194736842106,
+              "vehicle": 146.1532508155385,
+              "endOfLife": 2.674129599602347,
+              "infrastructure": 351.8777189667748
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1266.767277996825,
+              "maintenance": 18.69794649122807,
+              "vehicle": 418.5252768004266,
+              "endOfLife": 12.7865688630136,
+              "infrastructure": 224.84487079027727
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 115.60242737699677,
+              "energyChain": 654.005,
+              "maintenance": 44.61062894736842,
+              "vehicle": 387.7959095648057,
+              "endOfLife": 14.637652697377622,
+              "infrastructure": 201.71372096754135
+            }
+          }
+        },
+        {
+          "vehicle_id": "40ac537a-b112-40a0-8f73-c314237bc7e2",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 600000,
+            "passengers": 20,
+            "fuelConsumption": 37.18,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "9cee64fa4454efd0f7f1a3fb5e980664ff188968d32b2f057ad615f225a26972",
+          "response": {
+            "primaryEnergy": {
+              "direct": 3.672273763888889,
+              "directNonExhaust": 0,
+              "energyChain": 1.1011097360272535,
+              "maintenance": 0.24280691228070175,
+              "vehicle": 0.2736374004632017,
+              "endOfLife": 0.002425001230949231,
+              "infrastructure": 0.5920143785996821
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 3.468510839444445,
+              "directNonExhaust": 0,
+              "energyChain": 1.0809898685931834,
+              "maintenance": 0.2024514669505848,
+              "vehicle": 0.25063119070218687,
+              "endOfLife": 0.002392562198353009,
+              "infrastructure": 0.5500766238712502
+            },
+            "gwp100a": {
+              "direct": 923.0956494323156,
+              "directNonExhaust": 0,
+              "energyChain": 201.32525355783986,
+              "maintenance": 20.181064210526316,
+              "vehicle": 57.331002442975254,
+              "endOfLife": 1.99094825953799,
+              "infrastructure": 62.11918318470871
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 60.99727813111533,
+              "energyChain": 17.878019643641874,
+              "maintenance": 7.0511123157894735,
+              "vehicle": 63.51572060568708,
+              "endOfLife": 0.18231576790575385,
+              "infrastructure": 51.2297479900037
+            },
+            "pm25": {
+              "direct": 33.314867586000005,
+              "directNonExhaust": 50.34988295785664,
+              "energyChain": 62.64149176437152,
+              "maintenance": 2.7250313684210528,
+              "vehicle": 20.61863623954413,
+              "endOfLife": 0.32581110503191163,
+              "infrastructure": 15.802132463279301
+            },
+            "nmvoc": {
+              "direct": 30.849564441690323,
+              "directNonExhaust": 2.1974972822054436e-10,
+              "energyChain": 701.7634800171883,
+              "maintenance": 15.996233684210527,
+              "vehicle": 39.44447151738588,
+              "endOfLife": 0.6774136039870627,
+              "infrastructure": 281.63845855319454
+            },
+            "nox": {
+              "direct": 347.690879965,
+              "directNonExhaust": 0,
+              "energyChain": 843.1638490971696,
+              "maintenance": 22.437535789473685,
+              "vehicle": 96.53774698657314,
+              "endOfLife": 3.402870975920732,
+              "infrastructure": 180.85764327421134
+            },
+            "ubp21": {
+              "direct": 996.2629069150325,
+              "directNonExhaust": 218.8191656008762,
+              "energyChain": 553.099261286,
+              "maintenance": 53.53275473684211,
+              "vehicle": 126.0246412859116,
+              "endOfLife": 2.537357125454278,
+              "infrastructure": 168.28878521587404
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.265,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "acceptance-12",
+      "bus_length_m": 12,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "NMC",
+      "lifetime_bus": 12,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.43179999999999996,
+      "diesel_heating_liters": 500,
+      "reference_size": "13m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 12255319.148936171,
+          "diesel_heating": 1500866.2703844002,
+          "other_lifecycle": 17306418.055032067,
+          "phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 12526063.16932057,
+            "maintenance": 1597667.5833333335,
+            "vehicle": 9258974.517382719,
+            "endOfLife": 593909.9200721912,
+            "infrastructure": 5855866.034243822
+          },
+          "total": 31062603.474352635,
+          "diesel_comparator_phases": {
+            "direct": 64323728.04059286,
+            "directNonExhaust": 0,
+            "energyChain": 14028872.160238069,
+            "maintenance": 1917201.1,
+            "vehicle": 5303288.069066146,
+            "endOfLife": 184762.64692882236,
+            "infrastructure": 5143802.685219751
+          },
+          "diesel_comparator_total": 90901654.70204565,
+          "diesel_heating_phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 270744.02038440004,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 95878441.69515958,
+          "diesel_heating": 2734628.020517,
+          "other_lifecycle": 47557593.742228664,
+          "phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 97012336.05919558,
+            "maintenance": 1776304.9166666665,
+            "vehicle": 27306038.69563258,
+            "endOfLife": 851507.8155319053,
+            "infrastructure": 17623742.314397514
+          },
+          "total": 146170663.45790523,
+          "diesel_comparator_phases": {
+            "direct": 24228013.227899995,
+            "directNonExhaust": 0,
+            "energyChain": 58753870.366889365,
+            "maintenance": 2131565.9,
+            "vehicle": 8923696.12559701,
+            "endOfLife": 297307.8804630046,
+            "infrastructure": 15358387.450470675
+          },
+          "diesel_comparator_total": 109692840.95132005,
+          "diesel_heating_phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 1133894.364036,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 2318263.63092383,
+          "diesel_heating": 56503.662278870004,
+          "other_lifecycle": 17069785.506537084,
+          "phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 3240201.465301756,
+            "energyChain": 2342306.15330635,
+            "maintenance": 558213.0583333333,
+            "vehicle": 8303139.029193446,
+            "endOfLife": 77586.05917066976,
+            "infrastructure": 4890645.89453788
+          },
+          "total": 19444552.799739785,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 4708232.594287611,
+            "energyChain": 1245787.339772656,
+            "maintenance": 669855.6699999999,
+            "vehicle": 5875002.157625924,
+            "endOfLife": 15812.360788174457,
+            "infrastructure": 4282898.917145093
+          },
+          "diesel_comparator_total": 16797589.039619457,
+          "diesel_heating_phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 0,
+            "energyChain": 24042.52238252,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 896144.5073537235,
+          "diesel_heating": 23109.44136592,
+          "other_lifecycle": 417149.1891661702,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 595253.9487196435,
+            "maintenance": 69199.97,
+            "vehicle": 152584.76565744638,
+            "endOfLife": 6232.658084745898,
+            "infrastructure": 189131.79542397792
+          },
+          "total": 1336403.1378858138,
+          "diesel_comparator_phases": {
+            "direct": 921217.2329999999,
+            "directNonExhaust": 0,
+            "energyChain": 276221.58081651066,
+            "maintenance": 83039.96399999999,
+            "vehicle": 91049.97124883367,
+            "endOfLife": 758.8176882186881,
+            "infrastructure": 168641.19806930158
+          },
+          "diesel_comparator_total": 1540928.7648228644,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 23109.44136592,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 693562.376440532,
+          "diesel_heating": 22025.55479953666,
+          "other_lifecycle": 381202.90661386197,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 391587.9312400687,
+            "maintenance": 57698.668080916665,
+            "vehicle": 138839.90601802221,
+            "endOfLife": 5760.56565733048,
+            "infrastructure": 178903.76685759262
+          },
+          "total": 1096790.8378539307,
+          "diesel_comparator_phases": {
+            "direct": 870101.7853199998,
+            "directNonExhaust": 0,
+            "energyChain": 271174.3621727915,
+            "maintenance": 69238.4016971,
+            "vehicle": 83491.87768209503,
+            "endOfLife": 748.6051982303545,
+            "infrastructure": 158804.36292846885
+          },
+          "diesel_comparator_total": 1453559.3949986855,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 22025.55479953666,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [],
+      "upstream_requests": [
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "de55f83912621a7b8d7bdb7400473062a2c3b1ec0738abc734995ec8d9fa3def",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 0.7064109521178072,
+              "endOfLife": 0.02885489854049027,
+              "infrastructure": 0.8756101639998978
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 0.6427773426760288,
+              "endOfLife": 0.02666928545060407,
+              "infrastructure": 0.828258179896262
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 26.627793055555557,
+              "vehicle": 154.31624195637863,
+              "endOfLife": 9.898498667869852,
+              "infrastructure": 97.59776723739704
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 54.00335775502926,
+              "energyChain": 0,
+              "maintenance": 9.303550972222222,
+              "vehicle": 138.38565048655744,
+              "endOfLife": 1.2931009861778293,
+              "infrastructure": 81.51076490896467
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 50.30358257005728,
+              "energyChain": 0,
+              "maintenance": 3.5955275,
+              "vehicle": 105.31288921440446,
+              "endOfLife": 2.0514011336672753,
+              "infrastructure": 25.21974507797092
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7233784681471337e-10,
+              "energyChain": 0,
+              "maintenance": 21.106141666666666,
+              "vehicle": 160.9393724799702,
+              "endOfLife": 2.9493277060500867,
+              "infrastructure": 461.87267525616227
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 29.605081944444443,
+              "vehicle": 455.10064492720966,
+              "endOfLife": 14.191796925531754,
+              "infrastructure": 293.7290385732919
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.00234002582565,
+              "energyChain": 0,
+              "maintenance": 70.63349583333333,
+              "vehicle": 436.0464669219789,
+              "endOfLife": 15.789939929015606,
+              "infrastructure": 254.05729772419338
+            }
+          }
+        },
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "2b9180fbd4b70e6f320808efa4645e6d4d5b80940ac1da53a9533aacbade9d37",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.2889056595503474,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 0.7064109521178072,
+              "endOfLife": 0.02885489854049027,
+              "infrastructure": 0.8756101639998978
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 1.545416734029125,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 0.6427773426760288,
+              "endOfLife": 0.02666928545060407,
+              "infrastructure": 0.828258179896262
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 161.92,
+              "maintenance": 26.627793055555557,
+              "vehicle": 154.31624195637863,
+              "endOfLife": 9.898498667869852,
+              "infrastructure": 97.59776723739704
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 54.00335775502926,
+              "energyChain": 30.6294142614614,
+              "maintenance": 9.303550972222222,
+              "vehicle": 138.38565048655744,
+              "endOfLife": 1.2931009861778293,
+              "infrastructure": 81.51076490896467
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 50.30358257005728,
+              "energyChain": 39.8882132871255,
+              "maintenance": 3.5955275,
+              "vehicle": 105.31288921440446,
+              "endOfLife": 2.0514011336672753,
+              "infrastructure": 25.21974507797092
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7233784681471337e-10,
+              "energyChain": 451.49951414698353,
+              "maintenance": 21.106141666666666,
+              "vehicle": 160.9393724799702,
+              "endOfLife": 2.9493277060500867,
+              "infrastructure": 461.87267525616227
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1266.767277996825,
+              "maintenance": 29.605081944444443,
+              "vehicle": 455.10064492720966,
+              "endOfLife": 14.191796925531754,
+              "infrastructure": 293.7290385732919
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.00234002582565,
+              "energyChain": 654.005,
+              "maintenance": 70.63349583333333,
+              "vehicle": 436.0464669219789,
+              "endOfLife": 15.789939929015606,
+              "infrastructure": 254.05729772419338
+            }
+          }
+        },
+        {
+          "vehicle_id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 600000,
+            "passengers": 20,
+            "fuelConsumption": 43.17999999999999,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "3c6e87ccc1a093b5f86b9392a99eb886d254d5ac2a7a939222a8475cc3ee0f8d",
+          "response": {
+            "primaryEnergy": {
+              "direct": 4.264894597222222,
+              "directNonExhaust": 0,
+              "energyChain": 1.2788036148912532,
+              "maintenance": 0.3844442777777778,
+              "vehicle": 0.4215276446705262,
+              "endOfLife": 0.003513044852864297,
+              "infrastructure": 0.7807462873578777
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 4.0282490061111105,
+              "directNonExhaust": 0,
+              "energyChain": 1.2554368619110716,
+              "maintenance": 0.32054815600509257,
+              "vehicle": 0.3865364707504399,
+              "endOfLife": 0.0034657648066220115,
+              "infrastructure": 0.7352053839280965
+            },
+            "gwp100a": {
+              "direct": 1072.062134009881,
+              "directNonExhaust": 0,
+              "energyChain": 233.81453600396782,
+              "maintenance": 31.953351666666666,
+              "vehicle": 88.38813448443577,
+              "endOfLife": 3.079377448813706,
+              "infrastructure": 85.73004475366251
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 78.47054323812685,
+              "energyChain": 20.76312232954427,
+              "maintenance": 11.164261166666666,
+              "vehicle": 97.91670262709873,
+              "endOfLife": 0.2635393464695743,
+              "infrastructure": 71.38164861908488
+            },
+            "pm25": {
+              "direct": 38.69112378599999,
+              "directNonExhaust": 65.00051700182172,
+              "energyChain": 72.7503930711555,
+              "maintenance": 4.314633000000001,
+              "vehicle": 31.669125082059946,
+              "endOfLife": 0.4704621362491138,
+              "infrastructure": 22.0695171288562
+            },
+            "nmvoc": {
+              "direct": 35.82797720796632,
+              "directNonExhaust": 2.8796533111970184e-10,
+              "energyChain": 815.0120243986601,
+              "maintenance": 25.32737,
+              "vehicle": 60.78111384642202,
+              "endOfLife": 0.9785278959582508,
+              "infrastructure": 401.5836405043092
+            },
+            "nox": {
+              "direct": 403.80022046499994,
+              "directNonExhaust": 0,
+              "energyChain": 979.2311727814895,
+              "maintenance": 35.52609833333333,
+              "vehicle": 148.72826875995017,
+              "endOfLife": 4.955131341050076,
+              "infrastructure": 255.97312417451124
+            },
+            "ubp21": {
+              "direct": 1157.0369101826545,
+              "directNonExhaust": 229.7143313404733,
+              "energyChain": 642.3568074859999,
+              "maintenance": 84.760195,
+              "vehicle": 193.71785260635008,
+              "endOfLife": 3.876416649770709,
+              "infrastructure": 225.36740090740562
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.265,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "acceptance-18",
+      "bus_length_m": 18,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "NMC",
+      "lifetime_bus": 12,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.5518,
+      "diesel_heating_liters": 500,
+      "reference_size": "18m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 12255319.148936171,
+          "diesel_heating": 1500866.2703844002,
+          "other_lifecycle": 20705959.633138526,
+          "phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 12526063.16932057,
+            "maintenance": 2354457.49122807,
+            "vehicle": 10572749.712942317,
+            "endOfLife": 661437.9728275599,
+            "infrastructure": 7117314.45614058
+          },
+          "total": 34462145.0524591,
+          "diesel_comparator_phases": {
+            "direct": 82199706.18990076,
+            "directNonExhaust": 0,
+            "energyChain": 17927586.05377343,
+            "maintenance": 2825348.989473684,
+            "vehicle": 6819887.060784175,
+            "endOfLife": 263305.5648773785,
+            "infrastructure": 6396072.502454057
+          },
+          "diesel_comparator_total": 116431906.36126348,
+          "diesel_heating_phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 270744.02038440004,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 95878441.69515958,
+          "diesel_heating": 2734628.020517,
+          "other_lifecycle": 54822602.700121514,
+          "phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 97012336.05919558,
+            "maintenance": 2617712.50877193,
+            "vehicle": 29631173.09850256,
+            "endOfLife": 936808.8647459198,
+            "infrastructure": 21636908.2281011
+          },
+          "total": 153435672.4157981,
+          "diesel_comparator_phases": {
+            "direct": 30961134.0879,
+            "directNonExhaust": 0,
+            "energyChain": 75081949.20900777,
+            "maintenance": 3141255.010526316,
+            "vehicle": 11575069.623992324,
+            "endOfLife": 384895.232009298,
+            "infrastructure": 19342352.59565507
+          },
+          "diesel_comparator_total": 140486655.75909078,
+          "diesel_heating_phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 1133894.364036,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 2318263.63092383,
+          "diesel_heating": 56503.662278870004,
+          "other_lifecycle": 20471190.464027777,
+          "phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 3845745.855797708,
+            "energyChain": 2342306.15330635,
+            "maintenance": 822629.7701754386,
+            "vehicle": 9753554.71018101,
+            "endOfLife": 81966.38749005737,
+            "infrastructure": 5967293.740383564
+          },
+          "total": 22845957.75723048,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 5566497.4988456275,
+            "energyChain": 1591999.662080944,
+            "maintenance": 987155.7242105264,
+            "vehicle": 7608533.6553284,
+            "endOfLife": 20210.914980505924,
+            "infrastructure": 5351712.812140184
+          },
+          "diesel_comparator_total": 21126110.26758619,
+          "diesel_heating_phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 0,
+            "energyChain": 24042.52238252,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 896144.5073537235,
+          "diesel_heating": 23109.44136592,
+          "other_lifecycle": 510134.1230052425,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 595253.9487196435,
+            "maintenance": 101978.90315789475,
+            "vehicle": 176278.41013986993,
+            "endOfLife": 6445.10866720109,
+            "infrastructure": 225431.7010402767
+          },
+          "total": 1429388.071724886,
+          "diesel_comparator_phases": {
+            "direct": 1177229.433,
+            "directNonExhaust": 0,
+            "energyChain": 352985.3364857587,
+            "maintenance": 122374.6837894737,
+            "vehicle": 118493.70189131568,
+            "endOfLife": 973.625531448723,
+            "infrastructure": 204676.97676835765
+          },
+          "diesel_comparator_total": 1976733.7574663544,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 23109.44136592,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 693562.376440532,
+          "diesel_heating": 22025.55479953666,
+          "other_lifecycle": 466209.79398595897,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 391587.9312400687,
+            "maintenance": 85029.6161192456,
+            "vehicle": 160699.44640963915,
+            "endOfLife": 5970.073527681718,
+            "infrastructure": 214510.65792939247
+          },
+          "total": 1181797.7252260277,
+          "diesel_comparator_phases": {
+            "direct": 1111908.67332,
+            "directNonExhaust": 0,
+            "energyChain": 346535.4632861194,
+            "maintenance": 102035.53934309473,
+            "vehicle": 108855.30258819065,
+            "endOfLife": 960.3834476320982,
+            "infrastructure": 194152.16962493173
+          },
+          "diesel_comparator_total": 1864447.5316099687,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 22025.55479953666,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [],
+      "upstream_requests": [
+        {
+          "vehicle_id": "98c76615-5094-4a04-8b28-01cc56dbdd80",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "374c9d247beaea86cad040152da4f1f6788da29696bf142971b8ce37b0ef16e3",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.4721245516569201,
+              "vehicle": 0.8161037506475459,
+              "endOfLife": 0.029838466051856895,
+              "infrastructure": 1.0436652825938737
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.39365563018169264,
+              "vehicle": 0.7439789185631441,
+              "endOfLife": 0.027639229294822765,
+              "infrastructure": 0.9931048978212614
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 39.2409581871345,
+              "vehicle": 176.21249521570527,
+              "endOfLife": 11.023966213792665,
+              "infrastructure": 118.621907602343
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 64.09576426329514,
+              "energyChain": 0,
+              "maintenance": 13.710496169590643,
+              "vehicle": 162.55924516968352,
+              "endOfLife": 1.3661064581676228,
+              "infrastructure": 99.4548956730594
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 59.4913371804931,
+              "energyChain": 0,
+              "maintenance": 5.298672105263159,
+              "vehicle": 115.12925042639625,
+              "endOfLife": 2.1810503735405677,
+              "infrastructure": 30.80049758653079
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 3.218935161303384e-10,
+              "energyChain": 0,
+              "maintenance": 31.103787719298246,
+              "vehicle": 178.08593367820674,
+              "endOfLife": 3.2194784302447275,
+              "infrastructure": 568.6770938105062
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 43.6285418128655,
+              "vehicle": 493.8528849750427,
+              "endOfLife": 15.613481079098664,
+              "infrastructure": 360.61513713501836
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 127.97754839256999,
+              "energyChain": 0,
+              "maintenance": 104.09146754385965,
+              "vehicle": 485.9874798872479,
+              "endOfLife": 17.14593896497862,
+              "infrastructure": 304.8825852568389
+            }
+          }
+        },
+        {
+          "vehicle_id": "98c76615-5094-4a04-8b28-01cc56dbdd80",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "f3976a96fd56ea2d3a049978f2f817ea6afe0caaaf41b7a8fd2a4d2e034702b7",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.2889056595503474,
+              "maintenance": 0.4721245516569201,
+              "vehicle": 0.8161037506475459,
+              "endOfLife": 0.029838466051856895,
+              "infrastructure": 1.0436652825938737
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 1.545416734029125,
+              "maintenance": 0.39365563018169264,
+              "vehicle": 0.7439789185631441,
+              "endOfLife": 0.027639229294822765,
+              "infrastructure": 0.9931048978212614
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 161.92,
+              "maintenance": 39.2409581871345,
+              "vehicle": 176.21249521570527,
+              "endOfLife": 11.023966213792665,
+              "infrastructure": 118.621907602343
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 64.09576426329514,
+              "energyChain": 30.6294142614614,
+              "maintenance": 13.710496169590643,
+              "vehicle": 162.55924516968352,
+              "endOfLife": 1.3661064581676228,
+              "infrastructure": 99.4548956730594
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 59.4913371804931,
+              "energyChain": 39.8882132871255,
+              "maintenance": 5.298672105263159,
+              "vehicle": 115.12925042639625,
+              "endOfLife": 2.1810503735405677,
+              "infrastructure": 30.80049758653079
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 3.218935161303384e-10,
+              "energyChain": 451.49951414698353,
+              "maintenance": 31.103787719298246,
+              "vehicle": 178.08593367820674,
+              "endOfLife": 3.2194784302447275,
+              "infrastructure": 568.6770938105062
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1266.767277996825,
+              "maintenance": 43.6285418128655,
+              "vehicle": 493.8528849750427,
+              "endOfLife": 15.613481079098664,
+              "infrastructure": 360.61513713501836
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 127.97754839256999,
+              "energyChain": 654.005,
+              "maintenance": 104.09146754385965,
+              "vehicle": 485.9874798872479,
+              "endOfLife": 17.14593896497862,
+              "infrastructure": 304.8825852568389
+            }
+          }
+        },
+        {
+          "vehicle_id": "2b46af76-34e0-4b67-8631-0478d2d8b712",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 600000,
+            "passengers": 20,
+            "fuelConsumption": 55.17999999999999,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "3c5563ef73eea3f87269ca79784c3eb81e1f27f01f48df8120aa56a0aa2d6473",
+          "response": {
+            "primaryEnergy": {
+              "direct": 5.450136263888888,
+              "directNonExhaust": 0,
+              "energyChain": 1.6341913726192532,
+              "maintenance": 0.5665494619883041,
+              "vehicle": 0.5485819532005355,
+              "endOfLife": 0.004507525608558903,
+              "infrastructure": 0.947578596149804
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 5.147725339444444,
+              "directNonExhaust": 0,
+              "energyChain": 1.604330848546849,
+              "maintenance": 0.47238675621803117,
+              "vehicle": 0.5039597342045863,
+              "endOfLife": 0.004446219664963417,
+              "infrastructure": 0.8988526371524617
+            },
+            "gwp100a": {
+              "direct": 1369.9951031650126,
+              "directNonExhaust": 0,
+              "energyChain": 298.7931008962238,
+              "maintenance": 47.0891498245614,
+              "vehicle": 113.66478434640291,
+              "endOfLife": 4.388426081289642,
+              "infrastructure": 106.60120837423429
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 92.7749583140938,
+              "energyChain": 26.53332770134907,
+              "maintenance": 16.452595403508774,
+              "vehicle": 126.80889425547335,
+              "endOfLife": 0.33684858300843207,
+              "infrastructure": 89.19521353566974
+            },
+            "pm25": {
+              "direct": 49.443636186,
+              "directNonExhaust": 77.02391104515104,
+              "energyChain": 92.96819568472351,
+              "maintenance": 6.3584065263157905,
+              "vehicle": 42.253377897284494,
+              "endOfLife": 0.6002056982297646,
+              "infrastructure": 27.609662728638913
+            },
+            "nmvoc": {
+              "direct": 45.78480274051833,
+              "directNonExhaust": 3.443654855714116e-10,
+              "energyChain": 1041.509113161604,
+              "maintenance": 37.324545263157894,
+              "vehicle": 80.79992207488372,
+              "endOfLife": 1.2491982907035606,
+              "infrastructure": 507.6109242054983
+            },
+            "nox": {
+              "direct": 516.018901465,
+              "directNonExhaust": 0,
+              "energyChain": 1251.3658201501296,
+              "maintenance": 52.354250175438594,
+              "vehicle": 192.91782706653873,
+              "endOfLife": 6.4149205334883,
+              "infrastructure": 322.37254326091784
+            },
+            "ubp21": {
+              "direct": 1478.584916717899,
+              "directNonExhaust": 238.61218243184248,
+              "energyChain": 820.8718998859999,
+              "maintenance": 124.90976105263158,
+              "vehicle": 252.2148898672356,
+              "endOfLife": 5.423349781493937,
+              "infrastructure": 275.8228713210793
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.265,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "variant-0",
+      "bus_length_m": 12,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 600,
+      "battery_chemistry": "NMC",
+      "lifetime_bus": 12,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.43179999999999996,
+      "diesel_heating_liters": 500,
+      "reference_size": "13m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 12255319.148936171,
+          "diesel_heating": 1500866.2703844002,
+          "other_lifecycle": 20596319.336277302,
+          "phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 12526063.16932057,
+            "maintenance": 1597667.5833333335,
+            "vehicle": 11851597.139608908,
+            "endOfLife": 811381.7334055245,
+            "infrastructure": 6335672.879929537
+          },
+          "total": 34352504.755597875,
+          "diesel_comparator_phases": {
+            "direct": 64323728.04059286,
+            "directNonExhaust": 0,
+            "energyChain": 14028872.160238069,
+            "maintenance": 1917201.1,
+            "vehicle": 5303288.069066146,
+            "endOfLife": 184762.64692882236,
+            "infrastructure": 5143802.685219751
+          },
+          "diesel_comparator_total": 90901654.70204565,
+          "diesel_heating_phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 270744.02038440004,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 95878441.69515958,
+          "diesel_heating": 2734628.020517,
+          "other_lifecycle": 59588732.08430009,
+          "phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 97012336.05919558,
+            "maintenance": 1776304.9166666665,
+            "vehicle": 37523667.38598972,
+            "endOfLife": 1138562.2869604768,
+            "infrastructure": 19150197.494683232
+          },
+          "total": 158201801.79997668,
+          "diesel_comparator_phases": {
+            "direct": 24228013.227899995,
+            "directNonExhaust": 0,
+            "energyChain": 58753870.366889365,
+            "maintenance": 2131565.9,
+            "vehicle": 8923696.12559701,
+            "endOfLife": 297307.8804630046,
+            "infrastructure": 15358387.450470675
+          },
+          "diesel_comparator_total": 109692840.95132005,
+          "diesel_heating_phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 1133894.364036,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 2318263.63092383,
+          "diesel_heating": 56503.662278870004,
+          "other_lifecycle": 19622565.218191024,
+          "phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 3473029.1175097423,
+            "energyChain": 2342306.15330635,
+            "maintenance": 558213.0583333333,
+            "vehicle": 10182231.367656542,
+            "endOfLife": 108930.02202781262,
+            "infrastructure": 5300161.652663595
+          },
+          "total": 21997332.511393726,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 4708232.594287611,
+            "energyChain": 1245787.339772656,
+            "maintenance": 669855.6699999999,
+            "vehicle": 5875002.157625924,
+            "endOfLife": 15812.360788174457,
+            "infrastructure": 4282898.917145093
+          },
+          "diesel_comparator_total": 16797589.039619457,
+          "diesel_heating_phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 0,
+            "energyChain": 24042.52238252,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 896144.5073537235,
+          "diesel_heating": 23109.44136592,
+          "other_lifecycle": 474692.6421606225,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 595253.9487196435,
+            "maintenance": 69199.97,
+            "vehicle": 193561.2258678035,
+            "endOfLife": 8992.551894269707,
+            "infrastructure": 202938.89439854934
+          },
+          "total": 1393946.5908802662,
+          "diesel_comparator_phases": {
+            "direct": 921217.2329999999,
+            "directNonExhaust": 0,
+            "energyChain": 276221.58081651066,
+            "maintenance": 83039.96399999999,
+            "vehicle": 91049.97124883367,
+            "endOfLife": 758.8176882186881,
+            "infrastructure": 168641.19806930158
+          },
+          "diesel_comparator_total": 1540928.7648228644,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 23109.44136592,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 693562.376440532,
+          "diesel_heating": 22025.55479953666,
+          "other_lifecycle": 434371.1906194171,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 391587.9312400687,
+            "maintenance": 57698.668080916665,
+            "vehicle": 175936.08127294487,
+            "endOfLife": 8289.171722259525,
+            "infrastructure": 192447.26954329608
+          },
+          "total": 1149959.1218594857,
+          "diesel_comparator_phases": {
+            "direct": 870101.7853199998,
+            "directNonExhaust": 0,
+            "energyChain": 271174.3621727915,
+            "maintenance": 69238.4016971,
+            "vehicle": 83491.87768209503,
+            "endOfLife": 748.6051982303545,
+            "infrastructure": 158804.36292846885
+          },
+          "diesel_comparator_total": 1453559.3949986855,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 22025.55479953666,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [
+        "electricEnergyStored=600 outside Mobitool documented range (not clipped)"
+      ],
+      "upstream_requests": [
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 600,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "37b7b53d96749dcbf744089567975aa8851e7aacae10b39f28a0d9d7e610114c",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 0.8961167864250162,
+              "endOfLife": 0.04163218469569309,
+              "infrastructure": 0.9395319185118025
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 0.8145188947821521,
+              "endOfLife": 0.03837579501046077,
+              "infrastructure": 0.8909595812189632
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 26.627793055555557,
+              "vehicle": 197.5266189934818,
+              "endOfLife": 13.523028890092075,
+              "infrastructure": 105.59454799882562
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 57.88381862516237,
+              "energyChain": 0,
+              "maintenance": 9.303550972222222,
+              "vehicle": 169.70385612760904,
+              "endOfLife": 1.8155003671302103,
+              "infrastructure": 88.33602754439325
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 53.83932130176566,
+              "energyChain": 0,
+              "maintenance": 3.5955275,
+              "vehicle": 145.1643268011108,
+              "endOfLife": 2.855157665413307,
+              "infrastructure": 27.34245038339949
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.9142451822611245e-10,
+              "energyChain": 0,
+              "maintenance": 21.106141666666666,
+              "vehicle": 218.41887891727177,
+              "endOfLife": 3.9625900076373886,
+              "infrastructure": 502.49700066044795
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 29.605081944444443,
+              "vehicle": 625.394456433162,
+              "endOfLife": 18.976038116007945,
+              "infrastructure": 319.16995824472053
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 124.29904654899404,
+              "energyChain": 0,
+              "maintenance": 70.63349583333333,
+              "vehicle": 577.5434099449948,
+              "endOfLife": 21.989213897269575,
+              "infrastructure": 273.3892977241934
+            }
+          }
+        },
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 600,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "d5b43a12791153e9f9b684365217fb527c51e865bbf73c0d8b97ae29b28214b9",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.2889056595503474,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 0.8961167864250162,
+              "endOfLife": 0.04163218469569309,
+              "infrastructure": 0.9395319185118025
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 1.545416734029125,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 0.8145188947821521,
+              "endOfLife": 0.03837579501046077,
+              "infrastructure": 0.8909595812189632
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 161.92,
+              "maintenance": 26.627793055555557,
+              "vehicle": 197.5266189934818,
+              "endOfLife": 13.523028890092075,
+              "infrastructure": 105.59454799882562
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 57.88381862516237,
+              "energyChain": 30.6294142614614,
+              "maintenance": 9.303550972222222,
+              "vehicle": 169.70385612760904,
+              "endOfLife": 1.8155003671302103,
+              "infrastructure": 88.33602754439325
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 53.83932130176566,
+              "energyChain": 39.8882132871255,
+              "maintenance": 3.5955275,
+              "vehicle": 145.1643268011108,
+              "endOfLife": 2.855157665413307,
+              "infrastructure": 27.34245038339949
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.9142451822611245e-10,
+              "energyChain": 451.49951414698353,
+              "maintenance": 21.106141666666666,
+              "vehicle": 218.41887891727177,
+              "endOfLife": 3.9625900076373886,
+              "infrastructure": 502.49700066044795
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1266.767277996825,
+              "maintenance": 29.605081944444443,
+              "vehicle": 625.394456433162,
+              "endOfLife": 18.976038116007945,
+              "infrastructure": 319.16995824472053
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 124.29904654899404,
+              "energyChain": 654.005,
+              "maintenance": 70.63349583333333,
+              "vehicle": 577.5434099449948,
+              "endOfLife": 21.989213897269575,
+              "infrastructure": 273.3892977241934
+            }
+          }
+        },
+        {
+          "vehicle_id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 600000,
+            "passengers": 20,
+            "fuelConsumption": 43.17999999999999,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "3c6e87ccc1a093b5f86b9392a99eb886d254d5ac2a7a939222a8475cc3ee0f8d",
+          "response": {
+            "primaryEnergy": {
+              "direct": 4.264894597222222,
+              "directNonExhaust": 0,
+              "energyChain": 1.2788036148912532,
+              "maintenance": 0.3844442777777778,
+              "vehicle": 0.4215276446705262,
+              "endOfLife": 0.003513044852864297,
+              "infrastructure": 0.7807462873578777
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 4.0282490061111105,
+              "directNonExhaust": 0,
+              "energyChain": 1.2554368619110716,
+              "maintenance": 0.32054815600509257,
+              "vehicle": 0.3865364707504399,
+              "endOfLife": 0.0034657648066220115,
+              "infrastructure": 0.7352053839280965
+            },
+            "gwp100a": {
+              "direct": 1072.062134009881,
+              "directNonExhaust": 0,
+              "energyChain": 233.81453600396782,
+              "maintenance": 31.953351666666666,
+              "vehicle": 88.38813448443577,
+              "endOfLife": 3.079377448813706,
+              "infrastructure": 85.73004475366251
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 78.47054323812685,
+              "energyChain": 20.76312232954427,
+              "maintenance": 11.164261166666666,
+              "vehicle": 97.91670262709873,
+              "endOfLife": 0.2635393464695743,
+              "infrastructure": 71.38164861908488
+            },
+            "pm25": {
+              "direct": 38.69112378599999,
+              "directNonExhaust": 65.00051700182172,
+              "energyChain": 72.7503930711555,
+              "maintenance": 4.314633000000001,
+              "vehicle": 31.669125082059946,
+              "endOfLife": 0.4704621362491138,
+              "infrastructure": 22.0695171288562
+            },
+            "nmvoc": {
+              "direct": 35.82797720796632,
+              "directNonExhaust": 2.8796533111970184e-10,
+              "energyChain": 815.0120243986601,
+              "maintenance": 25.32737,
+              "vehicle": 60.78111384642202,
+              "endOfLife": 0.9785278959582508,
+              "infrastructure": 401.5836405043092
+            },
+            "nox": {
+              "direct": 403.80022046499994,
+              "directNonExhaust": 0,
+              "energyChain": 979.2311727814895,
+              "maintenance": 35.52609833333333,
+              "vehicle": 148.72826875995017,
+              "endOfLife": 4.955131341050076,
+              "infrastructure": 255.97312417451124
+            },
+            "ubp21": {
+              "direct": 1157.0369101826545,
+              "directNonExhaust": 229.7143313404733,
+              "energyChain": 642.3568074859999,
+              "maintenance": 84.760195,
+              "vehicle": 193.71785260635008,
+              "endOfLife": 3.876416649770709,
+              "infrastructure": 225.36740090740562
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.265,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "variant-1",
+      "bus_length_m": 12,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "LFP",
+      "lifetime_bus": 12,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.43179999999999996,
+      "diesel_heating_liters": 500,
+      "reference_size": "13m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 12255319.148936171,
+          "diesel_heating": 1500866.2703844002,
+          "other_lifecycle": 17801405.626558255,
+          "phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 12526063.16932057,
+            "maintenance": 1597667.5833333335,
+            "vehicle": 9521535.869235892,
+            "endOfLife": 666400.5245166356,
+            "infrastructure": 6015801.649472394
+          },
+          "total": 31557591.045878824,
+          "diesel_comparator_phases": {
+            "direct": 64323728.04059286,
+            "directNonExhaust": 0,
+            "energyChain": 14028872.160238069,
+            "maintenance": 1917201.1,
+            "vehicle": 5303288.069066146,
+            "endOfLife": 184762.64692882236,
+            "infrastructure": 5143802.685219751
+          },
+          "diesel_comparator_total": 90901654.70204565,
+          "diesel_heating_phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 270744.02038440004,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 95878441.69515958,
+          "diesel_heating": 2734628.020517,
+          "other_lifecycle": 44304988.96736358,
+          "phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 97012336.05919558,
+            "maintenance": 1776304.9166666665,
+            "vehicle": 23448930.703529403,
+            "endOfLife": 947192.639341429,
+            "infrastructure": 18132560.707826085
+          },
+          "total": 142918058.68304017,
+          "diesel_comparator_phases": {
+            "direct": 24228013.227899995,
+            "directNonExhaust": 0,
+            "energyChain": 58753870.366889365,
+            "maintenance": 2131565.9,
+            "vehicle": 8923696.12559701,
+            "endOfLife": 297307.8804630046,
+            "infrastructure": 15358387.450470675
+          },
+          "diesel_comparator_total": 109692840.95132005,
+          "diesel_heating_phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 1133894.364036,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 2318263.63092383,
+          "diesel_heating": 56503.662278870004,
+          "other_lifecycle": 17202192.468729947,
+          "phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 3318179.9632348535,
+            "energyChain": 2342306.15330635,
+            "maintenance": 558213.0583333333,
+            "vehicle": 8210614.253125589,
+            "endOfLife": 88034.04678971738,
+            "infrastructure": 5027151.147246452
+          },
+          "total": 19576959.761932645,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 4708232.594287611,
+            "energyChain": 1245787.339772656,
+            "maintenance": 669855.6699999999,
+            "vehicle": 5875002.157625924,
+            "endOfLife": 15812.360788174457,
+            "infrastructure": 4282898.917145093
+          },
+          "diesel_comparator_total": 16797589.039619457,
+          "diesel_heating_phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 0,
+            "energyChain": 24042.52238252,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 896144.5073537235,
+          "diesel_heating": 23109.44136592,
+          "other_lifecycle": 421967.36016432097,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 595253.9487196435,
+            "maintenance": 69199.97,
+            "vehicle": 151880.60572756542,
+            "endOfLife": 7152.622687920501,
+            "infrastructure": 193734.16174883503
+          },
+          "total": 1341221.3088839645,
+          "diesel_comparator_phases": {
+            "direct": 921217.2329999999,
+            "directNonExhaust": 0,
+            "energyChain": 276221.58081651066,
+            "maintenance": 83039.96399999999,
+            "vehicle": 91049.97124883367,
+            "endOfLife": 758.8176882186881,
+            "infrastructure": 168641.19806930158
+          },
+          "diesel_comparator_total": 1540928.7648228644,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 23109.44136592,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 693562.376440532,
+          "diesel_heating": 22025.55479953666,
+          "other_lifecycle": 387940.8100748498,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 391587.9312400687,
+            "maintenance": 57698.668080916665,
+            "vehicle": 140220.4398954659,
+            "endOfLife": 6603.434345640162,
+            "infrastructure": 183418.2677528271
+          },
+          "total": 1103528.7413149185,
+          "diesel_comparator_phases": {
+            "direct": 870101.7853199998,
+            "directNonExhaust": 0,
+            "energyChain": 271174.3621727915,
+            "maintenance": 69238.4016971,
+            "vehicle": 83491.87768209503,
+            "endOfLife": 748.6051982303545,
+            "infrastructure": 158804.36292846885
+          },
+          "diesel_comparator_total": 1453559.3949986855,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 22025.55479953666,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [],
+      "upstream_requests": [
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "LFP",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "1fb01e2f5c07e82475754c076d058aa002968002acb3fb7aadf2dd861a0d4097",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 0.7031509524424325,
+              "endOfLife": 0.033113993925557875,
+              "infrastructure": 0.896917415503866
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 0.6491687032197495,
+              "endOfLife": 0.030571455303889637,
+              "infrastructure": 0.849158647003829
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 26.627793055555557,
+              "vehicle": 158.69226448726488,
+              "endOfLife": 11.106675408610593,
+              "infrastructure": 100.2633608245399
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 55.30299938724756,
+              "energyChain": 0,
+              "maintenance": 9.303550972222222,
+              "vehicle": 136.8435708854265,
+              "endOfLife": 1.4672341131619564,
+              "infrastructure": 83.78585245410753
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 51.488230583750926,
+              "energyChain": 0,
+              "maintenance": 3.5955275,
+              "vehicle": 87.32326748404732,
+              "endOfLife": 2.319319977582619,
+              "infrastructure": 25.927313513113777
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7873514424091765e-10,
+              "energyChain": 0,
+              "maintenance": 21.106141666666666,
+              "vehicle": 136.48962268129293,
+              "endOfLife": 3.2870818065791876,
+              "infrastructure": 475.41411705759083
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 29.605081944444443,
+              "vehicle": 390.81551172549007,
+              "endOfLife": 15.786543989023818,
+              "infrastructure": 302.20934513043477
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.77144885266225,
+              "energyChain": 0,
+              "maintenance": 70.63349583333333,
+              "vehicle": 427.91335533705825,
+              "endOfLife": 17.856364585100263,
+              "infrastructure": 260.50129772419336
+            }
+          }
+        },
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "LFP",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "ee79458ce3204220a213ca060b81223db2db4b68bdd01c836ac32fe735b432a6",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.2889056595503474,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 0.7031509524424325,
+              "endOfLife": 0.033113993925557875,
+              "infrastructure": 0.896917415503866
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 1.545416734029125,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 0.6491687032197495,
+              "endOfLife": 0.030571455303889637,
+              "infrastructure": 0.849158647003829
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 161.92,
+              "maintenance": 26.627793055555557,
+              "vehicle": 158.69226448726488,
+              "endOfLife": 11.106675408610593,
+              "infrastructure": 100.2633608245399
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 55.30299938724756,
+              "energyChain": 30.6294142614614,
+              "maintenance": 9.303550972222222,
+              "vehicle": 136.8435708854265,
+              "endOfLife": 1.4672341131619564,
+              "infrastructure": 83.78585245410753
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 51.488230583750926,
+              "energyChain": 39.8882132871255,
+              "maintenance": 3.5955275,
+              "vehicle": 87.32326748404732,
+              "endOfLife": 2.319319977582619,
+              "infrastructure": 25.927313513113777
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7873514424091765e-10,
+              "energyChain": 451.49951414698353,
+              "maintenance": 21.106141666666666,
+              "vehicle": 136.48962268129293,
+              "endOfLife": 3.2870818065791876,
+              "infrastructure": 475.41411705759083
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1266.767277996825,
+              "maintenance": 29.605081944444443,
+              "vehicle": 390.81551172549007,
+              "endOfLife": 15.786543989023818,
+              "infrastructure": 302.20934513043477
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.77144885266225,
+              "energyChain": 654.005,
+              "maintenance": 70.63349583333333,
+              "vehicle": 427.91335533705825,
+              "endOfLife": 17.856364585100263,
+              "infrastructure": 260.50129772419336
+            }
+          }
+        },
+        {
+          "vehicle_id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 600000,
+            "passengers": 20,
+            "fuelConsumption": 43.17999999999999,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "3c6e87ccc1a093b5f86b9392a99eb886d254d5ac2a7a939222a8475cc3ee0f8d",
+          "response": {
+            "primaryEnergy": {
+              "direct": 4.264894597222222,
+              "directNonExhaust": 0,
+              "energyChain": 1.2788036148912532,
+              "maintenance": 0.3844442777777778,
+              "vehicle": 0.4215276446705262,
+              "endOfLife": 0.003513044852864297,
+              "infrastructure": 0.7807462873578777
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 4.0282490061111105,
+              "directNonExhaust": 0,
+              "energyChain": 1.2554368619110716,
+              "maintenance": 0.32054815600509257,
+              "vehicle": 0.3865364707504399,
+              "endOfLife": 0.0034657648066220115,
+              "infrastructure": 0.7352053839280965
+            },
+            "gwp100a": {
+              "direct": 1072.062134009881,
+              "directNonExhaust": 0,
+              "energyChain": 233.81453600396782,
+              "maintenance": 31.953351666666666,
+              "vehicle": 88.38813448443577,
+              "endOfLife": 3.079377448813706,
+              "infrastructure": 85.73004475366251
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 78.47054323812685,
+              "energyChain": 20.76312232954427,
+              "maintenance": 11.164261166666666,
+              "vehicle": 97.91670262709873,
+              "endOfLife": 0.2635393464695743,
+              "infrastructure": 71.38164861908488
+            },
+            "pm25": {
+              "direct": 38.69112378599999,
+              "directNonExhaust": 65.00051700182172,
+              "energyChain": 72.7503930711555,
+              "maintenance": 4.314633000000001,
+              "vehicle": 31.669125082059946,
+              "endOfLife": 0.4704621362491138,
+              "infrastructure": 22.0695171288562
+            },
+            "nmvoc": {
+              "direct": 35.82797720796632,
+              "directNonExhaust": 2.8796533111970184e-10,
+              "energyChain": 815.0120243986601,
+              "maintenance": 25.32737,
+              "vehicle": 60.78111384642202,
+              "endOfLife": 0.9785278959582508,
+              "infrastructure": 401.5836405043092
+            },
+            "nox": {
+              "direct": 403.80022046499994,
+              "directNonExhaust": 0,
+              "energyChain": 979.2311727814895,
+              "maintenance": 35.52609833333333,
+              "vehicle": 148.72826875995017,
+              "endOfLife": 4.955131341050076,
+              "infrastructure": 255.97312417451124
+            },
+            "ubp21": {
+              "direct": 1157.0369101826545,
+              "directNonExhaust": 229.7143313404733,
+              "energyChain": 642.3568074859999,
+              "maintenance": 84.760195,
+              "vehicle": 193.71785260635008,
+              "endOfLife": 3.876416649770709,
+              "infrastructure": 225.36740090740562
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.265,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "variant-2",
+      "bus_length_m": 12,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "LTO",
+      "lifetime_bus": 12,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.43179999999999996,
+      "diesel_heating_liters": 500,
+      "reference_size": "13m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 12255319.148936173,
+          "diesel_heating": 1500866.2703844002,
+          "other_lifecycle": 30307485.356564626,
+          "phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 12526063.169320572,
+            "maintenance": 1597667.5833333335,
+            "vehicle": 19934485.314176954,
+            "endOfLife": 1318828.1333546743,
+            "infrastructure": 7456504.325699666
+          },
+          "total": 44063670.7758852,
+          "diesel_comparator_phases": {
+            "direct": 64323728.04059286,
+            "directNonExhaust": 0,
+            "energyChain": 14028872.160238069,
+            "maintenance": 1917201.1,
+            "vehicle": 5303288.069066146,
+            "endOfLife": 184762.64692882236,
+            "infrastructure": 5143802.685219751
+          },
+          "diesel_comparator_total": 90901654.70204565,
+          "diesel_heating_phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 270744.02038440004,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 95878441.69515958,
+          "diesel_heating": 2734628.020517,
+          "other_lifecycle": 369198781.1969701,
+          "phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 97012336.05919558,
+            "maintenance": 1776304.9166666665,
+            "vehicle": 342898042.57121927,
+            "endOfLife": 1808428.4458800245,
+            "infrastructure": 22716005.263204165
+          },
+          "total": 467811850.9126467,
+          "diesel_comparator_phases": {
+            "direct": 24228013.227899995,
+            "directNonExhaust": 0,
+            "energyChain": 58753870.366889365,
+            "maintenance": 2131565.9,
+            "vehicle": 8923696.12559701,
+            "endOfLife": 297307.8804630046,
+            "infrastructure": 15358387.450470675
+          },
+          "diesel_comparator_total": 109692840.95132005,
+          "diesel_heating_phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 1133894.364036,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 2318263.6309238304,
+          "diesel_heating": 56503.662278870004,
+          "other_lifecycle": 22913134.687500853,
+          "phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 4005213.219244919,
+            "energyChain": 2342306.1533063506,
+            "maintenance": 558213.0583333333,
+            "vehicle": 11910845.541627327,
+            "endOfLife": 182070.1356719711,
+            "infrastructure": 6256792.732623301
+          },
+          "total": 25287901.98070355,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 4708232.594287611,
+            "energyChain": 1245787.339772656,
+            "maintenance": 669855.6699999999,
+            "vehicle": 5875002.157625924,
+            "endOfLife": 15812.360788174457,
+            "infrastructure": 4282898.917145093
+          },
+          "diesel_comparator_total": 16797589.039619457,
+          "diesel_heating_phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 0,
+            "energyChain": 24042.52238252,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 896144.5073537235,
+          "diesel_heating": 23109.44136592,
+          "other_lifecycle": 623985.5440000778,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 595253.9487196435,
+            "maintenance": 69199.97,
+            "vehicle": 304160.7193030109,
+            "endOfLife": 15432.500348131125,
+            "infrastructure": 235192.35434893568
+          },
+          "total": 1543239.4927197213,
+          "diesel_comparator_phases": {
+            "direct": 921217.2329999999,
+            "directNonExhaust": 0,
+            "energyChain": 276221.58081651066,
+            "maintenance": 83039.96399999999,
+            "vehicle": 91049.97124883367,
+            "endOfLife": 758.8176882186881,
+            "infrastructure": 168641.19806930158
+          },
+          "diesel_comparator_total": 1540928.7648228644,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 23109.44136592,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 693562.376440532,
+          "diesel_heating": 22025.55479953666,
+          "other_lifecycle": 574828.1782616125,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 391587.9312400687,
+            "maintenance": 57698.668080916665,
+            "vehicle": 278855.0966773088,
+            "endOfLife": 14189.446360876049,
+            "infrastructure": 224084.96714251104
+          },
+          "total": 1290416.1095016813,
+          "diesel_comparator_phases": {
+            "direct": 870101.7853199998,
+            "directNonExhaust": 0,
+            "energyChain": 271174.3621727915,
+            "maintenance": 69238.4016971,
+            "vehicle": 83491.87768209503,
+            "endOfLife": 748.6051982303545,
+            "infrastructure": 158804.36292846885
+          },
+          "diesel_comparator_total": 1453559.3949986855,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 22025.55479953666,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [],
+      "upstream_requests": [
+        {
+          "vehicle_id": "8f40e32b-36c5-414e-8b5e-fb2cd1947b1e",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "LTO",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "bc15c8ff837f7a60017d45ce67fee26c300a520af12a0920d8730e7f849d6cd8",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 1.4081514782546802,
+              "endOfLife": 0.07144676087097743,
+              "infrastructure": 1.0888534923561837
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 1.2909958179505034,
+              "endOfLife": 0.06569188130035207,
+              "infrastructure": 1.037430403437551
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 26.627793055555557,
+              "vehicle": 332.24142190294924,
+              "endOfLife": 21.980468889244573,
+              "infrastructure": 124.27507209499443
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 66.75355365408198,
+              "energyChain": 0,
+              "maintenance": 9.303550972222222,
+              "vehicle": 198.51409236045544,
+              "endOfLife": 3.0345022611995183,
+              "infrastructure": 104.27987887705503
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 61.90677228522545,
+              "energyChain": 0,
+              "maintenance": 3.5955275,
+              "vehicle": 171.32281594439996,
+              "endOfLife": 4.730716103128145,
+              "infrastructure": 32.30110131933944
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 3.3489972248169445e-10,
+              "energyChain": 0,
+              "maintenance": 21.106141666666666,
+              "vehicle": 194.30726670005873,
+              "endOfLife": 6.327130918652045,
+              "infrastructure": 597.3956518668468
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 29.605081944444443,
+              "vehicle": 5714.967376186988,
+              "endOfLife": 30.140474098000407,
+              "infrastructure": 378.60008772006944
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 129.5520786417134,
+              "energyChain": 0,
+              "maintenance": 70.63349583333333,
+              "vehicle": 927.1161696206929,
+              "endOfLife": 36.45457880913863,
+              "infrastructure": 318.548956338133
+            }
+          }
+        },
+        {
+          "vehicle_id": "8f40e32b-36c5-414e-8b5e-fb2cd1947b1e",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "LTO",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "ee18a92a678e49b7c0154014f130aa9713c506520507eb92e4a9f6bf50c620dd",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.8868885067413195,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 1.4081514782546802,
+              "endOfLife": 0.07144676087097743,
+              "infrastructure": 1.0888534923561837
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.008219776579875,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 1.2909958179505034,
+              "endOfLife": 0.06569188130035207,
+              "infrastructure": 1.037430403437551
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 191.36,
+              "maintenance": 26.627793055555557,
+              "vehicle": 332.24142190294924,
+              "endOfLife": 21.980468889244573,
+              "infrastructure": 124.27507209499443
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 66.75355365408198,
+              "energyChain": 36.1983986726362,
+              "maintenance": 9.303550972222222,
+              "vehicle": 198.51409236045544,
+              "endOfLife": 3.0345022611995183,
+              "infrastructure": 104.27987887705503
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 61.90677228522545,
+              "energyChain": 47.1406157029665,
+              "maintenance": 3.5955275,
+              "vehicle": 171.32281594439996,
+              "endOfLife": 4.730716103128145,
+              "infrastructure": 32.30110131933944
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 3.3489972248169445e-10,
+              "energyChain": 533.5903349009805,
+              "maintenance": 21.106141666666666,
+              "vehicle": 194.30726670005873,
+              "endOfLife": 6.327130918652045,
+              "infrastructure": 597.3956518668468
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1497.088601268975,
+              "maintenance": 29.605081944444443,
+              "vehicle": 5714.967376186988,
+              "endOfLife": 30.140474098000407,
+              "infrastructure": 378.60008772006944
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 129.5520786417134,
+              "energyChain": 772.915,
+              "maintenance": 70.63349583333333,
+              "vehicle": 927.1161696206929,
+              "endOfLife": 36.45457880913863,
+              "infrastructure": 318.548956338133
+            }
+          }
+        },
+        {
+          "vehicle_id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 600000,
+            "passengers": 20,
+            "fuelConsumption": 43.17999999999999,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "3c6e87ccc1a093b5f86b9392a99eb886d254d5ac2a7a939222a8475cc3ee0f8d",
+          "response": {
+            "primaryEnergy": {
+              "direct": 4.264894597222222,
+              "directNonExhaust": 0,
+              "energyChain": 1.2788036148912532,
+              "maintenance": 0.3844442777777778,
+              "vehicle": 0.4215276446705262,
+              "endOfLife": 0.003513044852864297,
+              "infrastructure": 0.7807462873578777
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 4.0282490061111105,
+              "directNonExhaust": 0,
+              "energyChain": 1.2554368619110716,
+              "maintenance": 0.32054815600509257,
+              "vehicle": 0.3865364707504399,
+              "endOfLife": 0.0034657648066220115,
+              "infrastructure": 0.7352053839280965
+            },
+            "gwp100a": {
+              "direct": 1072.062134009881,
+              "directNonExhaust": 0,
+              "energyChain": 233.81453600396782,
+              "maintenance": 31.953351666666666,
+              "vehicle": 88.38813448443577,
+              "endOfLife": 3.079377448813706,
+              "infrastructure": 85.73004475366251
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 78.47054323812685,
+              "energyChain": 20.76312232954427,
+              "maintenance": 11.164261166666666,
+              "vehicle": 97.91670262709873,
+              "endOfLife": 0.2635393464695743,
+              "infrastructure": 71.38164861908488
+            },
+            "pm25": {
+              "direct": 38.69112378599999,
+              "directNonExhaust": 65.00051700182172,
+              "energyChain": 72.7503930711555,
+              "maintenance": 4.314633000000001,
+              "vehicle": 31.669125082059946,
+              "endOfLife": 0.4704621362491138,
+              "infrastructure": 22.0695171288562
+            },
+            "nmvoc": {
+              "direct": 35.82797720796632,
+              "directNonExhaust": 2.8796533111970184e-10,
+              "energyChain": 815.0120243986601,
+              "maintenance": 25.32737,
+              "vehicle": 60.78111384642202,
+              "endOfLife": 0.9785278959582508,
+              "infrastructure": 401.5836405043092
+            },
+            "nox": {
+              "direct": 403.80022046499994,
+              "directNonExhaust": 0,
+              "energyChain": 979.2311727814895,
+              "maintenance": 35.52609833333333,
+              "vehicle": 148.72826875995017,
+              "endOfLife": 4.955131341050076,
+              "infrastructure": 255.97312417451124
+            },
+            "ubp21": {
+              "direct": 1157.0369101826545,
+              "directNonExhaust": 229.7143313404733,
+              "energyChain": 642.3568074859999,
+              "maintenance": 84.760195,
+              "vehicle": 193.71785260635008,
+              "endOfLife": 3.876416649770709,
+              "infrastructure": 225.36740090740562
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.4949999999999999,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "variant-3",
+      "bus_length_m": 12,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "NMC",
+      "lifetime_bus": 12,
+      "lifetime_battery": 4,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.43179999999999996,
+      "diesel_heating_liters": 500,
+      "reference_size": "13m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 12255319.148936171,
+          "diesel_heating": 1500866.2703844002,
+          "other_lifecycle": 20040266.093127303,
+          "phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 12526063.16932057,
+            "maintenance": 1597667.5833333335,
+            "vehicle": 11779921.37928748,
+            "endOfLife": 806811.0962626673,
+            "infrastructure": 5855866.034243822
+          },
+          "total": 33796451.51244787,
+          "diesel_comparator_phases": {
+            "direct": 64323728.04059286,
+            "directNonExhaust": 0,
+            "energyChain": 14028872.160238069,
+            "maintenance": 1917201.1,
+            "vehicle": 5303288.069066146,
+            "endOfLife": 184762.64692882236,
+            "infrastructure": 5143802.685219751
+          },
+          "diesel_comparator_total": 90901654.70204565,
+          "diesel_heating_phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 270744.02038440004,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 95878441.69515958,
+          "diesel_heating": 2734628.020517,
+          "other_lifecycle": 57249977.19460962,
+          "phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 97012336.05919558,
+            "maintenance": 1776304.9166666665,
+            "vehicle": 36738478.50515639,
+            "endOfLife": 1111451.458389048,
+            "infrastructure": 17623742.314397514
+          },
+          "total": 155863046.9102862,
+          "diesel_comparator_phases": {
+            "direct": 24228013.227899995,
+            "directNonExhaust": 0,
+            "energyChain": 58753870.366889365,
+            "maintenance": 2131565.9,
+            "vehicle": 8923696.12559701,
+            "endOfLife": 297307.8804630046,
+            "infrastructure": 15358387.450470675
+          },
+          "diesel_comparator_total": 109692840.95132005,
+          "diesel_heating_phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 1133894.364036,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 2318263.63092383,
+          "diesel_heating": 56503.662278870004,
+          "other_lifecycle": 18961460.054156132,
+          "phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 3240201.465301756,
+            "energyChain": 2342306.15330635,
+            "maintenance": 558213.0583333333,
+            "vehicle": 10165043.791098207,
+            "endOfLife": 107355.84488495548,
+            "infrastructure": 4890645.89453788
+          },
+          "total": 21336227.34735883,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 4708232.594287611,
+            "energyChain": 1245787.339772656,
+            "maintenance": 669855.6699999999,
+            "vehicle": 5875002.157625924,
+            "endOfLife": 15812.360788174457,
+            "infrastructure": 4282898.917145093
+          },
+          "diesel_comparator_total": 16797589.039619457,
+          "diesel_heating_phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 0,
+            "energyChain": 24042.52238252,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 896144.5073537235,
+          "diesel_heating": 23109.44136592,
+          "other_lifecycle": 459651.21630902734,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 595253.9487196435,
+            "maintenance": 69199.97,
+            "vehicle": 192400.54470506543,
+            "endOfLife": 8918.906179983995,
+            "infrastructure": 189131.79542397792
+          },
+          "total": 1378905.1650286708,
+          "diesel_comparator_phases": {
+            "direct": 921217.2329999999,
+            "directNonExhaust": 0,
+            "energyChain": 276221.58081651066,
+            "maintenance": 83039.96399999999,
+            "vehicle": 91049.97124883367,
+            "endOfLife": 758.8176882186881,
+            "infrastructure": 168641.19806930158
+          },
+          "diesel_comparator_total": 1540928.7648228644,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 23109.44136592,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 693562.376440532,
+          "diesel_heating": 22025.55479953666,
+          "other_lifecycle": 419619.7213079494,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 391587.9312400687,
+            "maintenance": 57698.668080916665,
+            "vehicle": 174800.83979003772,
+            "endOfLife": 8216.446579402384,
+            "infrastructure": 178903.76685759262
+          },
+          "total": 1135207.6525480181,
+          "diesel_comparator_phases": {
+            "direct": 870101.7853199998,
+            "directNonExhaust": 0,
+            "energyChain": 271174.3621727915,
+            "maintenance": 69238.4016971,
+            "vehicle": 83491.87768209503,
+            "endOfLife": 748.6051982303545,
+            "infrastructure": 158804.36292846885
+          },
+          "diesel_comparator_total": 1453559.3949986855,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 22025.55479953666,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [],
+      "upstream_requests": [
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 2,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "dec930c7e83b98ecf40ec1b5369ac886c021538ad5c3b1cf5ce17ed05fa802bc",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 0.890743262523451,
+              "endOfLife": 0.04129123231474071,
+              "infrastructure": 0.8756101639998978
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 0.8092631471761005,
+              "endOfLife": 0.03803910453427029,
+              "infrastructure": 0.828258179896262
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 26.627793055555557,
+              "vehicle": 196.33202298812466,
+              "endOfLife": 13.44685160437779,
+              "infrastructure": 97.59776723739704
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 54.00335775502926,
+              "energyChain": 0,
+              "maintenance": 9.303550972222222,
+              "vehicle": 169.41739651830346,
+              "endOfLife": 1.7892640814159246,
+              "infrastructure": 81.51076490896467
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 50.30358257005728,
+              "energyChain": 0,
+              "maintenance": 3.5955275,
+              "vehicle": 144.28450659535685,
+              "endOfLife": 2.8077482368418782,
+              "infrastructure": 25.21974507797092
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7233784681471337e-10,
+              "energyChain": 0,
+              "maintenance": 21.106141666666666,
+              "vehicle": 217.29537545616066,
+              "endOfLife": 3.8643957219231027,
+              "infrastructure": 461.87267525616227
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 29.605081944444443,
+              "vehicle": 612.3079750859398,
+              "endOfLife": 18.5241909731508,
+              "infrastructure": 293.7290385732919
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.00234002582565,
+              "energyChain": 0,
+              "maintenance": 70.63349583333333,
+              "vehicle": 575.0786105727725,
+              "endOfLife": 21.841922468698147,
+              "infrastructure": 254.05729772419338
+            }
+          }
+        },
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 720000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 2,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "700b6c3fc02cf59e71d9d9cb6f2ea38c2ad5756e83163498bb3a09acb4ab1e1e",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.2889056595503474,
+              "maintenance": 0.32037023148148147,
+              "vehicle": 0.890743262523451,
+              "endOfLife": 0.04129123231474071,
+              "infrastructure": 0.8756101639998978
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 1.545416734029125,
+              "maintenance": 0.26712346333757714,
+              "vehicle": 0.8092631471761005,
+              "endOfLife": 0.03803910453427029,
+              "infrastructure": 0.828258179896262
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 161.92,
+              "maintenance": 26.627793055555557,
+              "vehicle": 196.33202298812466,
+              "endOfLife": 13.44685160437779,
+              "infrastructure": 97.59776723739704
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 54.00335775502926,
+              "energyChain": 30.6294142614614,
+              "maintenance": 9.303550972222222,
+              "vehicle": 169.41739651830346,
+              "endOfLife": 1.7892640814159246,
+              "infrastructure": 81.51076490896467
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 50.30358257005728,
+              "energyChain": 39.8882132871255,
+              "maintenance": 3.5955275,
+              "vehicle": 144.28450659535685,
+              "endOfLife": 2.8077482368418782,
+              "infrastructure": 25.21974507797092
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7233784681471337e-10,
+              "energyChain": 451.49951414698353,
+              "maintenance": 21.106141666666666,
+              "vehicle": 217.29537545616066,
+              "endOfLife": 3.8643957219231027,
+              "infrastructure": 461.87267525616227
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1266.767277996825,
+              "maintenance": 29.605081944444443,
+              "vehicle": 612.3079750859398,
+              "endOfLife": 18.5241909731508,
+              "infrastructure": 293.7290385732919
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.00234002582565,
+              "energyChain": 654.005,
+              "maintenance": 70.63349583333333,
+              "vehicle": 575.0786105727725,
+              "endOfLife": 21.841922468698147,
+              "infrastructure": 254.05729772419338
+            }
+          }
+        },
+        {
+          "vehicle_id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 600000,
+            "passengers": 20,
+            "fuelConsumption": 43.17999999999999,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "3c6e87ccc1a093b5f86b9392a99eb886d254d5ac2a7a939222a8475cc3ee0f8d",
+          "response": {
+            "primaryEnergy": {
+              "direct": 4.264894597222222,
+              "directNonExhaust": 0,
+              "energyChain": 1.2788036148912532,
+              "maintenance": 0.3844442777777778,
+              "vehicle": 0.4215276446705262,
+              "endOfLife": 0.003513044852864297,
+              "infrastructure": 0.7807462873578777
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 4.0282490061111105,
+              "directNonExhaust": 0,
+              "energyChain": 1.2554368619110716,
+              "maintenance": 0.32054815600509257,
+              "vehicle": 0.3865364707504399,
+              "endOfLife": 0.0034657648066220115,
+              "infrastructure": 0.7352053839280965
+            },
+            "gwp100a": {
+              "direct": 1072.062134009881,
+              "directNonExhaust": 0,
+              "energyChain": 233.81453600396782,
+              "maintenance": 31.953351666666666,
+              "vehicle": 88.38813448443577,
+              "endOfLife": 3.079377448813706,
+              "infrastructure": 85.73004475366251
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 78.47054323812685,
+              "energyChain": 20.76312232954427,
+              "maintenance": 11.164261166666666,
+              "vehicle": 97.91670262709873,
+              "endOfLife": 0.2635393464695743,
+              "infrastructure": 71.38164861908488
+            },
+            "pm25": {
+              "direct": 38.69112378599999,
+              "directNonExhaust": 65.00051700182172,
+              "energyChain": 72.7503930711555,
+              "maintenance": 4.314633000000001,
+              "vehicle": 31.669125082059946,
+              "endOfLife": 0.4704621362491138,
+              "infrastructure": 22.0695171288562
+            },
+            "nmvoc": {
+              "direct": 35.82797720796632,
+              "directNonExhaust": 2.8796533111970184e-10,
+              "energyChain": 815.0120243986601,
+              "maintenance": 25.32737,
+              "vehicle": 60.78111384642202,
+              "endOfLife": 0.9785278959582508,
+              "infrastructure": 401.5836405043092
+            },
+            "nox": {
+              "direct": 403.80022046499994,
+              "directNonExhaust": 0,
+              "energyChain": 979.2311727814895,
+              "maintenance": 35.52609833333333,
+              "vehicle": 148.72826875995017,
+              "endOfLife": 4.955131341050076,
+              "infrastructure": 255.97312417451124
+            },
+            "ubp21": {
+              "direct": 1157.0369101826545,
+              "directNonExhaust": 229.7143313404733,
+              "energyChain": 642.3568074859999,
+              "maintenance": 84.760195,
+              "vehicle": 193.71785260635008,
+              "endOfLife": 3.876416649770709,
+              "infrastructure": 225.36740090740562
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.265,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "variant-4",
+      "bus_length_m": 12,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "NMC",
+      "lifetime_bus": 16,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.43179999999999996,
+      "diesel_heating_liters": 500,
+      "reference_size": "13m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 12255319.148936171,
+          "diesel_heating": 1500866.2703844002,
+          "other_lifecycle": 14456509.19264757,
+          "phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 12526063.16932057,
+            "maintenance": 1198250.6875,
+            "vehicle": 6944230.888037038,
+            "endOfLife": 458161.59447695303,
+            "infrastructure": 5855866.02263358
+          },
+          "total": 28212694.61196814,
+          "diesel_comparator_phases": {
+            "direct": 64323728.04059286,
+            "directNonExhaust": 0,
+            "energyChain": 14028872.160238069,
+            "maintenance": 1917201.1,
+            "vehicle": 5303288.069066146,
+            "endOfLife": 184762.64692882236,
+            "infrastructure": 5143802.685219751
+          },
+          "diesel_comparator_total": 90901654.70204565,
+          "diesel_heating_phases": {
+            "direct": 1230122.25,
+            "directNonExhaust": 0,
+            "energyChain": 270744.02038440004,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 95878441.69515958,
+          "diesel_heating": 2734628.020517,
+          "other_lifecycle": 40149634.099015795,
+          "phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 97012336.05919558,
+            "maintenance": 1332228.6875,
+            "vehicle": 20479529.021724433,
+            "endOfLife": 714134.1038950005,
+            "infrastructure": 17623742.28589636
+          },
+          "total": 138762703.81469238,
+          "diesel_comparator_phases": {
+            "direct": 24228013.227899995,
+            "directNonExhaust": 0,
+            "energyChain": 58753870.366889365,
+            "maintenance": 2131565.9,
+            "vehicle": 8923696.12559701,
+            "endOfLife": 297307.8804630046,
+            "infrastructure": 15358387.450470675
+          },
+          "diesel_comparator_total": 109692840.95132005,
+          "diesel_heating_phases": {
+            "direct": 1600733.6564810001,
+            "directNonExhaust": 0,
+            "energyChain": 1133894.364036,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 2318263.63092383,
+          "diesel_heating": 56503.662278870004,
+          "other_lifecycle": 14839435.020228514,
+          "phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 3240201.465301756,
+            "energyChain": 2342306.15330635,
+            "maintenance": 418659.79375,
+            "vehicle": 6227354.2718950845,
+            "endOfLife": 62573.60360519358,
+            "infrastructure": 4890645.88567648
+          },
+          "total": 17214202.313431215,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 4708232.594287611,
+            "energyChain": 1245787.339772656,
+            "maintenance": 669855.6699999999,
+            "vehicle": 5875002.157625924,
+            "endOfLife": 15812.360788174457,
+            "infrastructure": 4282898.917145093
+          },
+          "diesel_comparator_total": 16797589.039619457,
+          "diesel_heating_phases": {
+            "direct": 32461.13989635,
+            "directNonExhaust": 0,
+            "energyChain": 24042.52238252,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 896144.5073537235,
+          "diesel_heating": 23109.44136592,
+          "other_lifecycle": 360349.94271450496,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 595253.9487196435,
+            "maintenance": 51899.9775,
+            "vehicle": 114438.57424308477,
+            "endOfLife": 4879.595749626851,
+            "infrastructure": 189131.79522179332
+          },
+          "total": 1279603.8914341484,
+          "diesel_comparator_phases": {
+            "direct": 921217.2329999999,
+            "directNonExhaust": 0,
+            "energyChain": 276221.58081651066,
+            "maintenance": 83039.96399999999,
+            "vehicle": 91049.97124883367,
+            "endOfLife": 758.8176882186881,
+            "infrastructure": 168641.19806930158
+          },
+          "diesel_comparator_total": 1540928.7648228644,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 23109.44136592,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 693562.376440532,
+          "diesel_heating": 22025.55479953666,
+          "other_lifecycle": 330830.6599019679,
+          "phases": {
+            "direct": 324000,
+            "directNonExhaust": 0,
+            "energyChain": 391587.9312400687,
+            "maintenance": 43274.0010606875,
+            "vehicle": 104129.92951351666,
+            "endOfLife": 4522.962651739444,
+            "infrastructure": 178903.76667602433
+          },
+          "total": 1046418.5911420366,
+          "diesel_comparator_phases": {
+            "direct": 870101.7853199998,
+            "directNonExhaust": 0,
+            "energyChain": 271174.3621727915,
+            "maintenance": 69238.4016971,
+            "vehicle": 83491.87768209503,
+            "endOfLife": 748.6051982303545,
+            "infrastructure": 158804.36292846885
+          },
+          "diesel_comparator_total": 1453559.3949986855,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 22025.55479953666,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [],
+      "upstream_requests": [
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 960000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "d25ecb36816205cea08ffde2e1371ad85a21bab91063abe17338abfe8d578441",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.2402776736111111,
+              "vehicle": 0.5298082140883554,
+              "endOfLife": 0.022590721063087273,
+              "infrastructure": 0.8756101630638579
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.20034259750318287,
+              "vehicle": 0.4820830070070216,
+              "endOfLife": 0.020939641906201126,
+              "infrastructure": 0.8282581790556681
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 19.970844791666668,
+              "vehicle": 115.73718146728397,
+              "endOfLife": 7.636026574615884,
+              "infrastructure": 97.59776704389299
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 54.00335775502926,
+              "energyChain": 0,
+              "maintenance": 6.977663229166667,
+              "vehicle": 103.78923786491808,
+              "endOfLife": 1.042893393419893,
+              "infrastructure": 81.51076476127467
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 50.30358257005728,
+              "energyChain": 0,
+              "maintenance": 2.6966456250000004,
+              "vehicle": 78.98466691080336,
+              "endOfLife": 1.6705853825313626,
+              "infrastructure": 25.219744877233072
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7233784681471337e-10,
+              "energyChain": 0,
+              "maintenance": 15.82960625,
+              "vehicle": 120.70452935997763,
+              "endOfLife": 2.4854653609608013,
+              "infrastructure": 461.87267510967786
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 22.203811458333334,
+              "vehicle": 341.32548369540723,
+              "endOfLife": 11.902235064916676,
+              "infrastructure": 293.72903809827267
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.00234002582565,
+              "energyChain": 0,
+              "maintenance": 52.975121875,
+              "vehicle": 327.03485019148417,
+              "endOfLife": 12.252659318896558,
+              "infrastructure": 254.0572971358446
+            }
+          }
+        },
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 960000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "bfaf4f30ef765af68925a284be47fa2fedd771e6d63226e58d5b2f9d8b72161a",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.2889056595503474,
+              "maintenance": 0.2402776736111111,
+              "vehicle": 0.5298082140883554,
+              "endOfLife": 0.022590721063087273,
+              "infrastructure": 0.8756101630638579
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 1.545416734029125,
+              "maintenance": 0.20034259750318287,
+              "vehicle": 0.4820830070070216,
+              "endOfLife": 0.020939641906201126,
+              "infrastructure": 0.8282581790556681
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 161.92,
+              "maintenance": 19.970844791666668,
+              "vehicle": 115.73718146728397,
+              "endOfLife": 7.636026574615884,
+              "infrastructure": 97.59776704389299
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 54.00335775502926,
+              "energyChain": 30.6294142614614,
+              "maintenance": 6.977663229166667,
+              "vehicle": 103.78923786491808,
+              "endOfLife": 1.042893393419893,
+              "infrastructure": 81.51076476127467
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 50.30358257005728,
+              "energyChain": 39.8882132871255,
+              "maintenance": 2.6966456250000004,
+              "vehicle": 78.98466691080336,
+              "endOfLife": 1.6705853825313626,
+              "infrastructure": 25.219744877233072
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7233784681471337e-10,
+              "energyChain": 451.49951414698353,
+              "maintenance": 15.82960625,
+              "vehicle": 120.70452935997763,
+              "endOfLife": 2.4854653609608013,
+              "infrastructure": 461.87267510967786
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1266.767277996825,
+              "maintenance": 22.203811458333334,
+              "vehicle": 341.32548369540723,
+              "endOfLife": 11.902235064916676,
+              "infrastructure": 293.72903809827267
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.00234002582565,
+              "energyChain": 654.005,
+              "maintenance": 52.975121875,
+              "vehicle": 327.03485019148417,
+              "endOfLife": 12.252659318896558,
+              "infrastructure": 254.0572971358446
+            }
+          }
+        },
+        {
+          "vehicle_id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 60000,
+            "lifetimeKilometers": 600000,
+            "passengers": 20,
+            "fuelConsumption": 43.17999999999999,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "3c6e87ccc1a093b5f86b9392a99eb886d254d5ac2a7a939222a8475cc3ee0f8d",
+          "response": {
+            "primaryEnergy": {
+              "direct": 4.264894597222222,
+              "directNonExhaust": 0,
+              "energyChain": 1.2788036148912532,
+              "maintenance": 0.3844442777777778,
+              "vehicle": 0.4215276446705262,
+              "endOfLife": 0.003513044852864297,
+              "infrastructure": 0.7807462873578777
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 4.0282490061111105,
+              "directNonExhaust": 0,
+              "energyChain": 1.2554368619110716,
+              "maintenance": 0.32054815600509257,
+              "vehicle": 0.3865364707504399,
+              "endOfLife": 0.0034657648066220115,
+              "infrastructure": 0.7352053839280965
+            },
+            "gwp100a": {
+              "direct": 1072.062134009881,
+              "directNonExhaust": 0,
+              "energyChain": 233.81453600396782,
+              "maintenance": 31.953351666666666,
+              "vehicle": 88.38813448443577,
+              "endOfLife": 3.079377448813706,
+              "infrastructure": 85.73004475366251
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 78.47054323812685,
+              "energyChain": 20.76312232954427,
+              "maintenance": 11.164261166666666,
+              "vehicle": 97.91670262709873,
+              "endOfLife": 0.2635393464695743,
+              "infrastructure": 71.38164861908488
+            },
+            "pm25": {
+              "direct": 38.69112378599999,
+              "directNonExhaust": 65.00051700182172,
+              "energyChain": 72.7503930711555,
+              "maintenance": 4.314633000000001,
+              "vehicle": 31.669125082059946,
+              "endOfLife": 0.4704621362491138,
+              "infrastructure": 22.0695171288562
+            },
+            "nmvoc": {
+              "direct": 35.82797720796632,
+              "directNonExhaust": 2.8796533111970184e-10,
+              "energyChain": 815.0120243986601,
+              "maintenance": 25.32737,
+              "vehicle": 60.78111384642202,
+              "endOfLife": 0.9785278959582508,
+              "infrastructure": 401.5836405043092
+            },
+            "nox": {
+              "direct": 403.80022046499994,
+              "directNonExhaust": 0,
+              "energyChain": 979.2311727814895,
+              "maintenance": 35.52609833333333,
+              "vehicle": 148.72826875995017,
+              "endOfLife": 4.955131341050076,
+              "infrastructure": 255.97312417451124
+            },
+            "ubp21": {
+              "direct": 1157.0369101826545,
+              "directNonExhaust": 229.7143313404733,
+              "energyChain": 642.3568074859999,
+              "maintenance": 84.760195,
+              "vehicle": 193.71785260635008,
+              "endOfLife": 3.876416649770709,
+              "infrastructure": 225.36740090740562
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.265,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "variant-5",
+      "bus_length_m": 12,
+      "annual_km": 90000,
+      "dc_kwh": 135000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "NMC",
+      "lifetime_bus": 12,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 20,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.43179999999999996,
+      "diesel_heating_liters": 750,
+      "reference_size": "13m",
+      "status": "complete",
+      "indicators": {
+        "gwp100a": {
+          "unit": "g CO2-eq",
+          "electricity_operation": 18382978.723404255,
+          "diesel_heating": 2251299.4055765998,
+          "other_lifecycle": 20259809.342298787,
+          "phases": {
+            "direct": 1845183.3749999998,
+            "directNonExhaust": 0,
+            "energyChain": 18789094.753980856,
+            "maintenance": 1597667.5833333333,
+            "vehicle": 9258974.517382719,
+            "endOfLife": 619368.2289178105,
+            "infrastructure": 8783799.012664923
+          },
+          "total": 40894087.47127964,
+          "diesel_comparator_phases": {
+            "direct": 96485592.06088929,
+            "directNonExhaust": 0,
+            "energyChain": 21043308.240357105,
+            "maintenance": 1917201.1,
+            "vehicle": 5303288.069066145,
+            "endOfLife": 206829.40039323352,
+            "infrastructure": 7715704.027829626
+          },
+          "diesel_comparator_total": 132671922.8985354,
+          "diesel_heating_phases": {
+            "direct": 1845183.3749999998,
+            "directNonExhaust": 0,
+            "energyChain": 406116.03057660005,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "nox": {
+          "unit": "mg NO2-eq",
+          "electricity_operation": 143817662.54273936,
+          "diesel_heating": 4101942.0307755,
+          "other_lifecycle": 56520471.28891571,
+          "phases": {
+            "direct": 2401100.4847215,
+            "directNonExhaust": 0,
+            "energyChain": 145518504.08879337,
+            "maintenance": 1776304.9166666665,
+            "vehicle": 27306038.695632577,
+            "endOfLife": 1002514.3000240483,
+            "infrastructure": 26435613.37659242
+          },
+          "total": 204440075.86243057,
+          "diesel_comparator_phases": {
+            "direct": 36342019.84185,
+            "directNonExhaust": 0,
+            "energyChain": 88130805.55033405,
+            "maintenance": 2131565.9,
+            "vehicle": 8923696.12559701,
+            "endOfLife": 428197.2841945068,
+            "infrastructure": 23037581.17570601
+          },
+          "diesel_comparator_total": 158993865.87768158,
+          "diesel_heating_phases": {
+            "direct": 2401100.4847215,
+            "directNonExhaust": 0,
+            "energyChain": 1700841.546054,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "pm10": {
+          "unit": "mg PM10",
+          "electricity_operation": 3477395.446385745,
+          "diesel_heating": 84755.493418305,
+          "other_lifecycle": 21143977.275373284,
+          "phases": {
+            "direct": 48691.709844524994,
+            "directNonExhaust": 4860302.197952634,
+            "energyChain": 3513459.229959525,
+            "maintenance": 558213.0583333333,
+            "vehicle": 8303139.029193447,
+            "endOfLife": 86354.17762505227,
+            "infrastructure": 7335968.812268819
+          },
+          "total": 24706128.215177335,
+          "diesel_comparator_phases": {
+            "direct": 0,
+            "directNonExhaust": 7062348.891431416,
+            "energyChain": 1868681.0096589844,
+            "maintenance": 669855.67,
+            "vehicle": 5875002.157625924,
+            "endOfLife": 23412.390682261685,
+            "infrastructure": 6424348.37571764
+          },
+          "diesel_comparator_total": 21923648.495116226,
+          "diesel_heating_phases": {
+            "direct": 48691.709844524994,
+            "directNonExhaust": 0,
+            "energyChain": 36063.783573780005,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergy": {
+          "unit": "MJ",
+          "electricity_operation": 1344216.761030585,
+          "diesel_heating": 34664.162048879996,
+          "other_lifecycle": 512125.2905763453,
+          "phases": {
+            "direct": 486000,
+            "directNonExhaust": 0,
+            "energyChain": 892880.923079465,
+            "maintenance": 69199.97,
+            "vehicle": 152584.76565744638,
+            "endOfLife": 6642.862456880752,
+            "infrastructure": 283697.69246201817
+          },
+          "total": 1891006.2136558103,
+          "diesel_comparator_phases": {
+            "direct": 1381825.8495,
+            "directNonExhaust": 0,
+            "energyChain": 414332.3712247661,
+            "maintenance": 83039.964,
+            "vehicle": 91049.97124883367,
+            "endOfLife": 1114.3746423280322,
+            "infrastructure": 252961.79710395235
+          },
+          "diesel_comparator_total": 2224324.3277198803,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 34664.162048879996,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        },
+        "primaryEnergyNonRenewable": {
+          "unit": "MJ",
+          "electricity_operation": 1040343.564660798,
+          "diesel_heating": 33038.33219930499,
+          "other_lifecycle": 471059.8662549138,
+          "phases": {
+            "direct": 486000,
+            "directNonExhaust": 0,
+            "energyChain": 587381.8968601029,
+            "maintenance": 57698.66808091667,
+            "vehicle": 138839.90601802221,
+            "endOfLife": 6165.642474813647,
+            "infrastructure": 268355.6496811613
+          },
+          "total": 1544441.7631150167,
+          "diesel_comparator_phases": {
+            "direct": 1305152.67798,
+            "directNonExhaust": 0,
+            "energyChain": 406761.54325918725,
+            "maintenance": 69238.4016971,
+            "vehicle": 83491.87768209503,
+            "endOfLife": 1099.7176904133316,
+            "infrastructure": 238206.54439270328
+          },
+          "diesel_comparator_total": 2103950.762701499,
+          "diesel_heating_phases": {
+            "direct": 0,
+            "directNonExhaust": 0,
+            "energyChain": 33038.33219930499,
+            "maintenance": 0,
+            "vehicle": 0,
+            "endOfLife": 0,
+            "infrastructure": 0
+          }
+        }
+      },
+      "warnings": [
+        "lifetimeKilometers=1080000 outside Mobitool documented range (not clipped)"
+      ],
+      "upstream_requests": [
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 90000,
+            "lifetimeKilometers": 1080000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 0
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "61b9929d31f70c5c15325aab3d1f6577a2c6b0e9a461561766190ae196729d93",
+          "response": {
+            "primaryEnergy": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.21358015432098765,
+              "vehicle": 0.47094063474520487,
+              "endOfLife": 0.02050266190395294,
+              "infrastructure": 0.8756101619198092
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 0.1780823088917181,
+              "vehicle": 0.4285182284506859,
+              "endOfLife": 0.019029760724733478,
+              "infrastructure": 0.8282581780282755
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 17.751862037037036,
+              "vehicle": 102.87749463758576,
+              "endOfLife": 6.881869210197895,
+              "infrastructure": 97.59776680738804
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 54.00335775502926,
+              "energyChain": 0,
+              "maintenance": 6.202367314814815,
+              "vehicle": 92.25710032437163,
+              "endOfLife": 0.9594908625005807,
+              "infrastructure": 81.51076458076466
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 50.30358257005728,
+              "energyChain": 0,
+              "maintenance": 2.3970183333333335,
+              "vehicle": 70.20859280960298,
+              "endOfLife": 1.5436467988193916,
+              "infrastructure": 25.219744631886815
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7233784681471337e-10,
+              "energyChain": 0,
+              "maintenance": 14.07076111111111,
+              "vehicle": 107.29291498664678,
+              "endOfLife": 2.3308445792643724,
+              "infrastructure": 461.87267493064144
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 0,
+              "maintenance": 19.736721296296295,
+              "vehicle": 303.4004299514731,
+              "endOfLife": 11.139047778044981,
+              "infrastructure": 293.72903751769354
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.00234002582565,
+              "energyChain": 0,
+              "maintenance": 47.088997222222226,
+              "vehicle": 290.6976446146526,
+              "endOfLife": 11.07356578219021,
+              "infrastructure": 254.05729641675168
+            }
+          }
+        },
+        {
+          "vehicle_id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 90000,
+            "lifetimeKilometers": 1080000,
+            "passengers": 20,
+            "electricEnergyStored": 400,
+            "batteryChemistry": "NMC",
+            "batteryLifetimeReplacements": 1,
+            "electricityMix": "CONSUMER_PHYSICAL",
+            "electricityConsumption": 100
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "6eb6e816564a8f2841f0cbd2d46d77b726279705947a0793e1eaa0f40c1388c8",
+          "response": {
+            "primaryEnergy": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 2.2889056595503474,
+              "maintenance": 0.21358015432098765,
+              "vehicle": 0.47094063474520487,
+              "endOfLife": 0.02050266190395294,
+              "infrastructure": 0.8756101619198092
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 1,
+              "directNonExhaust": 0,
+              "energyChain": 1.545416734029125,
+              "maintenance": 0.1780823088917181,
+              "vehicle": 0.4285182284506859,
+              "endOfLife": 0.019029760724733478,
+              "infrastructure": 0.8282581780282755
+            },
+            "gwp100a": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 161.92,
+              "maintenance": 17.751862037037036,
+              "vehicle": 102.87749463758576,
+              "endOfLife": 6.881869210197895,
+              "infrastructure": 97.59776680738804
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 54.00335775502926,
+              "energyChain": 30.6294142614614,
+              "maintenance": 6.202367314814815,
+              "vehicle": 92.25710032437163,
+              "endOfLife": 0.9594908625005807,
+              "infrastructure": 81.51076458076466
+            },
+            "pm25": {
+              "direct": 0,
+              "directNonExhaust": 50.30358257005728,
+              "energyChain": 39.8882132871255,
+              "maintenance": 2.3970183333333335,
+              "vehicle": 70.20859280960298,
+              "endOfLife": 1.5436467988193916,
+              "infrastructure": 25.219744631886815
+            },
+            "nmvoc": {
+              "direct": 0,
+              "directNonExhaust": 2.7233784681471337e-10,
+              "energyChain": 451.49951414698353,
+              "maintenance": 14.07076111111111,
+              "vehicle": 107.29291498664678,
+              "endOfLife": 2.3308445792643724,
+              "infrastructure": 461.87267493064144
+            },
+            "nox": {
+              "direct": 0,
+              "directNonExhaust": 0,
+              "energyChain": 1266.767277996825,
+              "maintenance": 19.736721296296295,
+              "vehicle": 303.4004299514731,
+              "endOfLife": 11.139047778044981,
+              "infrastructure": 293.72903751769354
+            },
+            "ubp21": {
+              "direct": 0,
+              "directNonExhaust": 122.00234002582565,
+              "energyChain": 654.005,
+              "maintenance": 47.088997222222226,
+              "vehicle": 290.6976446146526,
+              "endOfLife": 11.07356578219021,
+              "infrastructure": 254.05729641675168
+            }
+          }
+        },
+        {
+          "vehicle_id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+          "parameters": {
+            "vkm": "true",
+            "distance": 1,
+            "kilometersPerYear": 90000,
+            "lifetimeKilometers": 900000,
+            "passengers": 20,
+            "fuelConsumption": 43.17999999999999,
+            "fuelBlend": "DIESEL_AVERAGE"
+          },
+          "data_version": "1752645406739",
+          "response_sha256": "bb89b6c93bef29936e8cac5c85391f29474f42f263a9fda94d22b45af67d6625",
+          "response": {
+            "primaryEnergy": {
+              "direct": 4.264894597222222,
+              "directNonExhaust": 0,
+              "energyChain": 1.2788036148912532,
+              "maintenance": 0.2562961851851852,
+              "vehicle": 0.2810184297803508,
+              "endOfLife": 0.0034394279084198525,
+              "infrastructure": 0.7807462873578777
+            },
+            "primaryEnergyNonRenewable": {
+              "direct": 4.0282490061111105,
+              "directNonExhaust": 0,
+              "energyChain": 1.2554368619110716,
+              "maintenance": 0.21369877067006174,
+              "vehicle": 0.25769098050029327,
+              "endOfLife": 0.003394190402510283,
+              "infrastructure": 0.7352053839280965
+            },
+            "gwp100a": {
+              "direct": 1072.062134009881,
+              "directNonExhaust": 0,
+              "energyChain": 233.81453600396782,
+              "maintenance": 21.302234444444444,
+              "vehicle": 58.92542298962384,
+              "endOfLife": 2.2981044488137057,
+              "infrastructure": 85.73004475366251
+            },
+            "pm10": {
+              "direct": 0,
+              "directNonExhaust": 78.47054323812685,
+              "energyChain": 20.76312232954427,
+              "maintenance": 7.442840777777778,
+              "vehicle": 65.27780175139915,
+              "endOfLife": 0.26013767424735207,
+              "infrastructure": 71.38164861908488
+            },
+            "pm25": {
+              "direct": 38.69112378599999,
+              "directNonExhaust": 65.00051700182172,
+              "energyChain": 72.7503930711555,
+              "maintenance": 2.8764220000000003,
+              "vehicle": 21.11275005470663,
+              "endOfLife": 0.466234616971336,
+              "infrastructure": 22.0695171288562
+            },
+            "nmvoc": {
+              "direct": 35.82797720796632,
+              "directNonExhaust": 2.8796533111970184e-10,
+              "energyChain": 815.0120243986601,
+              "maintenance": 16.884913333333333,
+              "vehicle": 40.52074256428135,
+              "endOfLife": 0.9684025565138064,
+              "infrastructure": 401.5836405043092
+            },
+            "nox": {
+              "direct": 403.80022046499994,
+              "directNonExhaust": 0,
+              "energyChain": 979.2311727814895,
+              "maintenance": 23.684065555555556,
+              "vehicle": 99.15217917330011,
+              "endOfLife": 4.757747602161187,
+              "infrastructure": 255.97312417451124
+            },
+            "ubp21": {
+              "direct": 1157.0369101826545,
+              "directNonExhaust": 229.7143313404733,
+              "energyChain": 642.3568074859999,
+              "maintenance": 56.506796666666666,
+              "vehicle": 129.14523507090004,
+              "endOfLife": 3.058353705326265,
+              "infrastructure": 225.36740090740562
+            }
+          }
+        }
+      ],
+      "native_loss_multiplier_removed": 1.265,
+      "actual_dc_consumption_kwh_per_100km": 150
+    },
+    {
+      "shift_id": "variant-6",
+      "bus_length_m": 12,
+      "annual_km": 60000,
+      "dc_kwh": 90000,
+      "battery_capacity_kwh": 400,
+      "battery_chemistry": "NMC",
+      "lifetime_bus": 12,
+      "lifetime_battery": 8,
+      "lifetime_diesel_bus": 10,
+      "passengers": 0,
+      "electricity_mix": "CONSUMER_PHYSICAL",
+      "diesel_consumption_l_per_km": 0.43179999999999996,
+      "diesel_heating_liters": 500,
+      "status": "incomplete",
+      "reason": "Mobitool unavailable or invalid: Mobitool returned incomplete gwp100a.infrastructure"
+    }
+  ],
+  "vehicle_count": 10,
+  "annual_km": 630000,
+  "energy_boundary": {
+    "policy": "grid-to-bus-dc-94-v1",
+    "dc_kwh": 945000,
+    "grid_kwh": 1005319.1489361703,
+    "charging_losses_kwh": 60319.14893617027,
+    "grid_to_bus_efficiency": 0.94,
+    "preconditioning_included": false,
+    "separate_battery_storage_losses_included": false
+  },
+  "indicators": {},
+  "provenance": {
+    "base_url": "https://d2ztsj2ne13pqv.cloudfront.net",
+    "data_version": "1752645406739",
+    "diesel_heating_methodology": "diesel-heating-wtw-v1.0.0"
+  },
+  "limitations": [
+    "Representative Mobitool inventories, not manufacturer-specific LCA.",
+    "Charging infrastructure is a generic inventory, not the engineered depot.",
+    "No preconditioning or separate internal battery-storage losses.",
+    "Direct NOx and particulate measurements come from one heater and are not measurements of the simulated fleet.",
+    "Direct N2O was not available in the heater study and CH4 is excluded from this direct GWP model; GWP100a is therefore an estimate rather than a complete measured greenhouse-gas inventory.",
+    "No heater-specific start, temperature, duty-cycle or ageing correction is applied.",
+    "The PM10 observed range contains two valid stationary tests and is not a confidence interval."
+  ]
+}

@@ -73,6 +73,7 @@ from app.services.diesel_heating import (
     diesel_heating_fuel_profile,
     resolve_diesel_heating_quantity,
 )
+from app.services.charging_energy import energy_boundary, grid_from_dc
 
 logger = logging.getLogger(__name__)
 
@@ -570,6 +571,13 @@ async def create_yearly_analysis(
         _require_verified_optimization(opt_run, current_user.id)
 
     obj = YearlyAnalysis(**payload.model_dump(exclude_unset=True))
+    from app.services.charging_energy import CHARGING_POLICY, GRID_TO_BUS_EFFICIENCY
+    from app.services.parameterized_lca import METHOD, catalog
+    obj.features = {**(obj.features or {}), "assessment_policy": {
+        "energy_policy": CHARGING_POLICY, "grid_to_bus_efficiency": GRID_TO_BUS_EFFICIENCY,
+        "lca_methodology": METHOD, "mobitool_data_version": catalog()["data_version"],
+        "charging_power_boundary": "DC delivered to the bus",
+    }}
     db.add(obj)
     try:
         await db.flush()
@@ -1386,7 +1394,7 @@ async def get_yearly_costs(
     d_cons_lpk = _consumption_l_per_km(bus_length_m, dc_a, dc_b)
 
     # -- 3. Mixed e-bus OPEX --------------------------------------------
-    e_energy_year = epk * yearly_electric_kwh
+    e_energy_year = epk * grid_from_dc(yearly_electric_kwh)
     e_maint_year = e_maint_cpk * yearly_km
 
     dh_fuel_year = 0.0
@@ -1483,7 +1491,7 @@ async def get_yearly_costs(
         else:
             inv_battery = batt_cpk * battery_capacity_kwh
             inv_charger = ch_a * charger_power_kw + ch_b
-            inv_grid = max(gc_a * charger_power_kw + gc_b, 0.0)
+            inv_grid = max(gc_a * grid_from_dc(charger_power_kw) + gc_b, 0.0)
 
             ebus_capex = [
                 CapexLineItem(
@@ -1563,7 +1571,7 @@ async def get_yearly_costs(
         sc_daily_dh_liters = float(dh.get("diesel_liters") or 0)
         sc_annual_dh_liters = float(sc.get("annual_diesel_liters") or 0)
 
-        sc_e_energy_cost = epk * sc_annual_electric
+        sc_e_energy_cost = epk * grid_from_dc(sc_annual_electric)
         sc_e_maint_cost = e_maint_cpk * sc_annual_km
         sc_dh_fuel_cost = fpl * sc_annual_dh_liters if aux_type == "diesel" else 0.0
         sc_dh_maint_cost = sc_e_maint_cost * dhmf if aux_type == "diesel" else 0.0
@@ -1575,6 +1583,7 @@ async def get_yearly_costs(
             daily_distance_km=round(sc_daily_km, 4),
             daily_diesel_heating_liters=round(sc_daily_dh_liters, 4),
             annual_electric_kwh=round(sc_annual_electric, 4),
+            energy_boundary=energy_boundary(sc_annual_electric),
             annual_distance_km=round(sc_annual_km, 4),
             annual_diesel_heating_liters=round(sc_annual_dh_liters, 4),
             annual_electric_energy_cost_chf=round(sc_e_energy_cost, 2),
@@ -1602,6 +1611,7 @@ async def get_yearly_costs(
             interest_rate=ir,
             bus_length_m=bus_length_m,
             yearly_electric_kwh=round(yearly_electric_kwh, 4),
+            energy_boundary=energy_boundary(yearly_electric_kwh),
             yearly_distance_km=round(yearly_km, 4),
             yearly_diesel_heating_liters=round(yearly_diesel_liters, 4),
             yearly_diesel_heating_fuel_kwh=round(yearly_diesel_fuel_kwh, 4),
@@ -1624,6 +1634,47 @@ async def get_yearly_costs(
 # =========================================================================
 # GET /{yearly_analysis_id}/emissions — Mixed e-bus vs diesel comparator
 # =========================================================================
+
+@router.get("/{yearly_analysis_id}/lca", summary="Parameterized Mobitool vehicle LCA (DC / grid 94%)")
+async def get_yearly_lca(
+    yearly_analysis_id: UUID,
+    annual_km: Optional[float] = Query(None, gt=0),
+    lifetime_bus: Optional[float] = Query(None, gt=0),
+    lifetime_battery: Optional[float] = Query(None, gt=0),
+    lifetime_diesel_bus: Optional[float] = Query(None, gt=0),
+    battery_chemistry: Optional[Literal["NMC", "LFP", "NCA", "LTO"]] = Query(None),
+    electricity_mix: Optional[Literal["CONSUMER_PHYSICAL", "CONSUMER_GO", "RENEWABLE"]] = Query(None),
+    diesel_consumption_l_per_km: Optional[float] = Query(None, gt=0),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    from app.services.parameterized_lca import (
+        METHOD, LcaIncomplete, MobitoolClient, build_vehicles, evaluate_fleet,
+    )
+    ya = await db.get(YearlyAnalysis, yearly_analysis_id)
+    if ya is None:
+        raise HTTPException(status_code=404, detail="Yearly analysis not found")
+    runs = await _load_prediction_runs(db, yearly_analysis_id)
+    if not runs:
+        raise HTTPException(status_code=409, detail="No prediction runs for yearly LCA")
+    if any(str(r.user_id) != str(current_user.id) for r in runs):
+        raise HTTPException(status_code=403, detail="Prediction runs belong to another user")
+    energy = await _build_energy_summary(ya, runs)
+    specs = {}
+    for model_id in {r.bus_model_id for r in runs}:
+        model = await db.get(BusesModels, model_id)
+        specs[str(model_id)] = (model.specs or {}) if model is not None else {}
+    try:
+        vehicles = build_vehicles(runs, energy, ya.features or {}, specs, {
+            "annual_km": annual_km, "lifetime_bus": lifetime_bus, "lifetime_battery": lifetime_battery,
+            "lifetime_diesel_bus": lifetime_diesel_bus, "battery_chemistry": battery_chemistry,
+            "electricity_mix": electricity_mix, "diesel_consumption_l_per_km": diesel_consumption_l_per_km,
+        })
+        result = await evaluate_fleet(vehicles, MobitoolClient(_lca_base_url()))
+    except LcaIncomplete as exc:
+        result = {"methodology_version": METHOD, "status": "incomplete", "reason": str(exc),
+                  "indicators": {}, "vehicles": []}
+    return {"yearly_analysis_id": str(yearly_analysis_id), **result}
 
 _INDICATORS = (
     "gwp100a",

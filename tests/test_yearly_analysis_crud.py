@@ -364,7 +364,10 @@ def test_create_yearly_analysis_success(client, record):
         data = response.json()
         record("create_has_id", "id" in data, "id field missing")
         record("create_name", data.get("name") == "Test Analysis", f"name={data.get('name')}")
-        record("create_features", data.get("features") == {"scenario": "baseline"}, f"features={data.get('features')}")
+        features = dict(data.get("features") or {})
+        policy = features.pop("assessment_policy")
+        assert policy["grid_to_bus_efficiency"] == .94
+        record("create_features", features == {"scenario": "baseline"}, f"features={features}")
         record("create_has_created_at", "created_at" in data, "created_at missing")
         record("create_opt_run_null", data.get("optimization_run_id") is None, f"opt_run_id={data.get('optimization_run_id')}")
 
@@ -384,7 +387,10 @@ def test_create_yearly_analysis_minimal(client, record):
     record("create_minimal", response.status_code == 200, f"status={response.status_code}")
     if response.status_code == 200:
         data = response.json()
-        record("create_minimal_features_default", data.get("features") == {}, f"features={data.get('features')}")
+        features = dict(data.get("features") or {})
+        policy = features.pop("assessment_policy")
+        assert policy["lca_methodology"] == "mobitool-parameterized-grid94-v1"
+        record("create_minimal_features_default", features == {}, f"features={features}")
         client.delete(f"{API_BASE}/{data['id']}", headers=headers)
 
 
