@@ -140,6 +140,22 @@ def _serialize_optimization_run(run: OptimizationRuns) -> OptimizationRunsRead:
     from simulation.optimization_contract import result_integrity
     results = dict(run.results or {})
     results["integrity_audit"] = result_integrity(results, (run.input_params or {}).get("shift_ids"))
+    from app.services.charging_energy import CHARGING_POLICY, energy_boundary, station_connections
+    # Read-time assessment only: persisted solver outputs and historic artifacts stay unchanged.
+    assessment = {"policy": CHARGING_POLICY, "power_boundary": "DC delivered to bus"}
+    try:
+        buses = results.get("per_bus_summary") or []
+        if not buses or any(b.get("total_charged_kwh") is None for b in buses):
+            raise ValueError("Actual charged energy is unavailable in this result")
+        if len({b.get("shift_id") for b in buses}) != len(buses):
+            raise ValueError("Ambiguous physical buses: repeated shift alternatives")
+        assessment["charged_energy"] = energy_boundary(sum(float(b["total_charged_kwh"]) for b in buses))
+        assessment["station_connections"] = station_connections(
+            (run.input_params or {}).get("charging_stations", []), results.get("installed_chargers") or {})
+        assessment["status"] = "complete"
+    except (ValueError, KeyError, TypeError) as exc:
+        assessment.update(status="incomplete", reason=str(exc))
+    results["grid_assessment"] = assessment
     return OptimizationRunsRead.model_validate(run).model_copy(
         update={"name": _resolve_optimization_run_name(run), "results": results}
     )

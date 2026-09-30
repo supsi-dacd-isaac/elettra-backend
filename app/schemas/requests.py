@@ -69,7 +69,7 @@ class BusModelPhysicalSpecs(BaseModel):
         ),
     )
     battery_pack_size_kwh: PositiveFiniteFloat = Field(
-        description="Usable energy of one battery pack in kWh.",
+        description="Installed capacity of one battery pack in kWh, before the SOC operating window and SOH are applied.",
     )
     battery_pack_weight_kg: PositiveFiniteFloat = Field(
         description="Mass of one battery pack in kilograms.",
@@ -247,12 +247,12 @@ class ChargingStationConfig(BaseModel):
     )
     max_total_power_kw: float = Field(
         examples=[450.0],
-        description="Maximum aggregate power (kW) at this station across all active chargers. Required in all modes.",
+        description="Maximum aggregate DC output (kW) at this station across all active chargers; not an AC grid-connection limit. Required in all modes.",
     )
     max_power_per_slot_kw: Optional[float] = Field(
         default=None, examples=[450.0],
         description=(
-            "Maximum power (kW) a single charger slot can deliver. "
+            "Maximum DC power (kW) a single charger slot can deliver to the bus. "
             "When omitted, only the bus-level and station-total power limits apply. "
             "Applicable in all modes."
         ),

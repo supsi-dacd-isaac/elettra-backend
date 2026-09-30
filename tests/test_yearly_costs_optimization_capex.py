@@ -198,7 +198,7 @@ def test_yearly_costs_manual_capex_flow_is_unchanged(
     items = {item["name"]: item for item in response.json()["ebus"]["capex_items"]}
     assert items["Battery"]["investment_chf"] == 50_000.0
     assert items["Charger"]["investment_chf"] == 610.0
-    assert items["Grid connection"]["investment_chf"] == 920.0
+    assert items["Grid connection"]["investment_chf"] == round(3 * 300 / .94 + 20, 2)
     assert "Optimized charging infrastructure" not in items
 
 
@@ -238,7 +238,7 @@ def test_yearly_costs_optimization_capex_uses_linked_run_without_manual_inputs(
     assert items["Optimized charging infrastructure"]["investment_chf"] == 12_345.0
     assert "Charger" not in items
     assert "Grid connection" not in items
-    assert payload["ebus"]["opex_items"][0]["cost_chf_per_year"] == 500.0
+    assert payload["ebus"]["opex_items"][0]["cost_chf_per_year"] == round(500 / .94, 2)
 
 
 @pytest.mark.parametrize(

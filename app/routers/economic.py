@@ -25,6 +25,7 @@ from app.core.auth import get_current_user
 from app.core.shift_distance import RecurrenceType, compute_shift_yearly_distance
 from app.database import get_async_session
 from app.models import Users
+from app.services.charging_energy import energy_boundary, grid_from_dc, connection_estimate
 from app.schemas.economic import (
     AnnualizedCostResponse,
     BatteryCostResponse,
@@ -247,7 +248,7 @@ async def get_charger_cost(
 )
 async def get_grid_connection_cost(
     power_kw: float = Query(
-        ..., gt=0, description="Connection power [kW] (required)."
+        ..., gt=0, description="AC grid connection power [kW] (required); already AC, no efficiency conversion is applied."
     ),
     fee_per_kw: Optional[float] = Query(
         None, description="Slope coefficient [CHF/kW]. Default from config."
@@ -377,7 +378,7 @@ async def get_electric_maintenance_cost(
     "/opex/electric-energy",
     response_model=ElectricEnergyCostResponse,
     summary="Electric bus annual energy cost",
-    description="``cost [CHF/year] = energy_price_per_kwh × annual_consumption [kWh/year]``",
+    description="Cost = price × DC consumption / 0.94. Preconditioning excluded.",
 )
 async def get_electric_energy_cost(
     annual_consumption_kwh: float = Query(
@@ -390,9 +391,10 @@ async def get_electric_energy_cost(
 ):
     price = _or(energy_price_per_kwh, "energy_price_per_kwh")
     return ElectricEnergyCostResponse(
+        energy_boundary=energy_boundary(annual_consumption_kwh),
         annual_consumption_kwh=annual_consumption_kwh,
         energy_price_per_kwh=price,
-        cost_per_year_chf=round(price * annual_consumption_kwh, 2),
+        cost_per_year_chf=round(price * grid_from_dc(annual_consumption_kwh), 2),
     )
 
 
@@ -680,7 +682,7 @@ async def get_full_comparison(
     # --- Electric OPEX (always computed) ---
     e_maint_per_km = _electric_maint_cost_per_km(bus_length_m, em_a, em_b)
     e_maint_year = e_maint_per_km * annual_km
-    e_energy_year = epk * annual_consumption_kwh
+    e_energy_year = epk * grid_from_dc(annual_consumption_kwh)
 
     e_opex = [
         OpexLineItem(name="Maintenance", cost_chf_per_year=round(e_maint_year, 2)),
@@ -723,7 +725,7 @@ async def get_full_comparison(
         inv_battery = _battery_cost(battery_capacity_kwh, batt_cpk)
         inv_bus_body = _bus_no_batt_cost(bus_length_m, eb_a, eb_b, eb_c)
         inv_charger = _charger_cost(charger_power_kw, ch_a, ch_b)
-        inv_grid = _fee_connection(charger_power_kw, gc_a, gc_b)
+        inv_grid = _fee_connection(grid_from_dc(charger_power_kw), gc_a, gc_b)
 
         e_capex = [
             CapexLineItem(
@@ -793,6 +795,8 @@ async def get_full_comparison(
         )
 
     return FullComparisonResponse(
+        energy_boundary=energy_boundary(annual_consumption_kwh),
+        connection_estimate=connection_estimate(charger_power_kw) if charger_power_kw is not None else None,
         shift_id=shift_id,
         annual_km=round(annual_km, 3),
         interest_rate=ir,

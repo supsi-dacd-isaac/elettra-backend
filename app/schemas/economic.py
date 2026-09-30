@@ -154,6 +154,7 @@ class ElectricMaintenanceCostResponse(BaseModel):
 
 class ElectricEnergyCostResponse(BaseModel):
     """Annual energy cost for an electric bus."""
+    energy_boundary: dict
     annual_consumption_kwh: float = Field(
         ..., description="Annual electricity consumption [kWh/year]."
     )
@@ -253,6 +254,8 @@ class FullComparisonResponse(BaseModel):
     regressions) and ``annual_saving_chf`` reflects OPEX only.
     """
 
+    energy_boundary: dict
+    connection_estimate: Optional[dict] = None
     shift_id: UUID = Field(..., description="Shift used to derive annual distance.")
     annual_km: float = Field(..., description="Yearly distance derived from shift [km/year].")
     interest_rate: float
@@ -288,6 +291,7 @@ class FullComparisonResponse(BaseModel):
 
 class YearlyCostScenario(BaseModel):
     """Per-scenario cost breakdown within a yearly analysis."""
+    energy_boundary: dict = Field(default_factory=dict)
 
     temperature_celsius: float
     occurrences: int
@@ -305,6 +309,7 @@ class YearlyCostScenario(BaseModel):
 
 class YearlyCostAssumptions(BaseModel):
     """Economic assumptions used for a yearly cost calculation."""
+    energy_boundary: dict = Field(default_factory=dict)
 
     energy_price_per_kwh: float
     prediction_stacks: list[str] = Field(default_factory=list)
