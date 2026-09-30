@@ -61,7 +61,9 @@ def _register_temp_user(client: TestClient) -> dict:
         pytest.skip("TEST_AGENCY_ID environment variable is required")
 
     email = f"tmp_opt_delete_{uuid.uuid4().hex[:10]}@example.com"
-    password = f"Tmp-{uuid.uuid4().hex}aA1!"
+    # Random hexadecimal strings can contain forbidden sequences (abc/123).
+    # Uniqueness belongs to the email; use a deterministic valid test password.
+    password = "Opt-Deletion-Gate_Str0ng!"
     response = client.post(
         f"{AUTH_BASE}/register",
         json={

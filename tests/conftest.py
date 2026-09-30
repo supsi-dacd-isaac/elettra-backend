@@ -86,6 +86,21 @@ from app.database import get_async_session  # noqa: E402
 
 settings = get_cached_settings()
 
+
+@pytest.fixture(autouse=True)
+def isolate_image_provenance_for_unit_tests(monkeypatch, tmp_path):
+    """Unit fixtures own their synthetic release identities, including in Docker.
+
+    Real image startup/preflight is exercised separately without pytest. Tests
+    explicitly exercising baked-file validation can override these paths.
+    """
+    if os.getenv("ELETTRA_TEST_USE_DEPLOYMENT_ENV") != "1":
+        from app.services import runtime_release
+        monkeypatch.setattr(runtime_release, "ELETTRA_CORE_IMAGE_COMMIT_PATH",
+                            tmp_path / "absent-image-core-commit")
+        monkeypatch.setattr(runtime_release, "ELETTRA_CORE_IMAGE_TREE_SHA256_PATH",
+                            tmp_path / "absent-image-core-tree")
+
 # ANSI color helpers
 GREEN = "\x1b[32m"
 RED = "\x1b[31m"
