@@ -715,6 +715,14 @@ async def predict_shift_consumption(
             "battery_capacity_kwh": battery_capacity_kwh,
             "bus_length_m": bus_length_m,
             "num_battery_packs": packs,
+            # Assessment-only metadata: never used by the predictor or solver.
+            "assessment_metadata": {
+                key: specs[key] for key in (
+                    "battery_chemistry", "batteryChemistry", "bus_lifetime",
+                    "bus_lifetime_years", "battery_pack_lifetime",
+                    "battery_pack_lifetime_years", "lifetime_diesel_bus",
+                ) if specs.get(key) is not None
+            },
             "total_weight_kg": total_weight_kg,
             "physical_mass": {
                 "empty_weight_kg": mass.empty_weight_kg,

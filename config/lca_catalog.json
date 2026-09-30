@@ -1,0 +1,1037 @@
+{
+  "base_url": "https://d2ztsj2ne13pqv.cloudfront.net",
+  "data_version": "1752645406739",
+  "classes": {
+    "9m": {
+      "electric": "66a8f492-dbb9-43dc-8170-4f01c7be31a7",
+      "lto": "5fb4795c-67c1-4a3c-b898-46c9fb0d5ca8",
+      "diesel": "40ac537a-b112-40a0-8f73-c314237bc7e2"
+    },
+    "13m": {
+      "electric": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+      "lto": "8f40e32b-36c5-414e-8b5e-fb2cd1947b1e",
+      "diesel": "5efba16e-a9ca-4773-9c10-fab2e63a4906"
+    },
+    "18m": {
+      "electric": "98c76615-5094-4a04-8b28-01cc56dbdd80",
+      "lto": "dc37e5c7-69e6-43df-9690-7ce5d241aba7",
+      "diesel": "2b46af76-34e0-4b67-8631-0478d2d8b712"
+    }
+  },
+  "vehicles": {
+    "66a8f492-dbb9-43dc-8170-4f01c7be31a7": {
+      "id": "66a8f492-dbb9-43dc-8170-4f01c7be31a7",
+      "sourceId": "202",
+      "name": "Midibus9mBEV-depot2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "Midibus",
+      "powertrain": "BEV-depot",
+      "description": "",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "9m",
+      "year": "2020",
+      "emissionStandard": null,
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 5,
+        "minValue": 1,
+        "maxValue": 34
+      },
+      "electricityConsumption": {
+        "type": "number",
+        "defaultValue": 108.33645080471061,
+        "minValue": 80,
+        "maxValue": 300
+      },
+      "electricityMix": {
+        "type": "text",
+        "defaultValue": "CONSUMER_PHYSICAL",
+        "allowedValues": [
+          "CONSUMER_PHYSICAL",
+          "CONSUMER_GO",
+          "RENEWABLE"
+        ]
+      },
+      "electricEnergyStored": {
+        "type": "number",
+        "defaultValue": 257,
+        "minValue": 30,
+        "maxValue": 550
+      },
+      "batteryLifetimeReplacements": {
+        "type": "number",
+        "defaultValue": 1,
+        "minValue": 0,
+        "maxValue": 3
+      },
+      "batteryChemistry": {
+        "type": "text",
+        "defaultValue": "NMC",
+        "allowedValues": [
+          "NMC",
+          "LFP",
+          "NCA"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 34,
+      "dailyDistance": 157.9349842484748,
+      "operationTime": 6,
+      "power": 137.7219383305523,
+      "powerFromElectricMotor": 137.7219383305523,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "depthOfDischarge": 0.8,
+      "batteryChargeLoss": 0.15,
+      "chargerLoss": 0.1,
+      "chargingStationPower": 200,
+      "chargingStationPerVehicle": 0.5,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 4742,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 1032,
+      "brakingSystemMass": 149,
+      "wheelsAndTiresMass": 245,
+      "exhaustSystemMass": 0,
+      "electricalSystemMass": 135,
+      "transmissionMass": 331.3999977111816,
+      "otherComponentsMass": 607,
+      "combustionEngineMass": 0,
+      "electricMotorMass": 71.905317743066,
+      "chargerMass": 36,
+      "converterMass": 25,
+      "inverterMass": 11.39926254995873,
+      "powerDistributionUnitMass": 36,
+      "fuelMass": 0,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 0,
+      "hvacMass": 72.15999984741211,
+      "grossMass": 12000,
+      "regional": 1,
+      "discountRegenBreaking": 0.15000000000000002,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    },
+    "5fb4795c-67c1-4a3c-b898-46c9fb0d5ca8": {
+      "id": "5fb4795c-67c1-4a3c-b898-46c9fb0d5ca8",
+      "sourceId": "203",
+      "name": "Midibus9mBEV-opp2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "Midibus",
+      "powertrain": "BEV-opp",
+      "description": "",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "9m",
+      "year": "2020",
+      "emissionStandard": null,
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 5,
+        "minValue": 1,
+        "maxValue": 34
+      },
+      "electricityConsumption": {
+        "type": "number",
+        "defaultValue": 102.09513574977215,
+        "minValue": 80,
+        "maxValue": 300
+      },
+      "electricityMix": {
+        "type": "text",
+        "defaultValue": "CONSUMER_PHYSICAL",
+        "allowedValues": [
+          "CONSUMER_PHYSICAL",
+          "CONSUMER_GO",
+          "RENEWABLE"
+        ]
+      },
+      "electricEnergyStored": {
+        "type": "number",
+        "defaultValue": 54,
+        "minValue": 30,
+        "maxValue": 550
+      },
+      "batteryLifetimeReplacements": {
+        "type": "number",
+        "defaultValue": 1,
+        "minValue": 0,
+        "maxValue": 3
+      },
+      "batteryChemistry": {
+        "type": "text",
+        "defaultValue": "LTO",
+        "allowedValues": [
+          "LTO"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 34,
+      "dailyDistance": 315.8699684969495,
+      "operationTime": 12,
+      "power": 125.5087929431261,
+      "powerFromElectricMotor": 125.5087929431261,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "depthOfDischarge": 0.5,
+      "batteryChargeLoss": 0.3,
+      "chargerLoss": 0.15,
+      "chargingStationPower": 450,
+      "chargingStationPerVehicle": 0.1,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 4742,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 1032,
+      "brakingSystemMass": 149,
+      "wheelsAndTiresMass": 245,
+      "exhaustSystemMass": 0,
+      "electricalSystemMass": 135,
+      "transmissionMass": 331.3999977111816,
+      "otherComponentsMass": 607,
+      "combustionEngineMass": 0,
+      "electricMotorMass": 65.37158528164255,
+      "chargerMass": 36,
+      "converterMass": 25,
+      "inverterMass": 10.75196585206873,
+      "powerDistributionUnitMass": 36,
+      "fuelMass": 0,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 0,
+      "hvacMass": 72.15999984741211,
+      "grossMass": 12000,
+      "regional": 1,
+      "discountRegenBreaking": 0.15000000000000002,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    },
+    "40ac537a-b112-40a0-8f73-c314237bc7e2": {
+      "id": "40ac537a-b112-40a0-8f73-c314237bc7e2",
+      "sourceId": "207",
+      "name": "Midibus9mICEV-d2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "Midibus",
+      "powertrain": "ICEV-d",
+      "description": "",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "9m",
+      "year": "2020",
+      "emissionStandard": "EURO-6",
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 5,
+        "minValue": 1,
+        "maxValue": 34
+      },
+      "fuelConsumption": {
+        "type": "number",
+        "defaultValue": 24.400000000000116,
+        "minValue": 1,
+        "maxValue": 70
+      },
+      "fuelBlend": {
+        "type": "text",
+        "defaultValue": "DIESEL_AVERAGE",
+        "allowedValues": [
+          "DIESEL_AVERAGE",
+          "B7"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 34,
+      "dailyDistance": 315.8699684969495,
+      "operationTime": 12,
+      "power": 124.9514786278111,
+      "powerFromCombustionEngine": 124.9514786278111,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "chargerLoss": 0,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 4742,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 1032,
+      "brakingSystemMass": 149,
+      "wheelsAndTiresMass": 245,
+      "exhaustSystemMass": 60,
+      "electricalSystemMass": 135,
+      "transmissionMass": 331.3999977111816,
+      "otherComponentsMass": 607,
+      "combustionEngineMass": 399.8641341997202,
+      "electricMotorMass": 0,
+      "chargerMass": 0,
+      "converterMass": 0,
+      "inverterMass": 0,
+      "powerDistributionUnitMass": 0,
+      "fuelMass": 64.21463720428471,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 44.57565677266528,
+      "hvacMass": 72.15999984741211,
+      "grossMass": 12000,
+      "regional": 1,
+      "discountRegenBreaking": 1,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    },
+    "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed": {
+      "id": "ae1bdfdb-c6d3-4c21-be9a-23cc936973ed",
+      "sourceId": "212",
+      "name": "City busSingle deck13m-cityBEV-depot2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "City bus",
+      "powertrain": "BEV-depot",
+      "description": "Single deck",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "13m-city",
+      "year": "2020",
+      "emissionStandard": null,
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 10,
+        "minValue": 1,
+        "maxValue": 64
+      },
+      "electricityConsumption": {
+        "type": "number",
+        "defaultValue": 170.34260049918853,
+        "minValue": 80,
+        "maxValue": 300
+      },
+      "electricityMix": {
+        "type": "text",
+        "defaultValue": "CONSUMER_PHYSICAL",
+        "allowedValues": [
+          "CONSUMER_PHYSICAL",
+          "CONSUMER_GO",
+          "RENEWABLE"
+        ]
+      },
+      "electricEnergyStored": {
+        "type": "number",
+        "defaultValue": 399,
+        "minValue": 30,
+        "maxValue": 550
+      },
+      "batteryLifetimeReplacements": {
+        "type": "number",
+        "defaultValue": 1,
+        "minValue": 0,
+        "maxValue": 3
+      },
+      "batteryChemistry": {
+        "type": "text",
+        "defaultValue": "NMC",
+        "allowedValues": [
+          "NMC",
+          "LFP",
+          "NCA"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 64,
+      "dailyDistance": 156.3201265141812,
+      "operationTime": 6,
+      "power": 161.792810408731,
+      "powerFromElectricMotor": 161.792810408731,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "depthOfDischarge": 0.8,
+      "batteryChargeLoss": 0.15,
+      "chargerLoss": 0.1,
+      "chargingStationPower": 200,
+      "chargingStationPerVehicle": 0.5,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 7300,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 1490,
+      "brakingSystemMass": 272,
+      "wheelsAndTiresMass": 576,
+      "exhaustSystemMass": 0,
+      "electricalSystemMass": 183,
+      "transmissionMass": 437.7999963760376,
+      "otherComponentsMass": 858,
+      "combustionEngineMass": 0,
+      "electricMotorMass": 86.75629876793676,
+      "chargerMass": 36,
+      "converterMass": 25,
+      "inverterMass": 12.67501875503748,
+      "powerDistributionUnitMass": 36,
+      "fuelMass": 0,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 0,
+      "hvacMass": 126.1599998474121,
+      "grossMass": 19000,
+      "regional": 1,
+      "discountRegenBreaking": 0.15000000000000002,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    },
+    "8f40e32b-36c5-414e-8b5e-fb2cd1947b1e": {
+      "id": "8f40e32b-36c5-414e-8b5e-fb2cd1947b1e",
+      "sourceId": "213",
+      "name": "City busSingle deck13m-cityBEV-opp2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "City bus",
+      "powertrain": "BEV-opp",
+      "description": "Single deck",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "13m-city",
+      "year": "2020",
+      "emissionStandard": null,
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 10,
+        "minValue": 1,
+        "maxValue": 64
+      },
+      "electricityConsumption": {
+        "type": "number",
+        "defaultValue": 161.26968252755708,
+        "minValue": 80,
+        "maxValue": 300
+      },
+      "electricityMix": {
+        "type": "text",
+        "defaultValue": "CONSUMER_PHYSICAL",
+        "allowedValues": [
+          "CONSUMER_PHYSICAL",
+          "CONSUMER_GO",
+          "RENEWABLE"
+        ]
+      },
+      "electricEnergyStored": {
+        "type": "number",
+        "defaultValue": 85,
+        "minValue": 30,
+        "maxValue": 550
+      },
+      "batteryLifetimeReplacements": {
+        "type": "number",
+        "defaultValue": 1,
+        "minValue": 0,
+        "maxValue": 3
+      },
+      "batteryChemistry": {
+        "type": "text",
+        "defaultValue": "LTO",
+        "allowedValues": [
+          "LTO"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 64,
+      "dailyDistance": 312.6402530283624,
+      "operationTime": 12,
+      "power": 166.9281970958896,
+      "powerFromElectricMotor": 166.9281970958896,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "depthOfDischarge": 0.5,
+      "batteryChargeLoss": 0.3,
+      "chargerLoss": 0.15,
+      "chargingStationPower": 450,
+      "chargingStationPerVehicle": 0.1,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 7300,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 1490,
+      "brakingSystemMass": 272,
+      "wheelsAndTiresMass": 576,
+      "exhaustSystemMass": 0,
+      "electricalSystemMass": 183,
+      "transmissionMass": 437.7999963760376,
+      "otherComponentsMass": 858,
+      "combustionEngineMass": 0,
+      "electricMotorMass": 90.3019487134426,
+      "chargerMass": 36,
+      "converterMass": 25,
+      "inverterMass": 12.94719424624291,
+      "powerDistributionUnitMass": 36,
+      "fuelMass": 0,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 0,
+      "hvacMass": 126.1599998474121,
+      "grossMass": 19000,
+      "regional": 1,
+      "discountRegenBreaking": 0.15000000000000002,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    },
+    "5efba16e-a9ca-4773-9c10-fab2e63a4906": {
+      "id": "5efba16e-a9ca-4773-9c10-fab2e63a4906",
+      "sourceId": "217",
+      "name": "City busSingle deck13m-cityICEV-d2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "City bus",
+      "powertrain": "ICEV-d",
+      "description": "Single deck",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "13m-city",
+      "year": "2020",
+      "emissionStandard": "EURO-6",
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 10,
+        "minValue": 1,
+        "maxValue": 64
+      },
+      "fuelConsumption": {
+        "type": "number",
+        "defaultValue": 38.20000000000031,
+        "minValue": 1,
+        "maxValue": 70
+      },
+      "fuelBlend": {
+        "type": "text",
+        "defaultValue": "DIESEL_AVERAGE",
+        "allowedValues": [
+          "DIESEL_AVERAGE",
+          "B7"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 64,
+      "dailyDistance": 312.6402530283624,
+      "operationTime": 12,
+      "power": 227.1649810676919,
+      "powerFromCombustionEngine": 227.1649810676919,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "chargerLoss": 0,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 7300,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 1490,
+      "brakingSystemMass": 272,
+      "wheelsAndTiresMass": 576,
+      "exhaustSystemMass": 98,
+      "electricalSystemMass": 183,
+      "transmissionMass": 437.7999963760376,
+      "otherComponentsMass": 858,
+      "combustionEngineMass": 686.0619361574668,
+      "electricMotorMass": 0,
+      "chargerMass": 0,
+      "converterMass": 0,
+      "inverterMass": 0,
+      "powerDistributionUnitMass": 0,
+      "fuelMass": 99.32351078424762,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 52.05957400684539,
+      "hvacMass": 126.1599998474121,
+      "grossMass": 19000,
+      "regional": 1,
+      "discountRegenBreaking": 1,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    },
+    "98c76615-5094-4a04-8b28-01cc56dbdd80": {
+      "id": "98c76615-5094-4a04-8b28-01cc56dbdd80",
+      "sourceId": "232",
+      "name": "City busArticulated18mBEV-depot2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "City bus",
+      "powertrain": "BEV-depot",
+      "description": "Articulated",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "18m",
+      "year": "2020",
+      "emissionStandard": null,
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 19,
+        "minValue": 1,
+        "maxValue": 150
+      },
+      "electricityConsumption": {
+        "type": "number",
+        "defaultValue": 225.7348628970509,
+        "minValue": 80,
+        "maxValue": 300
+      },
+      "electricityMix": {
+        "type": "text",
+        "defaultValue": "CONSUMER_PHYSICAL",
+        "allowedValues": [
+          "CONSUMER_PHYSICAL",
+          "CONSUMER_GO",
+          "RENEWABLE"
+        ]
+      },
+      "electricEnergyStored": {
+        "type": "number",
+        "defaultValue": 534,
+        "minValue": 30,
+        "maxValue": 550
+      },
+      "batteryLifetimeReplacements": {
+        "type": "number",
+        "defaultValue": 1,
+        "minValue": 0,
+        "maxValue": 3
+      },
+      "batteryChemistry": {
+        "type": "text",
+        "defaultValue": "NMC",
+        "allowedValues": [
+          "NMC",
+          "LFP",
+          "NCA"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 150,
+      "dailyDistance": 157.8285461666366,
+      "operationTime": 6,
+      "power": 300.5894999124242,
+      "powerFromElectricMotor": 300.5894999124242,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "depthOfDischarge": 0.8,
+      "batteryChargeLoss": 0.15,
+      "chargerLoss": 0.1,
+      "chargingStationPower": 200,
+      "chargingStationPerVehicle": 0.5,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 9049,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 2153,
+      "brakingSystemMass": 393,
+      "wheelsAndTiresMass": 832,
+      "exhaustSystemMass": 0,
+      "electricalSystemMass": 264,
+      "transmissionMass": 574.5999946594238,
+      "otherComponentsMass": 1462,
+      "combustionEngineMass": 0,
+      "electricMotorMass": 256.1382153758495,
+      "chargerMass": 36,
+      "converterMass": 25,
+      "inverterMass": 20.03124321186748,
+      "powerDistributionUnitMass": 36,
+      "fuelMass": 0,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 0,
+      "hvacMass": 166.6599998474121,
+      "grossMass": 28000,
+      "regional": 1,
+      "discountRegenBreaking": 0.15000000000000002,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    },
+    "dc37e5c7-69e6-43df-9690-7ce5d241aba7": {
+      "id": "dc37e5c7-69e6-43df-9690-7ce5d241aba7",
+      "sourceId": "233",
+      "name": "City busArticulated18mBEV-opp2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "City bus",
+      "powertrain": "BEV-opp",
+      "description": "Articulated",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "18m",
+      "year": "2020",
+      "emissionStandard": null,
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 19,
+        "minValue": 1,
+        "maxValue": 150
+      },
+      "electricityConsumption": {
+        "type": "number",
+        "defaultValue": 210.64957946874893,
+        "minValue": 80,
+        "maxValue": 300
+      },
+      "electricityMix": {
+        "type": "text",
+        "defaultValue": "CONSUMER_PHYSICAL",
+        "allowedValues": [
+          "CONSUMER_PHYSICAL",
+          "CONSUMER_GO",
+          "RENEWABLE"
+        ]
+      },
+      "electricEnergyStored": {
+        "type": "number",
+        "defaultValue": 111,
+        "minValue": 30,
+        "maxValue": 550
+      },
+      "batteryLifetimeReplacements": {
+        "type": "number",
+        "defaultValue": 1,
+        "minValue": 0,
+        "maxValue": 3
+      },
+      "batteryChemistry": {
+        "type": "text",
+        "defaultValue": "LTO",
+        "allowedValues": [
+          "LTO"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 150,
+      "dailyDistance": 315.6570923332731,
+      "operationTime": 12,
+      "power": 220.5506177611923,
+      "powerFromElectricMotor": 220.5506177611923,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "depthOfDischarge": 0.5,
+      "batteryChargeLoss": 0.3,
+      "chargerLoss": 0.15,
+      "chargingStationPower": 450,
+      "chargingStationPerVehicle": 0.1,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 9049,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 2153,
+      "brakingSystemMass": 393,
+      "wheelsAndTiresMass": 832,
+      "exhaustSystemMass": 0,
+      "electricalSystemMass": 264,
+      "transmissionMass": 574.5999946594238,
+      "otherComponentsMass": 1462,
+      "combustionEngineMass": 0,
+      "electricMotorMass": 137.1964611807949,
+      "chargerMass": 36,
+      "converterMass": 25,
+      "inverterMass": 15.78918250794443,
+      "powerDistributionUnitMass": 36,
+      "fuelMass": 0,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 0,
+      "hvacMass": 166.6599998474121,
+      "grossMass": 28000,
+      "regional": 1,
+      "discountRegenBreaking": 0.15000000000000002,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    },
+    "2b46af76-34e0-4b67-8631-0478d2d8b712": {
+      "id": "2b46af76-34e0-4b67-8631-0478d2d8b712",
+      "sourceId": "238",
+      "name": "City busArticulated18mICEV-d2020",
+      "vehicleType": "Bus",
+      "vehicleSubtype": "City bus",
+      "powertrain": "ICEV-d",
+      "description": "Articulated",
+      "filteringDescription": "",
+      "geography": "CH",
+      "trafficCharacteristics": null,
+      "functionalUnit": "pkm",
+      "filter1": "passenger",
+      "filter2": "Bus",
+      "filter3": "",
+      "speed": "",
+      "powerClass": "",
+      "size": "18m",
+      "year": "2020",
+      "emissionStandard": "EURO-6",
+      "lifetimeKilometers": {
+        "type": "number",
+        "defaultValue": 700000,
+        "minValue": 100000,
+        "maxValue": 1000000
+      },
+      "kilometersPerYear": {
+        "type": "number",
+        "defaultValue": 50000,
+        "minValue": 5000,
+        "maxValue": 100000
+      },
+      "passengers": {
+        "type": "number",
+        "defaultValue": 19,
+        "minValue": 1,
+        "maxValue": 150
+      },
+      "fuelConsumption": {
+        "type": "number",
+        "defaultValue": 48.80000000000046,
+        "minValue": 1,
+        "maxValue": 70
+      },
+      "fuelBlend": {
+        "type": "text",
+        "defaultValue": "DIESEL_AVERAGE",
+        "allowedValues": [
+          "DIESEL_AVERAGE",
+          "B7"
+        ]
+      },
+      "distance": {
+        "type": "number",
+        "defaultValue": 1
+      },
+      "vkm": {
+        "type": "boolean",
+        "defaultValue": false
+      },
+      "passengerCapacity": 150,
+      "dailyDistance": 315.6570923332731,
+      "operationTime": 12,
+      "power": 253.3051062417454,
+      "powerFromCombustionEngine": 253.3051062417454,
+      "tankToWheelEnergyCombustion": 0,
+      "tankToWheelEnergyElectric": 0,
+      "chargerLoss": 0,
+      "roadMaintenance": 0.00129,
+      "gliderBaseMass": 9049,
+      "lightweightingRate": 0.01999999972031219,
+      "suspensionMass": 2153,
+      "brakingSystemMass": 393,
+      "wheelsAndTiresMass": 832,
+      "exhaustSystemMass": 142,
+      "electricalSystemMass": 264,
+      "transmissionMass": 574.5999946594238,
+      "otherComponentsMass": 1462,
+      "combustionEngineMass": 759.2542853983584,
+      "electricMotorMass": 0,
+      "chargerMass": 0,
+      "converterMass": 0,
+      "inverterMass": 0,
+      "powerDistributionUnitMass": 0,
+      "fuelMass": 128.0605671272264,
+      "fuelCellAncillaryBoPMass": 0,
+      "fuelCellEssentialBoPMass": 0,
+      "fuelCellStackMass": 0,
+      "fuelTankMass": 56.42003666556927,
+      "hvacMass": 166.6599998474121,
+      "grossMass": 28000,
+      "regional": 1,
+      "discountRegenBreaking": 1,
+      "refrigerantUse": 23.5,
+      "refrigerantLoss": 16
+    }
+  }
+}

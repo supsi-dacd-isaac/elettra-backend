@@ -1,0 +1,56 @@
+# Isolated release gate: no production volumes, credentials or database.
+name: elettra-grid94-staging
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: elettra
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: grid94-isolated-staging
+    volumes:
+      - grid94-db:/var/lib/postgresql
+      - ./db/elettra_schema_init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./tests/ci_seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d elettra"]
+      interval: 5s
+      retries: 20
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z-cpuv1
+    environment:
+      MINIO_ROOT_USER: grid94staging
+      MINIO_ROOT_PASSWORD: grid94-isolated-minio
+    command: server /data
+    volumes:
+      - grid94-minio:/data
+  buckets:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z-cpuv1
+    depends_on: [minio]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "until mc alias set staging http://minio:9000 grid94staging grid94-isolated-minio; do sleep 2; done; mc mb --ignore-existing staging/elevation-profiles; mc mb --ignore-existing staging/consumption-models"
+  app:
+    image: ${GRID94_BACKEND_IMAGE:?Set the candidate image or immutable release digest}
+    environment:
+      ELETTRA_CONFIG_FILE: /app/config/elettra-config.image.yaml
+      DATABASE_URL: postgresql+asyncpg://admin:grid94-isolated-staging@db:5432/elettra
+      APP_SECRET_KEY: grid94-isolated-staging-never-production
+      MINIO_ENDPOINT: minio:9000
+      AWS_ACCESS_KEY_ID: grid94staging
+      AWS_SECRET_ACCESS_KEY: grid94-isolated-minio
+      ELEVATION_PROFILES_BUCKET: elevation-profiles
+      LCA_API_BASE_URL: https://d2ztsj2ne13pqv.cloudfront.net
+    ports: ["127.0.0.1:18002:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      buckets: {condition: service_completed_successfully}
+  frontend:
+    image: ${GRID94_FRONTEND_IMAGE:?Set the candidate image or immutable release digest}
+    ports: ["127.0.0.1:18558:80"]
+    environment:
+      API_BACKEND_URL: http://app:8000
+      CARTO_API_KEY: staging-no-map-tile-requests
+    depends_on: [app]
+volumes:
+  grid94-db:
+  grid94-minio:
