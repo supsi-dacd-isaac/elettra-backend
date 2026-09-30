@@ -137,8 +137,11 @@ def _resolve_optimization_run_name(run: OptimizationRuns) -> str | None:
 
 def _serialize_optimization_run(run: OptimizationRuns) -> OptimizationRunsRead:
     """Build an OptimizationRunsRead applying the read-time name fallback."""
+    from simulation.optimization_contract import result_integrity
+    results = dict(run.results or {})
+    results["integrity_audit"] = result_integrity(results, (run.input_params or {}).get("shift_ids"))
     return OptimizationRunsRead.model_validate(run).model_copy(
-        update={"name": _resolve_optimization_run_name(run)}
+        update={"name": _resolve_optimization_run_name(run), "results": results}
     )
 
 
@@ -375,11 +378,15 @@ async def create_optimization_run(
 
     prediction_bus_model_ids: set[UUID] = set()
     prediction_stack_pairs: set[tuple[str, str, str]] = set()
+    catalogue = []
     if request.prediction_run_ids:
         for pred_id in request.prediction_run_ids:
             pred = await db.get(PredictionRuns, pred_id)
             if pred is None:
                 raise HTTPException(status_code=404, detail=f"Prediction run {pred_id} not found")
+            if str(pred.user_id) != str(current_user.id):
+                raise HTTPException(status_code=403, detail="Prediction run belongs to another user")
+            catalogue.append(pred)
             if pred.status != "completed":
                 raise HTTPException(
                     status_code=400,
@@ -436,6 +443,14 @@ async def create_optimization_run(
                     "model release and auxiliary estimator"
                 ),
             )
+
+    if catalogue:
+        from simulation.optimization_contract import select_references
+        try:
+            select_references(catalogue, request.shift_ids, mode=request.mode,
+                              user_id=current_user.id, explicit=request.reference_prediction_run_ids)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # `name` is a first-class column on optimization_runs; keep it out of
     # input_params (which is reserved for solver/technical inputs).

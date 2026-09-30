@@ -7,6 +7,7 @@ to accept structured data arrays instead of reading files from disk.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -108,6 +109,10 @@ class OptimizationConfig:
     mip_abs_gap: Optional[float] = None
     feasibility_tol: Optional[float] = None
     optimality_tol: Optional[float] = None
+    # Internal exact-forecast feasibility check, not public sizing controls.
+    fixed_battery_packs: Optional[Dict[str, int]] = None
+    fixed_station_slots: Optional[Dict[str, int]] = None
+    allow_excess_packs: bool = True
 
 
 @dataclass
@@ -140,6 +145,18 @@ def _prepare_arrays(
     config: OptimizationConfig,
 ) -> dict:
     """Build presence masks, discharge arrays, and dwell segments from bus/trip data."""
+    if len({bus.shift_id for bus in buses}) != len(buses):
+        raise ValueError("Each physical shift must appear exactly once in the optimizer")
+    if len({station.stop_id for station in stations}) != len(stations):
+        raise ValueError("Charging station identifiers must be unique")
+    for bus in buses:
+        if not bus.min_packs <= bus.reference_packs <= bus.max_packs:
+            raise ValueError("Reference battery is outside physical bus limits")
+        if not bus.trips:
+            raise ValueError(f"Shift {bus.shift_id} has no trips")
+        for trip in bus.trips:
+            if not all(math.isfinite(value) for value in (trip.base_energy_kwh, trip.sensitivity)):
+                raise ValueError("Trip energy and mass sensitivity must be finite")
     station_name_to_idx = {s.stop_id: i for i, s in enumerate(stations)}
 
     all_times: List[int] = []
@@ -297,6 +314,15 @@ def solve_optimization(
     if config.mode == "battery_only":
         for (s, k) in install_index:
             m.install[s, k].fix(1)
+    if config.fixed_station_slots is not None:
+        if set(config.fixed_station_slots) != {station.stop_id for station in stations}:
+            raise ValueError("Fixed infrastructure must cover exactly all stations")
+        for s, station in enumerate(stations):
+            count = config.fixed_station_slots[station.stop_id]
+            if not 0 <= count <= len(station_slot_costs[s]):
+                raise ValueError("Fixed infrastructure exceeds available slots")
+            for k in range(len(station_slot_costs[s])):
+                m.install[s, k].fix(int(k < count))
 
     # Core decision variables
     m.connect = Var(m.T, m.B, domain=Binary)
@@ -320,6 +346,15 @@ def solve_optimization(
         if config.mode == "charging_only":
             m.n_packs[b].fix(int(ref_packs[b]))
             # n_excess_packs stays free as a soft feasibility slack
+        if config.fixed_battery_packs is not None:
+            if set(config.fixed_battery_packs) != {bus.shift_id for bus in buses}:
+                raise ValueError("Fixed batteries must cover exactly all shifts")
+            count = config.fixed_battery_packs[buses[b].shift_id]
+            if not min_packs[b] <= count <= max_packs[b]:
+                raise ValueError("Fixed battery exceeds physical limits")
+            m.n_packs[b].fix(count)
+        if not config.allow_excess_packs:
+            m.n_excess_packs[b].fix(0)
 
     if config.mode != "charging_only":
         def excess_pack_activation_rule(mdl, b):
@@ -556,6 +591,45 @@ def solve_optimization(
             + float(dt) * mdl.power[t, b]
         )
     m.soc_dyn = Constraint(m.T, m.B, rule=soc_dyn_rule)
+
+    # Only regenerative energy can be curtailed. Otherwise a fixed-design
+    # verification can report an arbitrary SOC by dissipating stored energy
+    # during positive-demand trips or even while parked.
+    mixed_regen = []
+    energy_bounds = {}
+    for t in m.T:
+        for b in m.B:
+            base = float(discharge_base[t, b])
+            slope = float(discharge_sens[t, b]) * float(pack_size[b])
+            limits = [int(min_packs[b]), int(max_packs[b])]
+            if m.n_packs[b].fixed:
+                limits = [value(m.n_packs[b])]*2
+            low, high = sorted(base + slope*(n-float(ref_packs[b])) for n in limits)
+            energy_bounds[t, b] = (low, high)
+            if low >= 0:
+                m.curtail[t, b].fix(0)
+            elif high > 0:
+                mixed_regen.append((t, b))
+    m.MixedRegen = Set(dimen=2, initialize=mixed_regen)
+    m.regenerating = Var(m.MixedRegen, domain=Binary)
+
+    def net_energy(mdl, t, b):
+        return float(discharge_base[t, b]) + float(discharge_sens[t, b])*float(pack_size[b])*(mdl.n_packs[b]-float(ref_packs[b]))
+
+    def curtail_limit(mdl, t, b):
+        low, high = energy_bounds[t, b]
+        if low >= 0:
+            return Constraint.Skip
+        if high <= 0:
+            return mdl.curtail[t, b] <= -net_energy(mdl, t, b)
+        return mdl.curtail[t, b] <= -net_energy(mdl, t, b) + high*(1-mdl.regenerating[t, b])
+    m.curtail_limit = Constraint(m.T, m.B, rule=curtail_limit)
+    m.curtail_activation = Constraint(m.MixedRegen, rule=lambda mdl, t, b:
+        mdl.curtail[t, b] <= -energy_bounds[t, b][0]*mdl.regenerating[t, b])
+    m.regen_sign_upper = Constraint(m.MixedRegen, rule=lambda mdl, t, b:
+        net_energy(mdl, t, b) <= energy_bounds[t, b][1]*(1-mdl.regenerating[t, b]))
+    m.regen_sign_lower = Constraint(m.MixedRegen, rule=lambda mdl, t, b:
+        net_energy(mdl, t, b) >= energy_bounds[t, b][0]*mdl.regenerating[t, b])
 
     # -----------------------------------------------------------------------
     # Session start detection
@@ -819,6 +893,7 @@ def solve_optimization(
 
         battery_results[bus.shift_id] = {
             "shift_name": bus.shift_name,
+            "reference_packs": bus.reference_packs,
             "base_packs": int(min_packs[b_idx]),
             "optimized_packs": np_val,
             "excess_packs": ne_val,
@@ -869,6 +944,8 @@ def solve_optimization(
         per_bus_summary.append({
             "shift_id": bus.shift_id,
             "shift_name": bus.shift_name,
+            "reference_packs": bus.reference_packs,
+            "optimized_packs": battery_results[bus.shift_id]["optimized_packs"],
             "min_soc_kwh": float(np.min(soc_val[:, b_idx])),
             "max_soc_kwh": float(np.max(soc_val[:, b_idx])),
             "total_charged_kwh": float(np.sum(power_val[:, b_idx]) * dt),

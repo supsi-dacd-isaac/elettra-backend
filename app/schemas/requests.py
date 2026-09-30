@@ -460,6 +460,10 @@ class OptimizationRequest(BaseModel):
             "they must match it. If omitted, predictions are auto-created."
         ),
     )
+    reference_prediction_run_ids: Optional[dict[UUID, UUID]] = Field(
+        default=None,
+        description="One reference prediction per shift; prediction_run_ids remains the comparison catalogue.",
+    )
     prediction_params: Optional[PredictionParams] = Field(
         default=None,
         description="Parameters for auto-prediction (required when prediction_run_ids is not given).",
@@ -522,6 +526,7 @@ class OptimizationRequest(BaseModel):
     # Solver parameters
     solver_name: str = Field(default="highs", examples=["highs"])
     max_solver_time_seconds: Optional[int] = Field(default=None, examples=[300])
+    optimization_time_budget_seconds: int = Field(default=900, ge=1, le=3600)
     mip_rel_gap: Optional[float] = Field(default=None, examples=[0.01])
     mip_abs_gap: Optional[float] = Field(default=None, examples=[0.0])
     feasibility_tol: Optional[float] = Field(default=None, examples=[1e-6])
@@ -539,6 +544,16 @@ class OptimizationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_fields(self):
+        if not self.shift_ids or len(set(self.shift_ids)) != len(self.shift_ids):
+            raise ValueError("shift_ids must be non-empty and unique")
+        if self.reference_prediction_run_ids:
+            if set(self.reference_prediction_run_ids) != set(self.shift_ids):
+                raise ValueError("reference_prediction_run_ids must cover exactly the selected shifts")
+            if not set(self.reference_prediction_run_ids.values()) <= set(self.prediction_run_ids or []):
+                raise ValueError("References must belong to prediction_run_ids")
+        if self.mode == "charging_only" and not self.prediction_run_ids:
+            if self.prediction_params is None or self.prediction_params.num_battery_packs is None:
+                raise ValueError("charging_only requires an explicit battery pack count")
         if self.mode == "joint" and self.battery_cost_per_kwh is None:
             raise ValueError("battery_cost_per_kwh is required for joint mode")
         if self.mode in ("charging_only", "joint"):

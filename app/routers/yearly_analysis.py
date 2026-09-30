@@ -270,6 +270,18 @@ def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
     }
 
 
+def _require_verified_optimization(run: OptimizationRuns, user_id: UUID) -> None:
+    from simulation.optimization_contract import result_integrity
+    if str(run.user_id) != str(user_id):
+        raise HTTPException(status_code=403, detail="Optimization run belongs to another user")
+    audit = result_integrity(run.results, (run.input_params or {}).get("shift_ids"))
+    if run.status != "completed" or not audit["yearly_eligible"]:
+        raise HTTPException(status_code=409, detail={
+            "code": "optimization_not_verified", "integrity_status": audit["status"],
+            "message": "Create a verified physical-shift optimization before starting a new yearly analysis.",
+        })
+
+
 async def _load_optimization_run_for_capex(
     db: AsyncSession,
     yearly_analysis_id: UUID,
@@ -555,6 +567,7 @@ async def create_yearly_analysis(
         opt_run = await db.get(OptimizationRuns, payload.optimization_run_id)
         if opt_run is None:
             raise HTTPException(status_code=404, detail="Optimization run not found")
+        _require_verified_optimization(opt_run, current_user.id)
 
     obj = YearlyAnalysis(**payload.model_dump(exclude_unset=True))
     db.add(obj)
@@ -674,6 +687,8 @@ async def update_yearly_analysis(
         opt_run = await db.get(OptimizationRuns, update_data["optimization_run_id"])
         if opt_run is None:
             raise HTTPException(status_code=404, detail="Optimization run not found")
+        if update_data["optimization_run_id"] != obj.optimization_run_id:
+            _require_verified_optimization(opt_run, current_user.id)
 
     for field, value in update_data.items():
         setattr(obj, field, value)

@@ -36,6 +36,8 @@ from simulation.optimization_model import (
     TripData,
     solve_optimization,
 )
+from simulation.optimization_contract import CONTRACT_VERSION, pack_count, select_references
+from simulation.optimization_verification import optimize_and_verify
 from app.services.runtime_release import PredictionStack, resolve_prediction_selection
 
 logger = logging.getLogger(__name__)
@@ -180,6 +182,7 @@ async def ensure_predictions(
             select(PredictionRuns).where(
                 and_(
                     PredictionRuns.shift_id == shift_id,
+                    PredictionRuns.user_id == user_id,
                     PredictionRuns.bus_model_id == resolved_model_id,
                     PredictionRuns.model_name == prediction_params["model_name"],
                     PredictionRuns.prediction_stack == selected_stack.stack.value,
@@ -259,7 +262,7 @@ async def ensure_predictions(
             db=db,
             prediction_run_id=run.id,
             quantiles=prediction_params.get("quantiles", [0.05, 0.5, 0.95]),
-            num_battery_packs=prediction_params.get("num_battery_packs"),
+            num_battery_packs=effective_packs,
         )
         await db.refresh(run)
         if run.status != "completed":
@@ -335,6 +338,7 @@ async def prepare_optimization_input(
     db: AsyncSession,
     optimization_run: OptimizationRuns,
     prediction_run_ids: list[UUID],
+    *, reference_ids: dict[str, str] | None = None,
 ) -> tuple[list[BusData], list[StationData], OptimizationConfig]:
     """Load all data from DB and build structured inputs for the solver."""
     params = optimization_run.input_params
@@ -388,6 +392,35 @@ async def prepare_optimization_input(
             raise ValueError(f"Prediction run {pred_run_id} not found")
         prediction_runs.append(pred_run)
     _prediction_provenance(prediction_runs)
+    selected = select_references(
+        prediction_runs, params["shift_ids"], mode=optimization_run.mode,
+        user_id=optimization_run.user_id,
+        explicit=reference_ids or params.get("reference_prediction_run_ids"),
+    )
+    # Compare the complete ordered occurrence sequence, not just unique trips.
+    # This rejects stale/partial catalogues and preserves repeated trip IDs.
+    trip_predictions = {}
+    expected_by_shift = {}
+    for pred in prediction_runs:
+        sid = str(pred.shift_id)
+        if sid not in expected_by_shift:
+            rows = await db.execute(select(ShiftsStructures).where(
+                ShiftsStructures.shift_id == pred.shift_id
+            ).order_by(ShiftsStructures.sequence_number))
+            expected_by_shift[sid] = [(r.sequence_number, str(r.trip_id)) for r in rows.scalars().all()]
+        rows = await db.execute(select(TripPredictions).where(
+            TripPredictions.prediction_run_id == pred.id
+        ).order_by(TripPredictions.sequence_number))
+        predictions = list(rows.scalars().all())
+        if not predictions or [(r.sequence_number, str(r.trip_id)) for r in predictions] != expected_by_shift[sid]:
+            raise ValueError(f"Prediction {pred.id} does not cover the current complete shift sequence")
+        for row in predictions:
+            energy = _get_consumption_value(row, quantile_consumption)
+            sensitivity = row.mass_sensitivity_kwh_per_kwh_batt
+            if sensitivity is None or not math.isfinite(float(sensitivity)) or not math.isfinite(energy):
+                raise ValueError(f"Prediction {pred.id} has missing or non-finite energy/mass sensitivity")
+        trip_predictions[str(pred.id)] = predictions
+    prediction_runs = list(selected.values())
 
     explicit_bus_model_id: UUID | None = optimization_run.bus_model_id
     if explicit_bus_model_id is not None:
@@ -441,19 +474,16 @@ async def prepare_optimization_input(
         max_charging_power = float(specs.get("max_charging_power_kw", 450))
 
         ctx = pred_run.contextual_parameters or {}
-        ref_packs = ctx.get("num_battery_packs", min_packs_spec)
-        ref_capacity = ctx.get("battery_capacity_kwh", ref_packs * pack_size)
+        ref_packs = pack_count(pred_run)
+        ref_capacity = ctx.get("battery_capacity_kwh")
+        if ref_capacity is None or not math.isclose(float(ref_capacity), ref_packs * pack_size, abs_tol=1e-6):
+            raise ValueError("Prediction capacity does not match the physical bus model")
 
         configured_capacity = max_packs_spec * pack_size
         battery_offset = configured_capacity - ref_capacity
 
         # Load trip predictions
-        tp_result = await db.execute(
-            select(TripPredictions)
-            .where(TripPredictions.prediction_run_id == pred_run.id)
-            .order_by(TripPredictions.sequence_number)
-        )
-        trip_preds = tp_result.scalars().all()
+        trip_preds = trip_predictions[str(pred_run.id)]
 
         trip_data_list: list[TripData] = []
         for tp in trip_preds:
@@ -464,20 +494,20 @@ async def prepare_optimization_input(
             )
             stop_times = stop_times_result.scalars().all()
             if not stop_times:
-                continue
+                raise ValueError(f"Trip {tp.trip_id} has no stop times")
 
             first_st = stop_times[0]
             last_st = stop_times[-1]
             dep_min = _time_str_to_minutes(first_st.departure_time)
             arr_min = _time_str_to_minutes(last_st.arrival_time)
             if dep_min is None or arr_min is None:
-                continue
+                raise ValueError(f"Trip {tp.trip_id} has invalid stop times")
 
             end_stop_id = str(last_st.stop_id)
             end_station_idx = station_stop_id_to_idx.get(end_stop_id, -1)
 
             consumption = _get_consumption_value(tp, quantile_consumption)
-            sensitivity = float(tp.mass_sensitivity_kwh_per_kwh_batt or 0.0)
+            sensitivity = float(tp.mass_sensitivity_kwh_per_kwh_batt)
 
             trip_data_list.append(TripData(
                 trip_id=str(tp.trip_id),
@@ -571,17 +601,24 @@ async def run_optimization(
                 raise ValueError(f"Prediction run {prediction_run_id} not found")
             provenance_runs.append(prediction_run)
         prediction_provenance = _prediction_provenance(provenance_runs)
+        initial = select_references(
+            provenance_runs, params["shift_ids"], mode=run.mode, user_id=run.user_id,
+            explicit=params.get("reference_prediction_run_ids"),
+        )
+        initial_ids = {sid: str(pred.id) for sid, pred in initial.items()}
         quantile_consumption = str(
             (run.input_params or {}).get("quantile_consumption", "mean")
         )
         prediction_components = await _prediction_component_summary(
             db,
-            prediction_run_ids,
+            [pred.id for pred in initial.values()],
             solver_consumption=quantile_consumption,
         )
         persisted_params = dict(run.input_params or {})
         persisted_params["prediction_provenance"] = prediction_provenance
         persisted_params["prediction_component_breakdown"] = prediction_components
+        persisted_params["optimization_contract_version"] = CONTRACT_VERSION
+        persisted_params["reference_prediction_run_ids"] = initial_ids
         run.input_params = persisted_params
         await db.commit()
 
@@ -590,11 +627,60 @@ async def run_optimization(
             db, run, prediction_run_ids,
         )
 
-        result: OptimizationResult = await asyncio.to_thread(
-            solve_optimization, buses, stations, opt_config,
+        async def load_exact(packs):
+            exact_ids = {}
+            for sid, count in packs.items():
+                candidates = [pred for pred in provenance_runs
+                              if str(pred.shift_id) == sid and pack_count(pred) == count]
+                if candidates:
+                    pred = max(candidates, key=lambda item: str(item.id))
+                else:
+                    ref = initial[sid]
+                    created = await ensure_predictions(
+                        db, run.user_id, [ref.shift_id], ref.bus_model_id,
+                        {"model_name": ref.model_name, "prediction_stack": ref.prediction_stack,
+                         "external_temp_celsius": ref.external_temp_celsius,
+                         "occupancy_percent": ref.occupancy_percent,
+                         "auxiliary_heating_type": ref.auxiliary_heating_type,
+                         "quantiles": (ref.contextual_parameters or {}).get("quantiles", [0.05, 0.5, 0.95]),
+                         "num_battery_packs": count},
+                    )
+                    pred = await db.get(PredictionRuns, created[0])
+                    provenance_runs.append(pred)
+                    prediction_run_ids.append(pred.id)
+                    run.prediction_run_ids = [str(pid) for pid in prediction_run_ids]
+                    await db.commit()
+                exact_ids[sid] = str(pred.id)
+            exact_buses, _, _ = await prepare_optimization_input(
+                db, run, [UUID(pid) for pid in exact_ids.values()], reference_ids=exact_ids,
+            )
+            return exact_buses, exact_ids
+
+        async def progress(state):
+            run.results = {"contract_version": CONTRACT_VERSION,
+                           "forecast_verification": {"status": "running", **state}}
+            await db.commit()
+
+        result, verification = await optimize_and_verify(
+            buses, stations, opt_config, load_exact,
+            time_budget_seconds=params.get("optimization_time_budget_seconds", 900),
+            on_progress=progress,
         )
+        selected_ids = verification["final_reference_prediction_run_ids"] or initial_ids
+        selected_runs = [pred for pred in provenance_runs if str(pred.id) in selected_ids.values()]
+        prediction_provenance = _prediction_provenance(selected_runs)
+        prediction_components = await _prediction_component_summary(
+            db, [pred.id for pred in selected_runs], solver_consumption=quantile_consumption,
+        )
+        run.input_params = {**run.input_params,
+                            "prediction_component_breakdown": prediction_components,
+                            "prediction_provenance": prediction_provenance}
 
         run.results = {
+            "contract_version": CONTRACT_VERSION,
+            "initial_reference_prediction_run_ids": initial_ids,
+            "selected_prediction_run_ids": selected_ids,
+            "forecast_verification": verification,
             "objective_value": result.objective_value,
             "solver_status": result.solver_status,
             "solve_time_seconds": result.solve_time_seconds,
