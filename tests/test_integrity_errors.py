@@ -67,7 +67,6 @@ def test_fk_violation_returns_409(client: TestClient):
     payload = {"user_id": user_id, "name": "FKTestBus", "specs": {}, "bus_model_id": bogus_model_id}
     r = client.post(f"{API_BASE}/buses/", json=payload, headers=_hdrs(token))
 
-    # Our endpoint validates model existence and returns 400, so the global handler
-    # might not trigger here. If validation changes, FK violation should map to 409.
-    assert r.status_code in (400, 409), f"unexpected status {r.status_code}: {r.text}"
-
+    # Ownership-aware reference validation deliberately uses the same 404 for
+    # a missing model and a model owned by another user.
+    assert r.status_code == 404, f"unexpected status {r.status_code}: {r.text}"

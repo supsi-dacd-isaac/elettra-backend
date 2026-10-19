@@ -31,6 +31,15 @@ from app.models import (
     BusesManufacturers, BusesModelsRefs,
 )
 from app.core.auth import get_current_user
+from app.core.ownership import (
+    get_owned_bus,
+    get_owned_bus_model,
+    get_owned_depot,
+    get_owned_shift,
+    require_accessible_gtfs_trips,
+    require_current_user_id,
+    shift_trips_accessible_filter,
+)
 from app.core.shift_distance import (
     RecurrenceType,
     compute_shift_yearly_distance,
@@ -84,7 +93,7 @@ async def read_bus_models(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    base_query = select(BusesModels)
+    base_query = select(BusesModels).where(BusesModels.user_id == current_user.id)
 
     total = await db.scalar(
         select(func.count()).select_from(base_query.subquery())
@@ -110,19 +119,15 @@ async def read_bus_models(
 
 @router.get("/bus-models/{model_id}", response_model=BusesModelsRead)
 async def read_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    bus_model = await db.get(BusesModels, model_id)
-    if bus_model is None:
-        raise HTTPException(status_code=404, detail="Bus model not found")
-    return bus_model
+    return await get_owned_bus_model(db, model_id, current_user.id)
 
 
 @router.post("/bus-models/", response_model=BusesModelsRead)
 async def create_bus_model(bus_model: BusModelCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate user exists
-    user = await db.get(Users, bus_model.user_id)
-    if user is None:
-        raise HTTPException(status_code=400, detail="User not found")
-    db_bus_model = BusesModels(**bus_model.model_dump(exclude_unset=True))
+    require_current_user_id(bus_model.user_id, current_user.id)
+    create_data = bus_model.model_dump(exclude_unset=True)
+    create_data["user_id"] = current_user.id
+    db_bus_model = BusesModels(**create_data)
     db.add(db_bus_model)
     await db.commit()
     await db.refresh(db_bus_model)
@@ -130,16 +135,12 @@ async def create_bus_model(bus_model: BusModelCreateRequest, db: AsyncSession = 
 
 @router.put("/bus-models/{model_id}", response_model=BusesModelsRead)
 async def update_bus_model(model_id: UUID, bus_model_update: BusModelUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_bus_model = await db.get(BusesModels, model_id)
-    if db_bus_model is None:
-        raise HTTPException(status_code=404, detail="Bus model not found")
+    db_bus_model = await get_owned_bus_model(db, model_id, current_user.id)
 
     update_data = bus_model_update.model_dump(exclude_unset=True, exclude={'id'})
-    # Validate user if being changed
     if 'user_id' in update_data:
-        user = await db.get(Users, update_data['user_id'])
-        if user is None:
-            raise HTTPException(status_code=400, detail="User not found")
+        require_current_user_id(update_data['user_id'], current_user.id)
+        update_data.pop('user_id')
     for field, value in update_data.items():
         setattr(db_bus_model, field, value)
 
@@ -150,9 +151,7 @@ async def update_bus_model(model_id: UUID, bus_model_update: BusModelUpdateReque
 
 @router.delete("/bus-models/{model_id}")
 async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_bus_model = await db.get(BusesModels, model_id)
-    if db_bus_model is None:
-        raise HTTPException(status_code=404, detail="Bus model not found")
+    db_bus_model = await get_owned_bus_model(db, model_id, current_user.id)
     await db.delete(db_bus_model)
     await db.commit()
     return {"message": "Bus model deleted successfully"}
@@ -163,31 +162,30 @@ async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_
 
 @router.get("/buses/", response_model=List[BusesRead])
 async def read_buses(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    result = await db.execute(select(Buses).offset(skip).limit(limit))
+    result = await db.execute(
+        select(Buses)
+        .where(Buses.user_id == current_user.id)
+        .offset(skip)
+        .limit(limit)
+    )
     buses = result.scalars().all()
     return buses
 
 
 @router.get("/buses/{bus_id}", response_model=BusesRead)
 async def read_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    bus = await db.get(Buses, bus_id)
-    if bus is None:
-        raise HTTPException(status_code=404, detail="Bus not found")
-    return bus
+    return await get_owned_bus(db, bus_id, current_user.id)
 
 
 @router.post("/buses/", response_model=BusesRead)
 async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate user
-    user = await db.get(Users, bus.user_id)
-    if user is None:
-        raise HTTPException(status_code=400, detail="User not found")
+    require_current_user_id(bus.user_id, current_user.id)
     # Validate bus model if provided
     if bus.bus_model_id is not None:
-        bm = await db.get(BusesModels, bus.bus_model_id)
-        if bm is None:
-            raise HTTPException(status_code=400, detail="Bus model not found")
-    db_bus = Buses(**bus.model_dump(exclude_unset=True))
+        await get_owned_bus_model(db, bus.bus_model_id, current_user.id)
+    create_data = bus.model_dump(exclude_unset=True)
+    create_data["user_id"] = current_user.id
+    db_bus = Buses(**create_data)
     db.add(db_bus)
     await db.commit()
     await db.refresh(db_bus)
@@ -195,19 +193,13 @@ async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_sess
 
 @router.put("/buses/{bus_id}", response_model=BusesRead)
 async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_bus = await db.get(Buses, bus_id)
-    if db_bus is None:
-        raise HTTPException(status_code=404, detail="Bus not found")
+    db_bus = await get_owned_bus(db, bus_id, current_user.id)
     update_data = bus_update.model_dump(exclude_unset=True, exclude={'id'})
-    # Validate foreign keys if changing
     if 'user_id' in update_data:
-        user = await db.get(Users, update_data['user_id'])
-        if user is None:
-            raise HTTPException(status_code=400, detail="User not found")
+        require_current_user_id(update_data['user_id'], current_user.id)
+        update_data.pop('user_id')
     if 'bus_model_id' in update_data and update_data['bus_model_id'] is not None:
-        bm = await db.get(BusesModels, update_data['bus_model_id'])
-        if bm is None:
-            raise HTTPException(status_code=400, detail="Bus model not found")
+        await get_owned_bus_model(db, update_data['bus_model_id'], current_user.id)
     for field, value in update_data.items():
         setattr(db_bus, field, value)
     await db.commit()
@@ -217,9 +209,7 @@ async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = D
 
 @router.delete("/buses/{bus_id}")
 async def delete_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_bus = await db.get(Buses, bus_id)
-    if db_bus is None:
-        raise HTTPException(status_code=404, detail="Bus not found")
+    db_bus = await get_owned_bus(db, bus_id, current_user.id)
     await db.delete(db_bus)
     await db.commit()
     return {"message": "Bus deleted successfully"}
@@ -235,11 +225,9 @@ def _validate_coords(lat: Optional[float], lon: Optional[float]):
 # Depot endpoints (authenticated users only)
 @router.post("/depots/", response_model=DepotReadWithLocation)
 async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate coords and user
+    # Validate coords and bind ownership to the authenticated user.
     _validate_coords(depot.latitude, depot.longitude)
-    user = await db.get(Users, depot.user_id)
-    if user is None:
-        raise HTTPException(status_code=400, detail="User not found")
+    require_current_user_id(depot.user_id, current_user.id)
 
     # 1) Create GTFS stop for this depot
     generated_stop_id = f"depot_{uuid4()}"
@@ -255,7 +243,7 @@ async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get
 
     # 2) Create depot referencing the stop
     db_depot = Depots(
-        user_id=depot.user_id,
+        user_id=current_user.id,
         name=depot.name,
         address=depot.address,
         features=depot.features,
@@ -284,6 +272,7 @@ async def read_depots(skip: int = 0, limit: int = 100, db: AsyncSession = Depend
     result = await db.execute(
         select(Depots, GtfsStops.stop_lat, GtfsStops.stop_lon)
         .join(GtfsStops, Depots.stop_id == GtfsStops.id, isouter=True)
+        .where(Depots.user_id == current_user.id)
         .offset(skip).limit(limit)
     )
     rows = result.all()
@@ -307,7 +296,7 @@ async def read_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_sessio
     result = await db.execute(
         select(Depots, GtfsStops.stop_lat, GtfsStops.stop_lon)
         .join(GtfsStops, Depots.stop_id == GtfsStops.id, isouter=True)
-        .filter(Depots.id == depot_id)
+        .filter(Depots.id == depot_id, Depots.user_id == current_user.id)
     )
     row = result.first()
     if row is None:
@@ -327,9 +316,7 @@ async def read_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_sessio
 
 @router.put("/depots/{depot_id}", response_model=DepotReadWithLocation)
 async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_depot = await db.get(Depots, depot_id)
-    if db_depot is None:
-        raise HTTPException(status_code=404, detail="Depot not found")
+    db_depot = await get_owned_depot(db, depot_id, current_user.id)
 
     update_data = depot_update.model_dump(exclude_unset=True)
 
@@ -389,9 +376,7 @@ async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: Asy
 
 @router.delete("/depots/{depot_id}")
 async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_depot = await db.get(Depots, depot_id)
-    if db_depot is None:
-        raise HTTPException(status_code=404, detail="Depot not found")
+    db_depot = await get_owned_depot(db, depot_id, current_user.id)
     
     await db.delete(db_depot)
     await db.commit()
@@ -401,20 +386,17 @@ async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_sess
 # Shifts endpoints (authenticated users only)
 @router.post("/shifts/", response_model=ShiftReadWithStructure)
 async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    # Validate bus if provided
     bus_id = payload.bus_id
-    if bus_id is not None:
-        bus = await db.get(Buses, bus_id)
-        if bus is None:
-            raise HTTPException(status_code=400, detail="Bus not found")
+    if bus_id is None:
+        raise HTTPException(status_code=422, detail="A user-owned bus is required")
+    await get_owned_bus(db, bus_id, current_user.id)
 
     trip_ids = payload.trip_ids or []
     if not trip_ids:
         raise HTTPException(status_code=400, detail="trip_ids must be a non-empty list")
-    trips = (await db.execute(select(GtfsTrips.id).where(GtfsTrips.id.in_(trip_ids)))).scalars().all()
-    missing = set(trip_ids) - set(trips)
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Trips not found: {', '.join(str(x) for x in missing)}")
+    await require_accessible_gtfs_trips(
+        db, trip_ids, current_user.id, current_user.company_id
+    )
 
     db_shift = Shifts(name=payload.name, bus_id=bus_id)
     db.add(db_shift)
@@ -456,7 +438,12 @@ async def list_shifts(
     base_query = (
         select(Shifts)
         .join(Buses)
-        .where(Buses.user_id == current_user.id)
+        .where(
+            Buses.user_id == current_user.id,
+            shift_trips_accessible_filter(
+                current_user.id, current_user.company_id
+            ),
+        )
     )
     if bus_id is not None:
         base_query = base_query.where(Shifts.bus_id == bus_id)
@@ -505,22 +492,21 @@ async def list_shifts(
     )
 
 
-async def _get_shift_if_owned(shift_id: UUID, user_id: UUID, db: AsyncSession) -> Shifts:
+async def _get_shift_if_owned(
+    shift_id: UUID,
+    user_id: UUID,
+    company_id: UUID,
+    db: AsyncSession,
+) -> Shifts:
     """Fetch a shift and verify the current user owns it (via bus). Raises 404 if not found or not owned."""
-    result = await db.execute(
-        select(Shifts)
-        .join(Buses)
-        .where(Shifts.id == shift_id, Buses.user_id == user_id)
-    )
-    shift = result.scalar_one_or_none()
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
-    return shift
+    return await get_owned_shift(db, shift_id, user_id, company_id)
 
 
 @router.get("/shifts/{shift_id}", response_model=ShiftReadWithStructure)
 async def read_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    shift = await _get_shift_if_owned(shift_id, current_user.id, db)
+    shift = await _get_shift_if_owned(
+        shift_id, current_user.id, current_user.company_id, db
+    )
     rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id).order_by(ShiftsStructures.sequence_number))).scalars().all()
     structure = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in rows]
     return ShiftReadWithStructure(id=shift.id, name=shift.name, bus_id=shift.bus_id, structure=structure)
@@ -534,7 +520,9 @@ async def shift_info(shift_id: UUID, db: AsyncSession = Depends(get_async_sessio
     - Days of the week (from trip service/calendar)
     - All trips with their details
     """
-    shift = await _get_shift_if_owned(shift_id, current_user.id, db)
+    shift = await _get_shift_if_owned(
+        shift_id, current_user.id, current_user.company_id, db
+    )
 
     # Get all trips with their routes and calendars via shift_structures
     result = await db.execute(
@@ -607,15 +595,16 @@ async def shift_info(shift_id: UUID, db: AsyncSession = Depends(get_async_sessio
 
 @router.put("/shifts/{shift_id}", response_model=ShiftReadWithStructure)
 async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    shift = await _get_shift_if_owned(shift_id, current_user.id, db)
+    shift = await _get_shift_if_owned(
+        shift_id, current_user.id, current_user.company_id, db
+    )
 
     update_data = payload.model_dump(exclude_unset=True)
 
-    if 'bus_id' in update_data and update_data['bus_id'] is not None:
-        # Ensure the new bus also belongs to the current user
-        bus = await db.execute(select(Buses).where(Buses.id == update_data['bus_id'], Buses.user_id == current_user.id))
-        if bus.scalar_one_or_none() is None:
-            raise HTTPException(status_code=400, detail="Bus not found")
+    if 'bus_id' in update_data:
+        if update_data['bus_id'] is None:
+            raise HTTPException(status_code=422, detail="A user-owned bus is required")
+        await get_owned_bus(db, update_data['bus_id'], current_user.id)
 
     if 'name' in update_data:
         shift.name = update_data['name']
@@ -624,10 +613,9 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
 
     if 'trip_ids' in update_data:
         trip_ids = update_data['trip_ids'] or []
-        trips = (await db.execute(select(GtfsTrips.id).where(GtfsTrips.id.in_(trip_ids)))).scalars().all() if trip_ids else []
-        missing = set(trip_ids) - set(trips)
-        if missing:
-            raise HTTPException(status_code=400, detail=f"Trips not found: {', '.join(str(x) for x in missing)}")
+        await require_accessible_gtfs_trips(
+            db, trip_ids, current_user.id, current_user.company_id
+        )
 
         await db.execute(delete(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id))
 
@@ -645,7 +633,9 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
 
 @router.delete("/shifts/{shift_id}")
 async def delete_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    shift = await _get_shift_if_owned(shift_id, current_user.id, db)
+    shift = await _get_shift_if_owned(
+        shift_id, current_user.id, current_user.company_id, db
+    )
     await db.execute(delete(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id))
     await db.delete(shift)
     await db.commit()
@@ -690,7 +680,14 @@ async def get_shift_yearly_distance(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    info = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    info = await compute_shift_yearly_distance(
+        shift_id,
+        recurrence,
+        custom_days,
+        db,
+        owner_id=current_user.id,
+        company_id=current_user.company_id,
+    )
 
     trips = [
         ShiftTripDistance(
@@ -713,4 +710,3 @@ async def get_shift_yearly_distance(
         yearly_distance_km=info.yearly_distance_km,
         trips=trips,
     )
-

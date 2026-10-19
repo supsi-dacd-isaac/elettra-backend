@@ -173,7 +173,7 @@ def test_create_depot_invalid_user_id(client, record):
     headers = get_auth_headers(token)
     response = client.post(f"{API_BASE}/depots/", json=depot_data, headers=headers)
     
-    record("create_depot_invalid_user", response.status_code == 400, f"status={response.status_code}")
+    record("create_depot_for_other_user_denied", response.status_code == 403, f"status={response.status_code}")
 
 def test_create_depot_missing_required_fields(client, record):
     """Test depot creation with missing required fields"""

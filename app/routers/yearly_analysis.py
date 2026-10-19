@@ -57,6 +57,12 @@ from app.models import (
     YearlyAnalysis, OptimizationRuns, PredictionRuns, Users,
 )
 from app.core.auth import get_current_user
+from app.core.ownership import (
+    get_owned_optimization_run,
+    get_owned_yearly_analysis,
+    stamp_yearly_analysis_owner,
+    yearly_analysis_owned_filter,
+)
 from app.core.config import get_cached_settings
 from app.services.yearly_weather_recalculation import (
     AnalysisWeatherResolutionError,
@@ -288,9 +294,7 @@ async def _load_optimization_run_for_capex(
     yearly_analysis_id: UUID,
     current_user: Users,
 ) -> OptimizationRuns:
-    ya = await db.get(YearlyAnalysis, yearly_analysis_id)
-    if ya is None:
-        raise HTTPException(status_code=404, detail="Yearly analysis not found")
+    ya = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
     if ya.optimization_run_id is None:
         raise HTTPException(
             status_code=422,
@@ -300,17 +304,9 @@ async def _load_optimization_run_for_capex(
             ),
         )
 
-    opt_run = await db.get(OptimizationRuns, ya.optimization_run_id)
-    if opt_run is None:
-        raise HTTPException(
-            status_code=409,
-            detail="Linked optimization run not found.",
-        )
-    if str(opt_run.user_id) != str(current_user.id):
-        raise HTTPException(
-            status_code=403,
-            detail="Linked optimization run is not accessible to the current user.",
-        )
+    opt_run = await get_owned_optimization_run(
+        db, ya.optimization_run_id, current_user.id
+    )
     if opt_run.status != "completed":
         raise HTTPException(
             status_code=409,
@@ -565,9 +561,9 @@ async def create_yearly_analysis(
 ):
     """Create a new yearly analysis, optionally linked to an optimization run."""
     if payload.optimization_run_id is not None:
-        opt_run = await db.get(OptimizationRuns, payload.optimization_run_id)
-        if opt_run is None:
-            raise HTTPException(status_code=404, detail="Optimization run not found")
+        opt_run = await get_owned_optimization_run(
+            db, payload.optimization_run_id, current_user.id
+        )
         _require_verified_optimization(opt_run, current_user.id)
 
     obj = YearlyAnalysis(**payload.model_dump(exclude_unset=True))
@@ -578,6 +574,7 @@ async def create_yearly_analysis(
         "lca_methodology": METHOD, "mobitool_data_version": catalog()["data_version"],
         "charging_power_boundary": "DC delivered to the bus",
     }}
+    obj.features = stamp_yearly_analysis_owner(obj.features, current_user.id)
     db.add(obj)
     try:
         await db.flush()
@@ -631,10 +628,8 @@ async def list_yearly_analyses(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    base_query = (
-        select(YearlyAnalysis)
-        .join(OptimizationRuns, YearlyAnalysis.optimization_run_id == OptimizationRuns.id)
-        .where(OptimizationRuns.user_id == current_user.id)
+    base_query = select(YearlyAnalysis).where(
+        yearly_analysis_owned_filter(current_user.id)
     )
     if optimization_run_id is not None:
         base_query = base_query.where(YearlyAnalysis.optimization_run_id == optimization_run_id)
@@ -671,10 +666,7 @@ async def get_yearly_analysis(
     current_user: Users = Depends(get_current_user),
 ):
     """Get a yearly analysis by ID."""
-    obj = await db.get(YearlyAnalysis, yearly_analysis_id)
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Yearly analysis not found")
-    return obj
+    return await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
 
 
 @router.patch("/{yearly_analysis_id}", response_model=YearlyAnalysisRead)
@@ -685,21 +677,20 @@ async def update_yearly_analysis(
     current_user: Users = Depends(get_current_user),
 ):
     """Partially update a yearly analysis."""
-    obj = await db.get(YearlyAnalysis, yearly_analysis_id)
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Yearly analysis not found")
+    obj = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
 
     update_data = payload.model_dump(exclude_unset=True)
 
     if "optimization_run_id" in update_data and update_data["optimization_run_id"] is not None:
-        opt_run = await db.get(OptimizationRuns, update_data["optimization_run_id"])
-        if opt_run is None:
-            raise HTTPException(status_code=404, detail="Optimization run not found")
+        opt_run = await get_owned_optimization_run(
+            db, update_data["optimization_run_id"], current_user.id
+        )
         if update_data["optimization_run_id"] != obj.optimization_run_id:
             _require_verified_optimization(opt_run, current_user.id)
 
     for field, value in update_data.items():
         setattr(obj, field, value)
+    obj.features = stamp_yearly_analysis_owner(obj.features, current_user.id)
 
     try:
         scenarios = (obj.features or {}).get("scenarios") or []
@@ -753,9 +744,7 @@ async def delete_yearly_analysis(
     current_user: Users = Depends(get_current_user),
 ):
     """Delete a yearly analysis."""
-    obj = await db.get(YearlyAnalysis, yearly_analysis_id)
-    if obj is None:
-        raise HTTPException(status_code=404, detail="Yearly analysis not found")
+    obj = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
     await db.delete(obj)
     await db.commit()
     return {"message": "Yearly analysis deleted successfully"}
@@ -1089,9 +1078,7 @@ async def get_yearly_energy_summary(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    ya = await db.get(YearlyAnalysis, yearly_analysis_id)
-    if ya is None:
-        raise HTTPException(status_code=404, detail="Yearly analysis not found")
+    ya = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
 
     pred_runs = await _load_prediction_runs(db, yearly_analysis_id)
     if not pred_runs:
@@ -1119,9 +1106,7 @@ async def compute_and_store_yearly_energy_summary(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    ya = await db.get(YearlyAnalysis, yearly_analysis_id)
-    if ya is None:
-        raise HTTPException(status_code=404, detail="Yearly analysis not found")
+    ya = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
 
     pred_runs = await _load_prediction_runs(db, yearly_analysis_id)
     if not pred_runs:
@@ -1330,6 +1315,7 @@ async def get_yearly_costs(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
     # -- Validate CAPEX prerequisites -----------------------------------
     optimization_capex_inputs: dict[str, float] | None = None
     if include_capex and capex_source == "manual":
@@ -1651,9 +1637,7 @@ async def get_yearly_lca(
     from app.services.parameterized_lca import (
         METHOD, LcaIncomplete, MobitoolClient, build_vehicles, evaluate_fleet,
     )
-    ya = await db.get(YearlyAnalysis, yearly_analysis_id)
-    if ya is None:
-        raise HTTPException(status_code=404, detail="Yearly analysis not found")
+    ya = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
     runs = await _load_prediction_runs(db, yearly_analysis_id)
     if not runs:
         raise HTTPException(status_code=409, detail="No prediction runs for yearly LCA")
@@ -1790,6 +1774,7 @@ async def get_yearly_emissions(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
     # -- 1. Fresh energy summary ----------------------------------------
     energy = await get_fresh_energy_summary(db, yearly_analysis_id)
     yt = energy["yearly_totals"]

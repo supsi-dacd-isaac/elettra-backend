@@ -28,7 +28,15 @@ from app.models import (
     GtfsStopsTimes, GtfsRoutes, ElevationProfileJobs,
     ElevationProfileCleanupJobs,
 )
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_admin
+from app.core.ownership import (
+    AUXILIARY_TRIP_OWNER_KEY,
+    get_accessible_gtfs_stop,
+    get_accessible_gtfs_trip,
+    get_agency_route,
+    gtfs_stop_accessible_filter,
+    gtfs_trip_accessible_filter,
+)
 from app.services.elevation_profiles import (
     ElevationProfileFormatError,
     ElevationProfileNotFoundError,
@@ -77,7 +85,11 @@ async def read_routes(
     # Resolve defaults: latest year, and within year latest file date
     resolved_year = gtfs_year
     if resolved_year is None:
-        res = await db.execute(select(func.max(GtfsRoutes.gtfs_year)))
+        res = await db.execute(
+            select(func.max(GtfsRoutes.gtfs_year)).where(
+                GtfsRoutes.agency_id == current_user.company_id
+            )
+        )
         resolved_year = res.scalar()
 
     if resolved_year is None:
@@ -86,7 +98,10 @@ async def read_routes(
     resolved_file_date = gtfs_file_date
     if resolved_file_date is None:
         res = await db.execute(
-            select(func.max(GtfsRoutes.gtfs_file_date)).filter(GtfsRoutes.gtfs_year == resolved_year)
+            select(func.max(GtfsRoutes.gtfs_file_date)).filter(
+                GtfsRoutes.agency_id == current_user.company_id,
+                GtfsRoutes.gtfs_year == resolved_year,
+            )
         )
         resolved_file_date = res.scalar()
 
@@ -96,6 +111,7 @@ async def read_routes(
     query = (
         select(GtfsRoutes)
         .filter(
+            GtfsRoutes.agency_id == current_user.company_id,
             GtfsRoutes.gtfs_year == resolved_year,
             GtfsRoutes.gtfs_file_date == resolved_file_date,
         )
@@ -109,13 +125,12 @@ async def read_routes(
 
 @router.get("/gtfs-routes/{route_id}", response_model=GtfsRoutesRead)
 async def read_route(route_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    route = await db.get(GtfsRoutes, route_id)
-    if route is None:
-        raise HTTPException(status_code=404, detail="Route not found")
-    return route
+    return await get_agency_route(db, route_id, current_user.company_id)
 
 @router.post("/gtfs-routes/", response_model=GtfsRoutesRead)
-async def create_route(route: GtfsRoutesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def create_route(route: GtfsRoutesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_admin)):
+    if route.agency_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Routes can only be created for the user's agency")
     db_route = GtfsRoutes(**route.model_dump(exclude_unset=True))
     db.add(db_route)
     await db.commit()
@@ -130,6 +145,8 @@ async def read_routes_by_agency(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    if agency_id != current_user.company_id:
+        raise HTTPException(status_code=404, detail="Agency not found")
     # Resolve defaults constrained to agency scope
     resolved_year = gtfs_year
     if resolved_year is None:
@@ -175,6 +192,8 @@ async def read_routes_by_agency_with_variant_1(
     current_user: Users = Depends(get_current_user),
 ):
     """Get all routes for an agency with variant number 1 data included"""
+    if agency_id != current_user.company_id:
+        raise HTTPException(status_code=404, detail="Agency not found")
     # Import settings here to avoid circular imports
     from app.core.config import get_cached_settings
     import os
@@ -298,6 +317,8 @@ async def read_routes_by_agency_with_largest_variant(
     current_user: Users = Depends(get_current_user),
 ):
     """Get all routes for an agency with the largest variant data included (based on elevation_data.csv file size)"""
+    if agency_id != current_user.company_id:
+        raise HTTPException(status_code=404, detail="Agency not found")
     # Import settings here to avoid circular imports
     from app.core.config import get_cached_settings
     import os
@@ -479,9 +500,15 @@ async def read_routes_by_stop(
     current_user: Users = Depends(get_current_user)
 ):
     """Get all unique GTFS routes for a given stop ID, optionally filtered by agency"""
-    base_filters = [GtfsStopsTimes.stop_id == stop_id]
-    if agency_id is not None:
-        base_filters.append(GtfsRoutes.agency_id == agency_id)
+    await get_accessible_gtfs_stop(
+        db, stop_id, current_user.id, current_user.company_id
+    )
+    if agency_id is not None and agency_id != current_user.company_id:
+        raise HTTPException(status_code=404, detail="Agency not found")
+    base_filters = [
+        GtfsStopsTimes.stop_id == stop_id,
+        GtfsRoutes.agency_id == current_user.company_id,
+    ]
 
     # Resolve defaults constrained to the stop (and optional agency) scope
     # Only use fallback logic when parameters are not explicitly provided
@@ -543,9 +570,11 @@ async def read_trips_by_route(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
+    await get_agency_route(db, route_id, current_user.company_id)
     query = select(GtfsTrips).filter(
         GtfsTrips.route_id == route_id,
-        GtfsTrips.status == status.value
+        GtfsTrips.status == status.value,
+        gtfs_trip_accessible_filter(current_user.id, current_user.company_id),
     )
 
     if day_of_week is not None:
@@ -594,7 +623,7 @@ def _ensure_gtfs_shape_in_configured_release(shape_id: str | None) -> None:
 
 
 @router.post("/gtfs-trips/", response_model=GtfsTripsRead)
-async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_admin)):
     if trip.status != TripStatus.GTFS.value:
         raise HTTPException(
             status_code=400,
@@ -604,6 +633,7 @@ async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_asyn
             ),
         )
 
+    await get_agency_route(db, trip.route_id, current_user.company_id)
     _ensure_gtfs_shape_in_configured_release(trip.shape_id)
     db_trip = GtfsTrips(**trip.model_dump(exclude_unset=True))
     db.add(db_trip)
@@ -614,15 +644,19 @@ async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_asyn
 
 @router.put("/gtfs-trips/{trip_pk}", response_model=GtfsTripsRead)
 async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_trip = await db.get(GtfsTrips, trip_pk)
-    if db_trip is None:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    db_trip = await get_accessible_gtfs_trip(
+        db, trip_pk, current_user.id, current_user.company_id
+    )
 
     update_data = trip_update.model_dump(exclude_unset=True, exclude={"id"})
+    if "route_id" in update_data and update_data["route_id"] is not None:
+        await get_agency_route(db, update_data["route_id"], current_user.company_id)
 
     current_status = (
         db_trip.status.value if hasattr(db_trip.status, "value") else str(db_trip.status)
     )
+    if current_status == TripStatus.GTFS.value and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only administrators can modify GTFS data")
 
     # Status determines the profile lifecycle and cannot be changed in-place.
     if "status" in update_data and update_data["status"] is not None:
@@ -663,15 +697,17 @@ async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSess
 
 @router.delete("/gtfs-trips/{trip_pk}")
 async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    db_trip = await db.get(GtfsTrips, trip_pk)
-    if db_trip is None:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    db_trip = await get_accessible_gtfs_trip(
+        db, trip_pk, current_user.id, current_user.company_id
+    )
 
     cleanup_objects: list[tuple[str, str]] = []
     cleanup_prefixes: list[tuple[str, str]] = []
     profile_job_id: str | None = None
     cleanup_available_at = datetime.now(timezone.utc)
     trip_status = db_trip.status.value if hasattr(db_trip.status, "value") else str(db_trip.status)
+    if trip_status == TripStatus.GTFS.value and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only administrators can modify GTFS data")
     if trip_status != "gtfs" and db_trip.shape_id:
         bucket = elevation_profiles_bucket()
         expected_output_object = f"{db_trip.shape_id}.parquet"
@@ -813,7 +849,10 @@ async def read_variants_by_route(route_id: UUID, db: AsyncSession = Depends(get_
         )
         .join(GtfsRoutes, Variants.route_id == GtfsRoutes.id)
         .join(GtfsAgencies, GtfsAgencies.id == current_user.company_id)
-        .filter(Variants.route_id == route_id)
+        .filter(
+            Variants.route_id == route_id,
+            GtfsRoutes.agency_id == current_user.company_id,
+        )
         .order_by(Variants.variant_num)
     )
     rows = result.all()
@@ -895,6 +934,7 @@ async def read_variant_by_route_and_number(route_id: UUID, variant_num: int, db:
         .join(GtfsAgencies, GtfsAgencies.id == current_user.company_id)
         .filter(
             Variants.route_id == route_id,
+            GtfsRoutes.agency_id == current_user.company_id,
             Variants.variant_num == variant_num
         )
     )
@@ -954,8 +994,11 @@ async def read_variant_by_route_and_number(route_id: UUID, variant_num: int, db:
 # GTFS Calendar endpoints (authenticated users only)
 @router.get("/gtfs-calendar/by-trip/{trip_id}", response_model=List[GtfsCalendarRead])
 async def read_calendar_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    trip = await get_accessible_gtfs_trip(
+        db, trip_id, current_user.id, current_user.company_id
+    )
     result = await db.execute(
-        select(GtfsCalendar).filter(GtfsCalendar.trip_id == trip_id)
+        select(GtfsCalendar).filter(GtfsCalendar.id == trip.service_id)
     )
     calendar_entries = result.scalars().all()
     return calendar_entries
@@ -964,6 +1007,9 @@ async def read_calendar_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_as
 @router.get("/gtfs-stops/by-trip/{trip_id}", response_model=List[GtfsStopsReadWithTimes])
 async def read_stops_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     """Get all GTFS stops for a given trip ID"""
+    await get_accessible_gtfs_trip(
+        db, trip_id, current_user.id, current_user.company_id
+    )
     result = await db.execute(
         select(
             GtfsStops,
@@ -971,7 +1017,10 @@ async def read_stops_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async
             GtfsStopsTimes.departure_time
         )
         .join(GtfsStopsTimes, GtfsStops.id == GtfsStopsTimes.stop_id)
-        .filter(GtfsStopsTimes.trip_id == trip_id)
+        .filter(
+            GtfsStopsTimes.trip_id == trip_id,
+            gtfs_stop_accessible_filter(current_user.id, current_user.company_id),
+        )
         .order_by(GtfsStopsTimes.stop_sequence)
     )
     rows = result.all()
@@ -1001,7 +1050,7 @@ async def read_stops_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async
 
 # Basic CRUD for GTFS stops (authenticated users only)
 @router.post("/gtfs-stops/", response_model=GtfsStopsRead)
-async def create_gtfs_stop(stop: GtfsStopsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def create_gtfs_stop(stop: GtfsStopsCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_admin)):
     db_stop = GtfsStops(**stop.model_dump(exclude_unset=True))
     db.add(db_stop)
     await db.commit()
@@ -1025,7 +1074,9 @@ async def read_gtfs_stops(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    base_query = select(GtfsStops)
+    base_query = select(GtfsStops).where(
+        gtfs_stop_accessible_filter(current_user.id, current_user.company_id)
+    )
 
     total = await db.scalar(
         select(func.count()).select_from(base_query.subquery())
@@ -1051,17 +1102,16 @@ async def read_gtfs_stops(
 
 @router.get("/gtfs-stops/{stop_pk}", response_model=GtfsStopsRead)
 async def read_gtfs_stop(stop_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    stop = await db.get(GtfsStops, stop_pk)
-    if stop is None:
-        raise HTTPException(status_code=404, detail="Stop not found")
-    return stop
+    return await get_accessible_gtfs_stop(
+        db, stop_pk, current_user.id, current_user.company_id
+    )
 
 
 @router.put("/gtfs-stops/{stop_pk}", response_model=GtfsStopsRead)
-async def update_gtfs_stop(stop_pk: UUID, stop_update: GtfsStopsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    stop = await db.get(GtfsStops, stop_pk)
-    if stop is None:
-        raise HTTPException(status_code=404, detail="Stop not found")
+async def update_gtfs_stop(stop_pk: UUID, stop_update: GtfsStopsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_admin)):
+    stop = await get_accessible_gtfs_stop(
+        db, stop_pk, current_user.id, current_user.company_id
+    )
     update_data = stop_update.model_dump(exclude_unset=True, exclude={"id"})
     for field, value in update_data.items():
         setattr(stop, field, value)
@@ -1071,10 +1121,10 @@ async def update_gtfs_stop(stop_pk: UUID, stop_update: GtfsStopsUpdate, db: Asyn
 
 
 @router.delete("/gtfs-stops/{stop_pk}")
-async def delete_gtfs_stop(stop_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
-    stop = await db.get(GtfsStops, stop_pk)
-    if stop is None:
-        raise HTTPException(status_code=404, detail="Stop not found")
+async def delete_gtfs_stop(stop_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_admin)):
+    stop = await get_accessible_gtfs_stop(
+        db, stop_pk, current_user.id, current_user.company_id
+    )
     await db.delete(stop)
     await db.commit()
     return {"message": "Stop deleted successfully"}
@@ -1087,12 +1137,16 @@ async def read_trips_by_stop(
     current_user: Users = Depends(get_current_user)
 ):
     """Get all GTFS trips for a given stop ID"""
+    await get_accessible_gtfs_stop(
+        db, stop_id, current_user.id, current_user.company_id
+    )
     result = await db.execute(
         select(GtfsTrips)
         .join(GtfsStopsTimes, GtfsTrips.id == GtfsStopsTimes.trip_id)
         .filter(
             GtfsStopsTimes.stop_id == stop_id,
-            GtfsTrips.status == status.value
+            GtfsTrips.status == status.value,
+            gtfs_trip_accessible_filter(current_user.id, current_user.company_id),
         )
     )
     trips = result.scalars().all()
@@ -1120,9 +1174,9 @@ async def get_driving_distance_to_stop(
     - include_geometry: if True, returns full route geometry as lat/lon coordinates
     """
     # Fetch stop
-    stop = await db.get(GtfsStops, stop_uuid)
-    if stop is None:
-        raise HTTPException(status_code=404, detail="Stop not found")
+    stop = await get_accessible_gtfs_stop(
+        db, stop_uuid, current_user.id, current_user.company_id
+    )
     if stop.stop_lat is None or stop.stop_lon is None:
         raise HTTPException(status_code=400, detail="Stop has no coordinates")
 
@@ -1217,9 +1271,9 @@ async def get_driving_distance_to_stop(
 @router.get("/elevation-profile/by-trip/{trip_id}", response_model=ElevationProfileResponse)
 async def get_elevation_profile_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     """Fetch the release/job-resolved elevation profile and return JSON records."""
-    trip = await db.get(GtfsTrips, trip_id)
-    if trip is None:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    trip = await get_accessible_gtfs_trip(
+        db, trip_id, current_user.id, current_user.company_id
+    )
     if not trip.shape_id:
         raise HTTPException(status_code=404, detail="Trip has no shape_id")
 
@@ -1247,9 +1301,9 @@ async def get_aux_trip_elevation_status(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    trip = await db.get(GtfsTrips, trip_id)
-    if trip is None:
-        raise HTTPException(status_code=404, detail="Trip not found")
+    trip = await get_accessible_gtfs_trip(
+        db, trip_id, current_user.id, current_user.company_id
+    )
     trip_status = trip.status.value if hasattr(trip.status, "value") else str(trip.status)
     if trip_status == "gtfs":
         raise HTTPException(status_code=400, detail="GTFS trips do not have auxiliary elevation jobs")
@@ -1271,9 +1325,7 @@ async def create_aux_trip(
         raise HTTPException(status_code=400, detail="Auxiliary trip status cannot be 'gtfs'")
 
     # Resolve and validate all database references before invoking OSRM.
-    route = await db.get(GtfsRoutes, req.route_id)
-    if route is None:
-        raise HTTPException(status_code=404, detail="Route not found")
+    route = await get_agency_route(db, req.route_id, current_user.company_id)
     route_type = route.route_type
     is_bus_route = route_type == 3 or (
         isinstance(route_type, int) and 700 <= route_type <= 719
@@ -1287,10 +1339,12 @@ async def create_aux_trip(
             ),
         )
 
-    dep_stop = await db.get(GtfsStops, req.departure_stop_id)
-    arr_stop = await db.get(GtfsStops, req.arrival_stop_id)
-    if dep_stop is None or arr_stop is None:
-        raise HTTPException(status_code=404, detail="Departure or arrival stop not found")
+    dep_stop = await get_accessible_gtfs_stop(
+        db, req.departure_stop_id, current_user.id, current_user.company_id
+    )
+    arr_stop = await get_accessible_gtfs_stop(
+        db, req.arrival_stop_id, current_user.id, current_user.company_id
+    )
     if dep_stop.stop_lat is None or dep_stop.stop_lon is None:
         raise HTTPException(status_code=400, detail="Departure stop has no coordinates")
     if arr_stop.stop_lat is None or arr_stop.stop_lon is None:
@@ -1392,6 +1446,7 @@ async def create_aux_trip(
             trip_id=trip.id,
             payload={
                 "schema_version": 1,
+                AUXILIARY_TRIP_OWNER_KEY: str(current_user.id),
                 "shape_id": shape_id,
                 "source": {
                     "kind": "polyline",

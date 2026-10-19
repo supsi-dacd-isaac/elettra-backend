@@ -4,7 +4,7 @@ from typing import Optional, Any
 from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 class DepotsCreate(BaseModel):
     user_id: UUID
@@ -248,6 +248,14 @@ class YearlyAnalysisRead(BaseModel):
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
+    @field_serializer("features")
+    def serialize_public_features(self, features: dict) -> dict:
+        """Keep the server-managed ownership marker out of API payloads."""
+
+        public_features = dict(features or {})
+        public_features.pop("_owner_user_id", None)
+        return public_features
+
 class GtfsTripsCreate(BaseModel):
     route_id: UUID
     service_id: UUID
@@ -438,7 +446,6 @@ class UsersRead(BaseModel):
     company_id: UUID
     email: str
     full_name: str
-    password_hash: str
     role: str
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)

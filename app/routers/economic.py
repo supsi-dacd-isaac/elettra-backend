@@ -360,7 +360,10 @@ async def get_electric_maintenance_cost(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    dist = await compute_shift_yearly_distance(
+        shift_id, recurrence, custom_days, db,
+        owner_id=current_user.id, company_id=current_user.company_id,
+    )
     annual_km = dist.yearly_distance_km
     a = _or(cost_per_m, "electric_maint_cost_per_m")
     b = _or(cost_const, "electric_maint_cost_const")
@@ -426,7 +429,10 @@ async def get_diesel_maintenance_cost(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    dist = await compute_shift_yearly_distance(
+        shift_id, recurrence, custom_days, db,
+        owner_id=current_user.id, company_id=current_user.company_id,
+    )
     annual_km = dist.yearly_distance_km
     a = _or(cost_per_m, "diesel_maint_cost_per_m")
     b = _or(cost_const, "diesel_maint_cost_const")
@@ -496,7 +502,10 @@ async def get_diesel_fuel_cost(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    dist = await compute_shift_yearly_distance(
+        shift_id, recurrence, custom_days, db,
+        owner_id=current_user.id, company_id=current_user.company_id,
+    )
     annual_km = dist.yearly_distance_km
     fpl = _or(fuel_cost_per_l, "fuel_cost_per_l")
     ca = _or(consumption_per_m, "diesel_consumption_per_m")
@@ -665,7 +674,10 @@ async def get_full_comparison(
                 detail="charger_power_kw is required when include_capex=true.",
             )
 
-    dist = await compute_shift_yearly_distance(shift_id, recurrence, custom_days, db)
+    dist = await compute_shift_yearly_distance(
+        shift_id, recurrence, custom_days, db,
+        owner_id=current_user.id, company_id=current_user.company_id,
+    )
     annual_km = dist.yearly_distance_km
 
     ir = _or(interest_rate, "interest_rate")

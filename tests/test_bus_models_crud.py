@@ -198,4 +198,4 @@ def test_bus_model_invalid_agency_fk(client: TestClient, record):
         "specs": VALID_BUS_MODEL_SPECS,
         "user_id": bad_user
     }, headers=hdrs)
-    record("bm_create_invalid_fk", r.status_code == 400, f"status={r.status_code}")
+    record("bm_create_for_other_user_denied", r.status_code == 403, f"status={r.status_code}")

@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
+from app.core.ownership import get_owned_bus, get_owned_bus_model, get_owned_shift
 from app.core.config import get_cached_settings
 from app.database import get_async_session
 from app.models import (
@@ -191,21 +192,17 @@ async def get_shift_yearly_impact(
         days_per_year = RECURRENCE_DAYS[recurrence]
 
     # --- shift → bus → bus_model → specs.size --------------------------------
-    shift = await db.get(Shifts, shift_id)
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    shift = await get_owned_shift(
+        db, shift_id, current_user.id, current_user.company_id
+    )
     if shift.bus_id is None:
         raise HTTPException(status_code=422, detail="Shift has no bus assigned")
 
-    bus = await db.get(Buses, shift.bus_id)
-    if bus is None:
-        raise HTTPException(status_code=404, detail="Bus not found")
+    bus = await get_owned_bus(db, shift.bus_id, current_user.id)
     if bus.bus_model_id is None:
         raise HTTPException(status_code=422, detail="Bus has no model assigned")
 
-    bus_model = await db.get(BusesModels, bus.bus_model_id)
-    if bus_model is None:
-        raise HTTPException(status_code=404, detail="Bus model not found")
+    bus_model = await get_owned_bus_model(db, bus.bus_model_id, current_user.id)
 
     model_size = (bus_model.specs or {}).get("size")
     size_prefix = _extract_size_prefix(str(model_size) if model_size is not None else None)

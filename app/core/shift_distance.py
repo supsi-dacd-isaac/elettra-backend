@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GtfsStopsTimes, GtfsTrips, Shifts, ShiftsStructures
+from app.core.ownership import get_owned_shift
 
 logger = logging.getLogger(__name__)
 
@@ -76,14 +77,20 @@ async def compute_shift_yearly_distance(
     recurrence: RecurrenceType,
     custom_days: Optional[int],
     db: AsyncSession,
+    *,
+    owner_id: UUID | None = None,
+    company_id: UUID | None = None,
 ) -> ShiftYearlyDistance:
     """Compute daily and yearly distance for a shift from GTFS shape data."""
 
     days_per_year = resolve_recurrence_days(recurrence, custom_days)
 
-    shift = await db.get(Shifts, shift_id)
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    if owner_id is None:
+        shift = await db.get(Shifts, shift_id)
+        if shift is None:
+            raise HTTPException(status_code=404, detail="Shift not found")
+    else:
+        shift = await get_owned_shift(db, shift_id, owner_id, company_id)
 
     stmt = (
         select(

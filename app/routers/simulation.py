@@ -35,6 +35,17 @@ from app.models import (
     OptimizationRuns, YearlyAnalysis,
 )
 from app.core.auth import get_current_user
+from app.core.ownership import (
+    gtfs_stop_accessible_filter,
+    get_accessible_gtfs_trip,
+    get_owned_bus_model,
+    get_owned_optimization_run,
+    get_owned_prediction_run,
+    get_owned_shift,
+    get_owned_yearly_analysis,
+    prediction_run_owned_filter,
+    stamp_yearly_analysis_owner,
+)
 from app.services.weather import (
     count_weather_records,
     fetch_weather_records,
@@ -232,9 +243,7 @@ async def create_prediction_runs(
     except RuntimeReleaseConfigurationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    bus_model = await db.get(BusesModels, request.bus_model_id)
-    if bus_model is None:
-        raise HTTPException(status_code=404, detail="Bus model not found")
+    bus_model = await get_owned_bus_model(db, request.bus_model_id, current_user.id)
     if selected_stack.stack is not PredictionStack.LEGACY:
         try:
             # Validate the complete request-bound VECTO scenario before any
@@ -252,6 +261,9 @@ async def create_prediction_runs(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if request.yearly_analysis_id is not None:
+        await get_owned_yearly_analysis(
+            db, request.yearly_analysis_id, current_user.id
+        )
         result = await db.execute(
             select(YearlyAnalysis)
             .where(YearlyAnalysis.id == request.yearly_analysis_id)
@@ -280,9 +292,9 @@ async def create_prediction_runs(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     for shift_id in request.shift_ids:
-        shift = await db.get(Shifts, shift_id)
-        if shift is None:
-            raise HTTPException(status_code=404, detail=f"Shift {shift_id} not found")
+        await get_owned_shift(
+            db, shift_id, current_user.id, current_user.company_id
+        )
 
     try:
         await ensure_shift_profiles_ready(db, request.shift_ids)
@@ -329,7 +341,7 @@ async def list_prediction_runs(
 ):
     result = await db.execute(
         select(PredictionRuns)
-        .where(PredictionRuns.user_id == current_user.id)
+        .where(prediction_run_owned_filter(current_user.id))
         .order_by(PredictionRuns.created_at.desc())
     )
     return result.scalars().all()
@@ -341,10 +353,7 @@ async def get_prediction_run(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    run = await db.get(PredictionRuns, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Prediction run not found")
-    return run
+    return await get_owned_prediction_run(db, run_id, current_user.id)
 
 
 @router.get("/prediction-runs/{run_id}/predictions", response_model=List[TripPredictionsRead])
@@ -353,9 +362,7 @@ async def get_prediction_run_predictions(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    run = await db.get(PredictionRuns, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Prediction run not found")
+    await get_owned_prediction_run(db, run_id, current_user.id)
 
     result = await db.execute(
         select(TripPredictions)
@@ -378,30 +385,19 @@ async def create_optimization_run(
 ):
     """Create and start an optimization run (background task)."""
     if request.bus_model_id is not None:
-        bus_model = await db.get(BusesModels, request.bus_model_id)
-        if bus_model is None:
-            raise HTTPException(status_code=404, detail="Bus model not found")
+        await get_owned_bus_model(db, request.bus_model_id, current_user.id)
 
     for shift_id in request.shift_ids:
-        shift = await db.get(Shifts, shift_id)
-        if shift is None:
-            raise HTTPException(status_code=404, detail=f"Shift {shift_id} not found")
-
-    try:
-        await ensure_shift_profiles_ready(db, request.shift_ids)
-    except ElevationProfileNotReadyError as exc:
-        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+        await get_owned_shift(
+            db, shift_id, current_user.id, current_user.company_id
+        )
 
     prediction_bus_model_ids: set[UUID] = set()
     prediction_stack_pairs: set[tuple[str, str, str]] = set()
     catalogue = []
     if request.prediction_run_ids:
         for pred_id in request.prediction_run_ids:
-            pred = await db.get(PredictionRuns, pred_id)
-            if pred is None:
-                raise HTTPException(status_code=404, detail=f"Prediction run {pred_id} not found")
-            if str(pred.user_id) != str(current_user.id):
-                raise HTTPException(status_code=403, detail="Prediction run belongs to another user")
+            pred = await get_owned_prediction_run(db, pred_id, current_user.id)
             catalogue.append(pred)
             if pred.status != "completed":
                 raise HTTPException(
@@ -459,6 +455,14 @@ async def create_optimization_run(
                     "model release and auxiliary estimator"
                 ),
             )
+
+    # Validate every private UUID before reading elevation/profile data. This
+    # keeps foreign and missing references indistinguishable even when an
+    # otherwise valid shift still has a pending profile.
+    try:
+        await ensure_shift_profiles_ready(db, request.shift_ids)
+    except ElevationProfileNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
 
     if catalogue:
         from simulation.optimization_contract import select_references
@@ -546,9 +550,7 @@ async def get_optimization_run(
     current_user: Users = Depends(get_current_user),
 ):
     """Get optimization run status and results."""
-    run = await db.get(OptimizationRuns, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Optimization run not found")
+    run = await get_owned_optimization_run(db, run_id, current_user.id)
     return _serialize_optimization_run(run)
 
 
@@ -570,6 +572,18 @@ async def delete_optimization_run(
         raise HTTPException(status_code=404, detail="Optimization run not found")
 
     try:
+        linked_analyses = (
+            await db.execute(
+                select(YearlyAnalysis).where(
+                    YearlyAnalysis.optimization_run_id == run_id
+                )
+            )
+        ).scalars().all()
+        for analysis in linked_analyses:
+            await get_owned_yearly_analysis(db, analysis.id, current_user.id)
+            analysis.features = stamp_yearly_analysis_owner(
+                analysis.features, current_user.id
+            )
         await db.execute(
             update(YearlyAnalysis)
             .where(YearlyAnalysis.optimization_run_id == run_id)
@@ -900,6 +914,9 @@ async def compute_trip_statistics(
     trip_inputs: list[tuple[pd.DataFrame, pd.DataFrame]] = []
 
     for idx, trip_id in enumerate(request.trip_ids):
+        trip = await get_accessible_gtfs_trip(
+            db, trip_id, current_user.id, current_user.company_id
+        )
         # 1) Schedule
         result = await db.execute(
             select(
@@ -909,7 +926,12 @@ async def compute_trip_statistics(
                 GtfsStopsTimes.stop_sequence
             )
             .join(GtfsStopsTimes, GtfsStops.id == GtfsStopsTimes.stop_id)
-            .filter(GtfsStopsTimes.trip_id == trip_id)
+            .filter(
+                GtfsStopsTimes.trip_id == trip_id,
+                gtfs_stop_accessible_filter(
+                    current_user.id, current_user.company_id
+                ),
+            )
             .order_by(GtfsStopsTimes.stop_sequence)
         )
         rows = result.all()
@@ -931,9 +953,6 @@ async def compute_trip_statistics(
         schedule_df = pd.DataFrame(trip_schedule_data)
 
         # 2) Elevation (release-aware for GTFS, job-aware for auxiliary trips)
-        trip = await db.get(GtfsTrips, trip_id)
-        if trip is None:
-            raise HTTPException(status_code=404, detail=f"Trip {trip_id} not found")
         if not trip.shape_id:
             raise HTTPException(status_code=404, detail=f"Trip {trip_id} has no shape_id")
         try:

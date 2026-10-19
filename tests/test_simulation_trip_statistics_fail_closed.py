@@ -9,6 +9,16 @@ from fastapi import HTTPException
 from app.routers.simulation import compute_trip_statistics
 
 
+_CURRENT_USER = SimpleNamespace(id=uuid4(), company_id=uuid4())
+
+
+def _accessible_trip_lookup(trips):
+    async def lookup(_db, trip_id, _user_id, _company_id):
+        return trips[trip_id]
+
+    return AsyncMock(side_effect=lookup)
+
+
 class _Rows:
     def __init__(self, rows):
         self._rows = rows
@@ -39,12 +49,24 @@ def _schedule(label):
 @pytest.mark.asyncio
 async def test_missing_first_schedule_fails_before_later_trip_can_be_paired():
     missing, valid = uuid4(), uuid4()
-    db = _Db([[], _schedule("valid")], {valid: SimpleNamespace(shape_id="shape")})
+    trips = {
+        missing: SimpleNamespace(shape_id="missing-shape"),
+        valid: SimpleNamespace(shape_id="valid-shape"),
+    }
+    db = _Db([[], _schedule("valid")], trips)
     loader = AsyncMock()
-    with patch("app.routers.simulation.load_trip_elevation_dataframe", new=loader):
+    with (
+        patch(
+            "app.routers.simulation.get_accessible_gtfs_trip",
+            new=_accessible_trip_lookup(trips),
+        ),
+        patch("app.routers.simulation.load_trip_elevation_dataframe", new=loader),
+    ):
         with pytest.raises(HTTPException) as error:
             await compute_trip_statistics(
-                SimpleNamespace(trip_ids=[missing, valid]), db=db, current_user=object()
+                SimpleNamespace(trip_ids=[missing, valid]),
+                db=db,
+                current_user=_CURRENT_USER,
             )
     assert error.value.status_code == 422
     assert str(missing) in error.value.detail
@@ -61,13 +83,19 @@ async def test_missing_second_profile_fails_without_combining_misaligned_lists()
     db = _Db([_schedule("first"), _schedule("second")], trips)
     profiles = [pd.DataFrame({"profile": ["first"]}), pd.DataFrame()]
     with (
+        patch(
+            "app.routers.simulation.get_accessible_gtfs_trip",
+            new=_accessible_trip_lookup(trips),
+        ),
         patch("app.routers.simulation.load_trip_elevation_dataframe", new=AsyncMock(side_effect=profiles)),
         patch("app.routers.simulation.combine_trip_schedules") as combine_schedules,
         patch("app.routers.simulation.combine_elevation_profiles") as combine_profiles,
     ):
         with pytest.raises(HTTPException) as error:
             await compute_trip_statistics(
-                SimpleNamespace(trip_ids=[first, second]), db=db, current_user=object()
+                SimpleNamespace(trip_ids=[first, second]),
+                db=db,
+                current_user=_CURRENT_USER,
             )
     assert error.value.status_code == 404
     assert str(second) in error.value.detail
@@ -99,6 +127,10 @@ async def test_complete_inputs_are_combined_once_in_request_order():
         return pd.DataFrame({"combined": [1]})
 
     with (
+        patch(
+            "app.routers.simulation.get_accessible_gtfs_trip",
+            new=_accessible_trip_lookup(trips),
+        ),
         patch("app.routers.simulation.load_trip_elevation_dataframe", new=AsyncMock(side_effect=profiles)),
         patch("app.routers.simulation.combine_trip_schedules", side_effect=combine_schedules),
         patch("app.routers.simulation.combine_elevation_profiles", side_effect=combine_profiles),
@@ -107,7 +139,9 @@ async def test_complete_inputs_are_combined_once_in_request_order():
         patch("app.routers.simulation.extract_route_difficulty_metrics_from_elevation", return_value={}),
     ):
         response = await compute_trip_statistics(
-            SimpleNamespace(trip_ids=[first, second]), db=db, current_user=object()
+            SimpleNamespace(trip_ids=[first, second]),
+            db=db,
+            current_user=_CURRENT_USER,
         )
 
     assert response.trip_ids == [first, second]
