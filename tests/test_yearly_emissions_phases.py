@@ -454,31 +454,29 @@ def test_yearly_analysis(client, auth_data):
         conn = await asyncpg.connect(dsn)
         try:
             user_id = auth_data["user_id"]
-
+            suffix = uuid4().hex[:10]
             bus_model_id = await conn.fetchval(
-                """SELECT id FROM buses_models WHERE user_id = $1::uuid LIMIT 1""",
+                """INSERT INTO buses_models (name, specs, user_id)
+                   VALUES ($1, '{"size": "13m Standard"}'::jsonb, $2::uuid)
+                   RETURNING id""",
+                f"Phase test 12m eBus {suffix}",
                 user_id,
             )
-            if bus_model_id is None:
-                bus_model_id = await conn.fetchval(
-                    """INSERT INTO buses_models (name, specs, user_id)
-                       VALUES ('Test 12m eBus', '{"size": "13m Standard"}'::jsonb, $1::uuid)
-                       RETURNING id""",
-                    user_id,
-                )
-
+            bus_id = await conn.fetchval(
+                """INSERT INTO buses (user_id, name, specs, bus_model_id)
+                   VALUES ($1::uuid, $2, '{}'::jsonb, $3::uuid)
+                   RETURNING id""",
+                user_id,
+                f"Phase test bus {suffix}",
+                bus_model_id,
+            )
             shift_id = await conn.fetchval(
-                """SELECT s.id FROM shifts s
-                   JOIN buses b ON b.id = s.bus_id
-                   WHERE b.user_id = $1::uuid LIMIT 1""",
-                user_id,
+                """INSERT INTO shifts (name, bus_id)
+                   VALUES ($1, $2::uuid)
+                   RETURNING id""",
+                f"Phase test shift {suffix}",
+                bus_id,
             )
-            if shift_id is None:
-                shift_id = await conn.fetchval(
-                    """SELECT id FROM shifts LIMIT 1"""
-                )
-            if shift_id is None:
-                pytest.skip("No shifts available for testing")
 
             opt_run_id = await conn.fetchval(
                 """INSERT INTO optimization_runs (user_id, bus_model_id, mode, status, input_params)
@@ -529,6 +527,8 @@ def test_yearly_analysis(client, auth_data):
                 "ya_id": str(ya_id),
                 "opt_run_id": str(opt_run_id),
                 "bus_model_id": str(bus_model_id),
+                "bus_id": str(bus_id),
+                "shift_id": str(shift_id),
             }
         finally:
             await conn.close()
@@ -551,6 +551,18 @@ def test_yearly_analysis(client, auth_data):
                 "DELETE FROM optimization_runs WHERE id = $1::uuid",
                 result["opt_run_id"],
             )
+            await conn.execute(
+                "DELETE FROM shifts WHERE id = $1::uuid",
+                result["shift_id"],
+            )
+            await conn.execute(
+                "DELETE FROM buses WHERE id = $1::uuid",
+                result["bus_id"],
+            )
+            await conn.execute(
+                "DELETE FROM buses_models WHERE id = $1::uuid",
+                result["bus_model_id"],
+            )
         finally:
             await conn.close()
 
@@ -572,27 +584,29 @@ def test_diesel_yearly_analysis(client, auth_data):
         conn = await asyncpg.connect(dsn)
         try:
             user_id = auth_data["user_id"]
-
+            suffix = uuid4().hex[:10]
             bus_model_id = await conn.fetchval(
-                """SELECT id FROM buses_models WHERE user_id = $1::uuid LIMIT 1""",
+                """INSERT INTO buses_models (name, specs, user_id)
+                   VALUES ($1, '{"size": "13m Standard"}'::jsonb, $2::uuid)
+                   RETURNING id""",
+                f"Phase test 12m eBus Diesel {suffix}",
                 user_id,
             )
-            if bus_model_id is None:
-                bus_model_id = await conn.fetchval(
-                    """INSERT INTO buses_models (name, specs, user_id)
-                       VALUES ('Test 12m eBus Diesel', '{"size": "13m Standard"}'::jsonb, $1::uuid)
-                       RETURNING id""",
-                    user_id,
-                )
-
+            bus_id = await conn.fetchval(
+                """INSERT INTO buses (user_id, name, specs, bus_model_id)
+                   VALUES ($1::uuid, $2, '{}'::jsonb, $3::uuid)
+                   RETURNING id""",
+                user_id,
+                f"Phase diesel test bus {suffix}",
+                bus_model_id,
+            )
             shift_id = await conn.fetchval(
-                """SELECT s.id FROM shifts s
-                   JOIN buses b ON b.id = s.bus_id
-                   WHERE b.user_id = $1::uuid LIMIT 1""",
-                user_id,
+                """INSERT INTO shifts (name, bus_id)
+                   VALUES ($1, $2::uuid)
+                   RETURNING id""",
+                f"Phase diesel test shift {suffix}",
+                bus_id,
             )
-            if shift_id is None:
-                pytest.skip("No shifts available")
 
             opt_run_id = await conn.fetchval(
                 """INSERT INTO optimization_runs (user_id, bus_model_id, mode, status, input_params)
@@ -654,6 +668,8 @@ def test_diesel_yearly_analysis(client, auth_data):
                 "ya_id": str(ya_id),
                 "opt_run_id": str(opt_run_id),
                 "bus_model_id": str(bus_model_id),
+                "bus_id": str(bus_id),
+                "shift_id": str(shift_id),
             }
         finally:
             await conn.close()
@@ -675,6 +691,18 @@ def test_diesel_yearly_analysis(client, auth_data):
             await conn.execute(
                 "DELETE FROM optimization_runs WHERE id = $1::uuid",
                 result["opt_run_id"],
+            )
+            await conn.execute(
+                "DELETE FROM shifts WHERE id = $1::uuid",
+                result["shift_id"],
+            )
+            await conn.execute(
+                "DELETE FROM buses WHERE id = $1::uuid",
+                result["bus_id"],
+            )
+            await conn.execute(
+                "DELETE FROM buses_models WHERE id = $1::uuid",
+                result["bus_model_id"],
             )
         finally:
             await conn.close()

@@ -136,18 +136,6 @@ async def _insert_energy_test_analyses_async(user_id: str) -> dict:
 
     conn = await asyncpg.connect(_dsn_for_asyncpg())
     try:
-        shift_id = await conn.fetchval(
-            """SELECT s.id FROM shifts s
-               JOIN buses b ON b.id = s.bus_id
-               WHERE b.user_id = $1::uuid
-               LIMIT 1""",
-            user_id,
-        )
-        if shift_id is None:
-            shift_id = await conn.fetchval("SELECT id FROM shifts LIMIT 1")
-        if shift_id is None:
-            pytest.skip("No shifts available for yearly aggregate tests")
-
         async with conn.transaction():
             suffix = uuid.uuid4().hex[:10]
             bus_model_id = await conn.fetchval(
@@ -157,6 +145,21 @@ async def _insert_energy_test_analyses_async(user_id: str) -> dict:
                 f"Yearly aggregate test model {suffix}",
                 json.dumps({"size": "13m Standard", "bus_length_m": 12}),
                 user_id,
+            )
+            bus_id = await conn.fetchval(
+                """INSERT INTO buses (user_id, name, specs, bus_model_id)
+                   VALUES ($1::uuid, $2, '{}'::jsonb, $3::uuid)
+                   RETURNING id""",
+                user_id,
+                f"Yearly aggregate test bus {suffix}",
+                bus_model_id,
+            )
+            shift_id = await conn.fetchval(
+                """INSERT INTO shifts (name, bus_id)
+                   VALUES ($1, $2::uuid)
+                   RETURNING id""",
+                f"Yearly aggregate test shift {suffix}",
+                bus_id,
             )
             optimization_run_id = await conn.fetchval(
                 """INSERT INTO optimization_runs
@@ -236,6 +239,8 @@ async def _insert_energy_test_analyses_async(user_id: str) -> dict:
             "analyses": analyses,
             "optimization_run_id": str(optimization_run_id),
             "bus_model_id": str(bus_model_id),
+            "bus_id": str(bus_id),
+            "shift_id": str(shift_id),
         }
     finally:
         await conn.close()
@@ -261,6 +266,14 @@ async def _cleanup_energy_test_analyses_async(resource_ids: dict) -> None:
             await conn.execute(
                 "DELETE FROM optimization_runs WHERE id = $1::uuid",
                 resource_ids["optimization_run_id"],
+            )
+            await conn.execute(
+                "DELETE FROM shifts WHERE id = $1::uuid",
+                resource_ids["shift_id"],
+            )
+            await conn.execute(
+                "DELETE FROM buses WHERE id = $1::uuid",
+                resource_ids["bus_id"],
             )
             await conn.execute(
                 "DELETE FROM buses_models WHERE id = $1::uuid",

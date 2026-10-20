@@ -167,7 +167,7 @@ async def _set_user_role(user_id: str, role: str) -> None:
         await conn.close()
 
 
-async def _find_shared_gtfs(agency_id: str) -> dict[str, str]:
+async def _find_shared_gtfs(agency_id: str) -> dict[str, object]:
     conn = await asyncpg.connect(_dsn())
     try:
         row = await conn.fetchrow(
@@ -182,8 +182,79 @@ async def _find_shared_gtfs(agency_id: str) -> dict[str, str]:
             """,
             uuid.UUID(agency_id),
         )
-        assert row is not None, "Staging copy has no GTFS trip for TEST_AGENCY_ID"
-        return {key: str(row[key]) for key in row.keys()}
+        if row is not None:
+            return {
+                **{key: str(row[key]) for key in row.keys()},
+                "_created": None,
+            }
+
+        async with conn.transaction():
+            suffix = uuid.uuid4().hex
+            route_id = await conn.fetchval(
+                """
+                INSERT INTO gtfs_routes (route_id, agency_id, route_short_name)
+                VALUES ($1, $2::uuid, 'ISO-SHARED')
+                RETURNING id
+                """,
+                f"isolation_shared_route_{suffix}",
+                agency_id,
+            )
+            service_id = await conn.fetchval(
+                """
+                INSERT INTO gtfs_calendar (
+                    service_id, monday, tuesday, wednesday, thursday,
+                    friday, saturday, sunday, start_date, end_date
+                ) VALUES ($1, 1, 1, 1, 1, 1, 1, 1, DATE '2025-01-01',
+                          DATE '2030-12-31')
+                RETURNING id
+                """,
+                f"isolation_shared_service_{suffix}",
+            )
+            stop_id = await conn.fetchval(
+                """
+                INSERT INTO gtfs_stops (stop_id, stop_name, stop_lat, stop_lon)
+                VALUES ($1, 'Isolation shared stop', 46.0, 8.9)
+                RETURNING id
+                """,
+                f"isolation_shared_stop_{suffix}",
+            )
+            trip_id = await conn.fetchval(
+                """
+                INSERT INTO gtfs_trips (
+                    route_id, service_id, gtfs_service_id, trip_id, status,
+                    shape_id, departure_time, arrival_time
+                ) VALUES ($1, $2, $3, $4, 'gtfs', $5, '08:00:00', '08:10:00')
+                RETURNING id
+                """,
+                route_id,
+                service_id,
+                f"isolation_shared_service_{suffix}",
+                f"isolation_shared_trip_{suffix}",
+                f"isolation_shared_shape_{suffix}",
+            )
+            await conn.execute(
+                """
+                INSERT INTO gtfs_stops_times (
+                    trip_id, stop_id, arrival_time, departure_time,
+                    stop_sequence, shape_dist_traveled
+                ) VALUES ($1, $2, '08:00:00', '08:00:00', 1, 0)
+                """,
+                trip_id,
+                stop_id,
+            )
+
+        return {
+            "trip_id": str(trip_id),
+            "route_id": str(route_id),
+            "service_id": str(service_id),
+            "stop_id": str(stop_id),
+            "_created": {
+                "trip": str(trip_id),
+                "route": str(route_id),
+                "service": str(service_id),
+                "stop": str(stop_id),
+            },
+        }
     finally:
         await conn.close()
 
@@ -510,6 +581,29 @@ async def _cleanup(ctx: dict) -> None:
                     "DELETE FROM gtfs_stops WHERE id = ANY($1::uuid[])",
                     orphan_stops,
                 )
+
+        shared_created = (ctx.get("shared") or {}).get("_created")
+        if shared_created:
+            await conn.execute(
+                "DELETE FROM gtfs_stops_times WHERE trip_id = $1::uuid",
+                shared_created["trip"],
+            )
+            await conn.execute(
+                "DELETE FROM gtfs_trips WHERE id = $1::uuid",
+                shared_created["trip"],
+            )
+            await conn.execute(
+                "DELETE FROM gtfs_routes WHERE id = $1::uuid",
+                shared_created["route"],
+            )
+            await conn.execute(
+                "DELETE FROM gtfs_stops WHERE id = $1::uuid",
+                shared_created["stop"],
+            )
+            await conn.execute(
+                "DELETE FROM gtfs_calendar WHERE id = $1::uuid",
+                shared_created["service"],
+            )
     finally:
         await conn.close()
 
