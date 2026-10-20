@@ -94,7 +94,10 @@ jobs:
             -v ON_ERROR_STOP=1 -f tests/ci_seed.sql
 
       - name: Run test suite
-        run: python -m pytest -q
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q 2>&1 | tee tests/reports/pytest.log
 
       - name: Upload test reports
         if: always()
