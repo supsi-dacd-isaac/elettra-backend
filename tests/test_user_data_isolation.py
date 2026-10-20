@@ -1,8 +1,9 @@
 """End-to-end authorization tests for private user resources.
 
 These tests are intentionally allowed to write only to the dedicated staging
-database.  They never run DDL: temporary rows are inserted into the existing
-schema and removed in dependency order at teardown.
+database or the ephemeral PostgreSQL service created by GitHub Actions.  They
+never run DDL: temporary rows are inserted into the existing schema and removed
+in dependency order at teardown.
 """
 
 from __future__ import annotations
@@ -53,9 +54,17 @@ def _dsn() -> str:
 def _assert_staging_database() -> None:
     url = make_url(get_cached_settings().database_url)
     assert url.host in {"127.0.0.1", "localhost"}
-    assert url.port == 9004, (
-        "User isolation integration tests may write only to the staging "
-        f"database on 127.0.0.1:9004; got {url.render_as_string(hide_password=True)}"
+    is_local_staging = url.port == 9004
+    is_ephemeral_ci = (
+        os.environ.get("GITHUB_ACTIONS") == "true"
+        and url.port == 5432
+        and url.username == "admin"
+        and url.database == "elettra"
+    )
+    assert is_local_staging or is_ephemeral_ci, (
+        "User isolation integration tests may write only to staging on port "
+        "9004 or the ephemeral GitHub Actions PostgreSQL service; got "
+        f"{url.render_as_string(hide_password=True)}"
     )
 
 
