@@ -20,6 +20,15 @@ def endpoint(monkeypatch):
                                "physical_mass":{"passenger_count":20}})
     features = {"scenarios":[{"temperature":20}]}
     class Db:
+        async def execute(self, _statement):
+            yearly_analysis = SimpleNamespace(id=analysis, features=features)
+
+            class Result:
+                def scalar_one_or_none(self):
+                    return yearly_analysis
+
+            return Result()
+
         async def get(self, kind, key):
             if kind is YearlyAnalysis:
                 return SimpleNamespace(features=features) if key == analysis else None

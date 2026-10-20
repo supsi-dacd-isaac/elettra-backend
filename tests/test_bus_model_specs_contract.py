@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -51,6 +52,15 @@ class FakeBusModelSession:
                 return self.bus_model
             return None
         raise AssertionError(f"unexpected entity lookup: {entity!r}")
+
+    async def execute(self, _statement):
+        bus_model = self.bus_model
+
+        class Result:
+            def scalar_one_or_none(self):
+                return bus_model
+
+        return Result()
 
     def add(self, value):
         value.id = uuid4()
@@ -198,7 +208,13 @@ def test_create_endpoint_serializes_validated_specs_and_extras():
         }
     )
 
-    created = asyncio.run(create_bus_model(payload, db=session, current_user=object()))
+    created = asyncio.run(
+        create_bus_model(
+            payload,
+            db=session,
+            current_user=SimpleNamespace(id=user_id),
+        )
+    )
 
     assert created.specs == {**VALID_SPECS, "purchase_cost_chf": 640_000}
     assert session.commit_count == 1
@@ -221,7 +237,7 @@ def test_metadata_only_update_keeps_incomplete_legacy_specs():
                 {"name": "Legacy renamed", "description": "metadata edit"}
             ),
             db=session,
-            current_user=object(),
+            current_user=SimpleNamespace(id=user_id),
         )
     )
 
@@ -288,7 +304,7 @@ def test_complete_specs_update_replaces_legacy_object():
             legacy.id,
             BusModelUpdateRequest.model_validate({"specs": replacement}),
             db=session,
-            current_user=object(),
+            current_user=SimpleNamespace(id=user_id),
         )
     )
 

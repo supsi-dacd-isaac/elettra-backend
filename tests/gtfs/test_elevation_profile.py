@@ -49,6 +49,11 @@ def test_get_elevation_profile_by_trip(client, monkeypatch, record, trip_id):
     app.dependency_overrides[get_async_session] = _override_session
     app.dependency_overrides[get_current_user] = _override_auth
 
+    async def _owned_trip(db, requested_trip_id, _user_id, _company_id):
+        return await db.get(None, requested_trip_id)
+
+    monkeypatch.setattr("app.routers.gtfs.get_accessible_gtfs_trip", _owned_trip)
+
     # Mock Minio client
     from app import routers
     from app.services import elevation_profiles

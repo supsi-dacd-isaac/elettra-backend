@@ -46,6 +46,41 @@ from app.services.elevation_profiles import (
 )
 
 
+@pytest.fixture(autouse=True)
+def stub_gtfs_ownership_lookups(monkeypatch):
+    """Keep these job/validation tests focused on their existing behavior.
+
+    Ownership itself is covered by ``test_user_data_isolation.py``.  The small
+    fake sessions in this module deliberately do not implement SQLAlchemy's
+    query engine, so resolve the already-prepared fake records directly.
+    """
+
+    async def accessible_trip(db, trip_id, _user_id, _company_id):
+        trip = await db.get(GtfsTrips, trip_id)
+        if trip is None:
+            raise HTTPException(status_code=404, detail="Trip not found")
+        return trip
+
+    async def agency_route(db, route_id, _company_id):
+        if hasattr(db, "route"):
+            route = db.route if db.route.id == route_id else None
+        else:
+            route = SimpleNamespace(id=route_id, route_type=3)
+        if route is None:
+            raise HTTPException(status_code=404, detail="Route not found")
+        return route
+
+    async def accessible_stop(db, stop_id, _user_id, _company_id):
+        stop = await db.get(GtfsStops, stop_id)
+        if stop is None:
+            raise HTTPException(status_code=404, detail="Stop not found")
+        return stop
+
+    monkeypatch.setattr(gtfs_router, "get_accessible_gtfs_trip", accessible_trip)
+    monkeypatch.setattr(gtfs_router, "get_agency_route", agency_route)
+    monkeypatch.setattr(gtfs_router, "get_accessible_gtfs_stop", accessible_stop)
+
+
 class FakeMinioResponse:
     def __init__(self, body: bytes):
         self.body = body
@@ -826,7 +861,7 @@ async def test_profile_endpoint_returns_explicit_409_for_pending_aux(monkeypatch
         await get_elevation_profile_by_trip(
             trip_id,
             db=Session(SimpleNamespace(status="processing", last_error=None)),
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
     assert raised.value.status_code == 409
     assert raised.value.detail["code"] == "elevation_profile_not_ready"
@@ -861,7 +896,7 @@ async def test_profile_endpoint_distinguishes_missing_object_from_outage(
         await get_elevation_profile_by_trip(
             trip_id,
             db=Session(),
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
     assert raised.value.status_code == expected_status
 
@@ -991,7 +1026,7 @@ async def test_aux_creation_is_queued_in_one_commit(monkeypatch):
             status="depot",
         ),
         db=session,
-        current_user=SimpleNamespace(id=uuid4()),
+        current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
     )
 
     assert session.commits == 1
@@ -1049,7 +1084,7 @@ async def test_aux_creation_rejects_missing_or_non_bus_route_before_osrm_or_writ
                 status="depot",
             ),
             db=session,
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
 
     assert raised.value.status_code == expected_status
@@ -1102,7 +1137,7 @@ async def test_generic_trip_post_rejects_aux_status_with_guidance():
         await create_trip(
             _trip_create_payload("depot"),
             db=session,
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
     assert raised.value.status_code == 400
     assert "/api/v1/gtfs/aux-trip" in raised.value.detail
@@ -1116,7 +1151,7 @@ async def test_generic_trip_post_still_accepts_gtfs():
     created = await create_trip(
         _trip_create_payload("gtfs"),
         db=session,
-        current_user=SimpleNamespace(id=uuid4()),
+        current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
     )
     assert created.status == "gtfs"
     assert session.commits == 1
@@ -1138,7 +1173,7 @@ async def test_generic_trip_post_rejects_shape_outside_active_release_before_add
         await create_trip(
             _trip_create_payload("gtfs", shape_id="not-published"),
             db=session,
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
 
     assert raised.value.status_code == 409
@@ -1161,7 +1196,7 @@ async def test_generic_trip_post_accepts_shape_in_active_release(monkeypatch):
     created = await create_trip(
         _trip_create_payload("gtfs", shape_id="committed"),
         db=session,
-        current_user=SimpleNamespace(id=uuid4()),
+        current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
     )
     assert created.shape_id == "committed"
     assert session.commits == 1
@@ -1183,7 +1218,7 @@ async def test_generic_trip_post_requires_shape_while_release_is_active(monkeypa
         await create_trip(
             _trip_create_payload("gtfs", shape_id=None),
             db=session,
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
 
     assert raised.value.status_code == 409
@@ -1209,7 +1244,7 @@ async def test_trip_put_rejects_status_transition():
             trip.id,
             GtfsTripsUpdate(status="depot"),
             db=session,
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
     assert raised.value.status_code == 400
     assert "cannot transition" in raised.value.detail
@@ -1237,7 +1272,7 @@ async def test_trip_put_rejects_gtfs_shape_outside_release_without_mutation(monk
             trip.id,
             GtfsTripsUpdate(shape_id="not-published", trip_headsign="must-not-apply"),
             db=session,
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
 
     assert raised.value.status_code == 409
@@ -1263,7 +1298,7 @@ async def test_trip_put_protects_aux_shape_id_but_allows_other_fields():
             trip.id,
             GtfsTripsUpdate(shape_id="replacement-shape"),
             db=session,
-            current_user=SimpleNamespace(id=uuid4()),
+            current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
         )
     assert raised.value.status_code == 400
     assert "shape_id cannot be changed" in raised.value.detail
@@ -1277,7 +1312,7 @@ async def test_trip_put_protects_aux_shape_id_but_allows_other_fields():
             trip_headsign="Updated",
         ),
         db=session,
-        current_user=SimpleNamespace(id=uuid4()),
+        current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
     )
     assert updated.trip_headsign == "Updated"
     assert session.commits == 1
@@ -1340,7 +1375,7 @@ async def test_delete_aux_cleans_output_and_dtm_backup(monkeypatch):
     response = await delete_trip(
         trip_id,
         db=session,
-        current_user=SimpleNamespace(id=uuid4()),
+        current_user=SimpleNamespace(id=uuid4(), company_id=uuid4(), role="admin"),
     )
 
     assert session.commits == 1

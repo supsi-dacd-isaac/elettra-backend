@@ -84,25 +84,52 @@ class FakeDb:
         self.optimization_results = optimization_results
         self.optimization_missing = False
 
+    def _yearly_analysis(self):
+        return SimpleNamespace(
+            id=self.yearly_analysis_id,
+            optimization_run_id=self.optimization_run_id,
+            features={},
+        )
+
+    def _optimization_run(self):
+        if (
+            self.optimization_run_id is None
+            or self.optimization_missing
+            or self.optimization_user_id != self.user_id
+        ):
+            return None
+        return SimpleNamespace(
+            id=self.optimization_run_id,
+            user_id=self.optimization_user_id,
+            status=self.optimization_status,
+            results=self.optimization_results,
+        )
+
+    async def execute(self, statement):
+        entity = statement.column_descriptions[0].get("entity")
+        if entity is YearlyAnalysis:
+            value = self._yearly_analysis()
+        elif entity is OptimizationRuns:
+            value = self._optimization_run()
+        else:
+            raise AssertionError(f"unexpected ownership query: {statement!s}")
+
+        class Result:
+            def scalar_one_or_none(self):
+                return value
+
+        return Result()
+
     async def get(self, model, object_id):
         if model is YearlyAnalysis and object_id == self.yearly_analysis_id:
-            return SimpleNamespace(
-                id=self.yearly_analysis_id,
-                optimization_run_id=self.optimization_run_id,
-                features={},
-            )
+            return self._yearly_analysis()
         if (
             model is OptimizationRuns
             and self.optimization_run_id is not None
             and object_id == self.optimization_run_id
             and not self.optimization_missing
         ):
-            return SimpleNamespace(
-                id=self.optimization_run_id,
-                user_id=self.optimization_user_id,
-                status=self.optimization_status,
-                results=self.optimization_results,
-            )
+            return self._optimization_run()
         return None
 
 
@@ -251,13 +278,13 @@ def test_yearly_costs_optimization_capex_uses_linked_run_without_manual_inputs(
         ),
         (
             lambda env: setattr(env.db, "optimization_missing", True),
-            409,
+            404,
             "not found",
         ),
         (
             lambda env: setattr(env.db, "optimization_user_id", uuid.uuid4()),
-            403,
-            "not accessible",
+            404,
+            "Optimization run not found",
         ),
         (
             lambda env: setattr(env.db, "optimization_status", "running"),

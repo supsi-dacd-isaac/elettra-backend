@@ -170,15 +170,14 @@ def test_trip_statistics_invalid_trip(client, record):
     )
     
     try:
-        assert response.status_code == 422
+        assert response.status_code == 404
         detail = response.json().get("detail", "")
-        assert fake_trip_id in detail
-        assert "sequence is incomplete" in detail
+        assert detail == "Trip not found"
 
         record(
             "trip_statistics_invalid_trip",
             True,
-            f"Correctly rejected incomplete trip sequence: {detail}",
+            f"Correctly hid the unavailable trip: {detail}",
         )
     except AssertionError as e:
         record("trip_statistics_invalid_trip", False, str(e))

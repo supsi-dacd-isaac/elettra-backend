@@ -585,7 +585,12 @@ def test_diesel_yearly_analysis(client, auth_data):
                     user_id,
                 )
 
-            shift_id = await conn.fetchval("""SELECT id FROM shifts LIMIT 1""")
+            shift_id = await conn.fetchval(
+                """SELECT s.id FROM shifts s
+                   JOIN buses b ON b.id = s.bus_id
+                   WHERE b.user_id = $1::uuid LIMIT 1""",
+                user_id,
+            )
             if shift_id is None:
                 pytest.skip("No shifts available")
 
