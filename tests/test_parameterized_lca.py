@@ -65,6 +65,38 @@ def test_weather_not_vehicle_count_and_mileage_reparameterizes_lifetime():
     assert scaled[0]["battery_capacity_kwh"]==400
 
 
+def test_shift_mileage_override_changes_only_the_selected_physical_shift():
+    runs, energy, features = inputs()
+    baseline = build_vehicles(runs, energy, features, {})
+    scaled = build_vehicles(
+        runs,
+        energy,
+        features,
+        {},
+        {"shift_id": "a", "annual_km": 30000},
+    )
+
+    baseline_by_shift = {vehicle["shift_id"]: vehicle for vehicle in baseline}
+    scaled_by_shift = {vehicle["shift_id"]: vehicle for vehicle in scaled}
+
+    assert scaled_by_shift["a"]["annual_km"] == 30000
+    assert scaled_by_shift["a"]["dc_kwh"] == pytest.approx(45000)
+    assert scaled_by_shift["b"]["annual_km"] == baseline_by_shift["b"]["annual_km"]
+    assert scaled_by_shift["b"]["dc_kwh"] == baseline_by_shift["b"]["dc_kwh"]
+
+
+def test_shift_mileage_override_rejects_an_unknown_physical_shift():
+    runs, energy, features = inputs()
+    with pytest.raises(LcaIncomplete, match="not part of the yearly analysis"):
+        build_vehicles(
+            runs,
+            energy,
+            features,
+            {},
+            {"shift_id": "missing", "annual_km": 30000},
+        )
+
+
 def test_duplicate_weather_missing_weather_and_missing_snapshot_fail_closed():
     runs,energy,features=inputs()
     with pytest.raises(LcaIncomplete): build_vehicles(runs+[runs[0]],energy,features,{})

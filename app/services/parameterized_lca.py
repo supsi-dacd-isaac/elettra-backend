@@ -200,14 +200,28 @@ def build_vehicles(runs, energy, features, specs_by_model, overrides=None):
         g["prediction_run_ids"].append(str(run.id))
     total = sum(g["annual_km"] for g in groups.values())
     number(total, "total annual distance", positive=True)
-    scale = number(assumptions.get("annual_km", total), "requested annual distance", positive=True) / total
+    requested_annual_km = assumptions.get("annual_km")
+    requested_shift_id = assumptions.get("shift_id")
+    normalized_shift_id = str(requested_shift_id) if requested_shift_id is not None else None
+    if normalized_shift_id is not None and normalized_shift_id not in groups:
+        raise LcaIncomplete("Requested physical shift is not part of the yearly analysis")
+    global_scale = (
+        number(requested_annual_km, "requested annual distance", positive=True) / total
+        if requested_annual_km is not None and normalized_shift_id is None
+        else 1.0
+    )
     for sid, g in groups.items():
         if {t for shift, t in seen if shift == sid} != required_temps:
             raise LcaIncomplete("Missing weather scenario for a physical shift")
         number(g["annual_km"], "vehicle annual distance", positive=True)
         g["passengers"] = g.pop("pax_km") / g["annual_km"]
+        shift_scale = (
+            number(requested_annual_km, "requested shift annual distance", positive=True) / g["annual_km"]
+            if requested_annual_km is not None and sid == normalized_shift_id
+            else global_scale
+        )
         for key in ("annual_km", "dc_kwh", "diesel_heating_liters"):
-            g[key] *= scale
+            g[key] *= shift_scale
         g["electricity_mix"] = assumptions.get("electricity_mix", (features.get("config") or {}).get("electricity_mix", "CONSUMER_PHYSICAL"))
         g["sources"]["electricity_mix"] = "case" if "electricity_mix" in assumptions or "electricity_mix" in (features.get("config") or {}) else "declared_default"
         diesel_default = economic_defaults()["diesel_consumption_per_m"]*g["bus_length_m"]+economic_defaults()["diesel_consumption_const"]

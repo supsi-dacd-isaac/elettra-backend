@@ -62,6 +62,22 @@ def test_contract_reparameterizes_without_mutating_snapshots(endpoint):
     assert run.contextual_parameters["battery_capacity_kwh"] == 400
 
 
+def test_contract_scopes_mileage_override_to_the_requested_shift(endpoint):
+    client, url, run = endpoint
+    data = client.get(url, params={"shift_id": run.shift_id, "annual_km": 30000}).json()
+    assert data["status"] == "complete"
+    assert data["vehicles"][0]["shift_id"] == str(run.shift_id)
+    assert data["vehicles"][0]["annual_km"] == 30000
+    assert data["vehicles"][0]["dc_kwh"] == 45000
+
+
+def test_contract_requires_mileage_with_shift_scope(endpoint):
+    client, url, run = endpoint
+    response = client.get(url, params={"shift_id": run.shift_id})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "annual_km is required when shift_id is provided"
+
+
 def test_ownership_and_required_inputs(endpoint):
     client, url, run = endpoint
     owner = run.user_id

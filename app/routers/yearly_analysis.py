@@ -1625,6 +1625,7 @@ async def get_yearly_costs(
 async def get_yearly_lca(
     yearly_analysis_id: UUID,
     annual_km: Optional[float] = Query(None, gt=0),
+    shift_id: Optional[UUID] = Query(None),
     lifetime_bus: Optional[float] = Query(None, gt=0),
     lifetime_battery: Optional[float] = Query(None, gt=0),
     lifetime_diesel_bus: Optional[float] = Query(None, gt=0),
@@ -1648,9 +1649,15 @@ async def get_yearly_lca(
     for model_id in {r.bus_model_id for r in runs}:
         model = await db.get(BusesModels, model_id)
         specs[str(model_id)] = (model.specs or {}) if model is not None else {}
+    if shift_id is not None and annual_km is None:
+        raise HTTPException(
+            status_code=422,
+            detail="annual_km is required when shift_id is provided",
+        )
     try:
         vehicles = build_vehicles(runs, energy, ya.features or {}, specs, {
-            "annual_km": annual_km, "lifetime_bus": lifetime_bus, "lifetime_battery": lifetime_battery,
+            "annual_km": annual_km, "shift_id": shift_id,
+            "lifetime_bus": lifetime_bus, "lifetime_battery": lifetime_battery,
             "lifetime_diesel_bus": lifetime_diesel_bus, "battery_chemistry": battery_chemistry,
             "electricity_mix": electricity_mix, "diesel_consumption_l_per_km": diesel_consumption_l_per_km,
         })
