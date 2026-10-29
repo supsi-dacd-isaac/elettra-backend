@@ -1,5 +1,6 @@
-from typing import List, Union
+from typing import List, Union, Literal
 from uuid import UUID
+from pydantic import ValidationError
 
 import numpy as np
 import pandas as pd
@@ -193,6 +194,9 @@ def _serialize_optimization_run_list_item(
         completed_at=run.completed_at,
         electrification_feasible=results.get("electrification_feasible"),
         solver_status=results.get("solver_status"),
+        consumption_basis=(run.input_params or {}).get("consumption_basis"),
+        quantile_consumption=(run.input_params or {}).get("quantile_consumption"),
+        verification_status=(results.get("forecast_verification") or {}).get("status"),
         objective_value=(
             float(objective_value) if isinstance(objective_value, (int, float)) else None
         ),
@@ -552,6 +556,67 @@ async def get_optimization_run(
     """Get optimization run status and results."""
     run = await get_owned_optimization_run(db, run_id, current_user.id)
     return _serialize_optimization_run(run)
+
+
+async def _basis_comparison(db, current_user, run_id, basis):
+    from simulation.aggregate_consumption import METHOD_VERSION
+    source = await get_owned_optimization_run(db, run_id, current_user.id)
+    root_id = (source.input_params or {}).get("basis_source_run_id")
+    if root_id:
+        source = await get_owned_optimization_run(db, UUID(root_id), current_user.id)
+    candidates = [source]
+    rows = await db.execute(select(OptimizationRuns).where(
+        OptimizationRuns.user_id == current_user.id,
+        OptimizationRuns.input_params["basis_source_run_id"].astext == str(source.id),
+        OptimizationRuns.input_params["consumption_basis"].astext == basis,
+    ).order_by(OptimizationRuns.created_at.desc()).limit(50))
+    candidates += list(rows.scalars().all())
+    for candidate in candidates:
+        params, results = candidate.input_params or {}, candidate.results or {}
+        analysis = results.get("consumption_analysis") or {}
+        same_method = (analysis.get("version") == METHOD_VERSION or
+                       params.get("basis_method_version") == METHOD_VERSION)
+        if params.get("consumption_basis") == basis and same_method and candidate.status in {
+                "completed", "running", "pending"}:
+            return source, candidate
+    return source, None
+
+
+@router.get("/optimization-runs/{run_id}/basis/{basis}")
+async def find_basis_comparison(
+    run_id: UUID, basis: Literal["mean", "aggregate_q95"],
+    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user),
+):
+    """Look up an owned compatible result without starting any computation."""
+    _, candidate = await _basis_comparison(db, current_user, run_id, basis)
+    return {"optimization_run_id": str(candidate.id) if candidate else None,
+            "status": candidate.status if candidate else "not_calculated"}
+
+
+@router.post("/optimization-runs/{run_id}/basis/{basis}")
+async def create_basis_comparison(
+    run_id: UUID, basis: Literal["mean", "aggregate_q95"], background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user),
+):
+    """Explicitly optimize one basis; reuse a compatible owned result if present."""
+    from simulation.aggregate_consumption import METHOD_VERSION
+    source, candidate = await _basis_comparison(db, current_user, run_id, basis)
+    if candidate:
+        return {"optimization_run_id": str(candidate.id), "status": candidate.status, "reused": True}
+    try:
+        request = OptimizationRequest.model_validate({
+            **source.input_params, "name": f"{source.name or 'Evaluation'} · {'Q95' if basis == 'aggregate_q95' else 'Mean'}",
+            "prediction_run_ids": source.input_params.get("prediction_run_ids") or getattr(source, "prediction_run_ids", None),
+            "consumption_basis": basis, "quantile_consumption": "mean",
+        })
+    except ValidationError as exc:
+        raise HTTPException(status_code=409, detail="Historical inputs cannot be reused; create a new evaluation with complete parameters") from exc
+    response = await create_optimization_run(background_tasks, request, db, current_user)
+    created = await db.get(OptimizationRuns, response.optimization_run_id)
+    created.input_params = {**created.input_params, "basis_source_run_id": str(source.id),
+                            "basis_method_version": METHOD_VERSION}
+    await db.commit()
+    return {"optimization_run_id": str(created.id), "status": created.status, "reused": False}
 
 
 @router.delete("/optimization-runs/{run_id}", response_model=OptimizationDeleteResponse)

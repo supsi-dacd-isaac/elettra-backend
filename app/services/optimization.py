@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -38,6 +40,9 @@ from simulation.optimization_model import (
 )
 from simulation.optimization_contract import CONTRACT_VERSION, pack_count, select_references
 from simulation.optimization_verification import optimize_and_verify
+from simulation.aggregate_consumption import AggregateOptions, PredictiveDistributionUnavailable
+from simulation.energy_analysis import build_energy_analysis
+from app.services.aggregate_consumption import load_aggregate_profile
 from app.services.runtime_release import PredictionStack, resolve_prediction_selection
 
 logger = logging.getLogger(__name__)
@@ -577,6 +582,44 @@ async def run_optimization(
         await db.commit()
 
         params = run.input_params
+        pipeline_started = time.monotonic()
+        basis = params.get("consumption_basis") or (
+            "mean" if params.get("quantile_consumption", "mean") == "mean" else "legacy_trip_quantile")
+        aggregate_options = AggregateOptions.from_params(params)
+        profile_cache, statistics_cache = {}, {}
+        budget = params.get("optimization_time_budget_seconds", 900)
+
+        async def profiles_for(references):
+            profiles = {}
+            for sid, pid in references.items():
+                if pid not in profile_cache:
+                    prediction = await db.get(PredictionRuns, UUID(pid))
+                    remaining = budget - (time.monotonic()-pipeline_started)
+                    if remaining <= 0:
+                        raise TimeoutError("Aggregate forecast time budget exhausted")
+                    async with asyncio.timeout(remaining):
+                        sampling_options = aggregate_options
+                        if not params.get("charging_stations"):
+                            model = await db.get(BusesModels, prediction.bus_model_id)
+                            pack_kwh = (model.specs or {}).get("battery_pack_size_kwh") if model else None
+                            if pack_kwh:
+                                sampling_options = replace(aggregate_options, capacity_step_kwh=float(pack_kwh) *
+                                    params.get("state_of_health", 1) * (params.get("max_soc", .9)-params.get("min_soc", .4)))
+                        profile_cache[pid] = await load_aggregate_profile(
+                            db, prediction, options=sampling_options, statistics_cache=statistics_cache)
+                profiles[sid] = profile_cache[pid]
+            return profiles
+
+        async def apply_basis(prepared, references):
+            if basis != "aggregate_q95":
+                return prepared
+            profiles = await profiles_for(references)
+            if any(len(bus.trips) != len(profiles[bus.shift_id][basis]) for bus in prepared):
+                raise ValueError("Aggregate profile does not cover every trip occurrence")
+            return [replace(bus, trips=[replace(trip, base_energy_kwh=energy)
+                       for trip, energy in zip(bus.trips, profiles[bus.shift_id][basis])])
+                    for bus in prepared]
+
         prediction_run_ids = run.prediction_run_ids
 
         # Auto-prediction if needed
@@ -612,7 +655,7 @@ async def run_optimization(
         prediction_components = await _prediction_component_summary(
             db,
             [pred.id for pred in initial.values()],
-            solver_consumption=quantile_consumption,
+            solver_consumption=basis if basis == "aggregate_q95" else quantile_consumption,
         )
         persisted_params = dict(run.input_params or {})
         persisted_params["prediction_provenance"] = prediction_provenance
@@ -626,6 +669,8 @@ async def run_optimization(
         buses, stations, opt_config = await prepare_optimization_input(
             db, run, prediction_run_ids,
         )
+        buses = await apply_basis(buses, initial_ids)
+        exact_bus_cache = {}
 
         async def load_exact(packs):
             exact_ids = {}
@@ -654,6 +699,8 @@ async def run_optimization(
             exact_buses, _, _ = await prepare_optimization_input(
                 db, run, [UUID(pid) for pid in exact_ids.values()], reference_ids=exact_ids,
             )
+            exact_buses = await apply_basis(exact_buses, exact_ids)
+            exact_bus_cache.update({bus.shift_id: bus for bus in exact_buses})
             return exact_buses, exact_ids
 
         async def progress(state):
@@ -663,15 +710,30 @@ async def run_optimization(
 
         result, verification = await optimize_and_verify(
             buses, stations, opt_config, load_exact,
-            time_budget_seconds=params.get("optimization_time_budget_seconds", 900),
+            time_budget_seconds=max(.001, budget-(time.monotonic()-pipeline_started)),
             on_progress=progress,
         )
         selected_ids = verification["final_reference_prediction_run_ids"] or initial_ids
         selected_runs = [pred for pred in provenance_runs if str(pred.id) in selected_ids.values()]
         prediction_provenance = _prediction_provenance(selected_runs)
         prediction_components = await _prediction_component_summary(
-            db, [pred.id for pred in selected_runs], solver_consumption=quantile_consumption,
+            db, [pred.id for pred in selected_runs],
+            solver_consumption=basis if basis == "aggregate_q95" else quantile_consumption,
         )
+        analysis = {"status": "unavailable", "optimization_basis": basis,
+                    "reason": "Historical per-trip basis; create a new aggregate evaluation"}
+        if params.get("consumption_basis"):
+            profiles = {}
+            if verification["status"] == "verified":
+                for sid, pid in selected_ids.items():
+                    try:
+                        profiles.update(await profiles_for({sid: pid}))
+                    except (PredictiveDistributionUnavailable, TimeoutError) as exc:
+                        profiles[sid] = {"error": str(exc)}
+            analysis = await asyncio.to_thread(build_energy_analysis,
+                [exact_bus_cache.get(bus.shift_id, bus) for bus in buses], result, profiles,
+                opt_config, basis=basis, verified=verification["status"] == "verified")
+        analysis["pipeline_elapsed_seconds"] = time.monotonic()-pipeline_started
         run.input_params = {**run.input_params,
                             "prediction_component_breakdown": prediction_components,
                             "prediction_provenance": prediction_provenance}
@@ -681,6 +743,7 @@ async def run_optimization(
             "initial_reference_prediction_run_ids": initial_ids,
             "selected_prediction_run_ids": selected_ids,
             "forecast_verification": verification,
+            "consumption_analysis": analysis,
             "objective_value": result.objective_value,
             "solver_status": result.solver_status,
             "solve_time_seconds": result.solve_time_seconds,

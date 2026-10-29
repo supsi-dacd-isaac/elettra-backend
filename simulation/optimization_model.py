@@ -238,7 +238,7 @@ def _estimate_excess_pack_upper_bounds(
         positive_sensitivity = float(sum(max(0.0, trip.sensitivity) for trip in bus.trips))
         max_physical_extra_cap_kwh = max(0, bus.max_packs - bus.reference_packs) * bus.pack_size_kwh
         worst_case_discharge_kwh = total_base_discharge_kwh + positive_sensitivity * max_physical_extra_cap_kwh
-        usable_kwh_per_pack = max(1e-6, bus.pack_size_kwh * usable_soc_window)
+        usable_kwh_per_pack = max(1e-6, bus.pack_size_kwh * config.state_of_health * usable_soc_window)
         required_total_packs = int(np.ceil(worst_case_discharge_kwh / usable_kwh_per_pack))
         bounds.append(max(1, required_total_packs - bus.max_packs + 5))
 
@@ -562,16 +562,16 @@ def solve_optimization(
     # physically installed.
 
     def soc_init_rule(mdl, b):
-        ps = float(pack_size[b])
+        ps = float(pack_size[b]) * config.state_of_health
         return mdl.soc[0, b] == (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(config.max_soc)
     m.soc_init = Constraint(m.B, rule=soc_init_rule)
 
     def soc_min_rule(mdl, t, b):
-        ps = float(pack_size[b])
+        ps = float(pack_size[b]) * config.state_of_health
         return mdl.soc[t, b] >= (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(config.min_soc)
 
     def soc_max_rule(mdl, t, b):
-        ps = float(pack_size[b])
+        ps = float(pack_size[b]) * config.state_of_health
         return mdl.soc[t, b] <= (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(config.max_soc)
 
     m.soc_min = Constraint(m.T1, m.B, rule=soc_min_rule)
@@ -901,8 +901,11 @@ def solve_optimization(
             "max_physical_packs": int(max_packs[b_idx]),
             "base_kwh": base_kwh,
             "optimized_kwh": optimized_kwh,
+            "selected_nominal_kwh": np_val * float(pack_size[b_idx]),
+            "selected_usable_kwh": np_val * float(pack_size[b_idx]) * config.state_of_health * (config.max_soc - config.min_soc),
             "max_physical_kwh": physical_max_kwh,
             "physical_feasible": physical_feasible,
+            "physical_limit_exceeded": total_required_packs > int(max_packs[b_idx]),
             "feasibility_status": "feasible" if physical_feasible else "infeasible_requires_excess_packs",
         }
 
@@ -917,8 +920,9 @@ def solve_optimization(
                 "excess_packs": ne_val,
                 "message": (
                     f"Shift requires {total_required_packs} packs ({optimized_kwh:.1f} kWh) "
-                    f"but the bus model allows at most {int(max_packs[b_idx])} packs "
-                    f"({physical_max_kwh:.1f} kWh)."
+                    f"with {np_val} selected physical packs; model maximum is "
+                    f"{int(max_packs[b_idx])} packs ({physical_max_kwh:.1f} kWh). "
+                    "Additional packs are diagnostic capacity, not an installable verified design."
                 ),
             })
 
@@ -951,6 +955,11 @@ def solve_optimization(
             "total_charged_kwh": float(np.sum(power_val[:, b_idx]) * dt),
             "num_charging_sessions": len(sessions),
             "charging_sessions": sessions,
+            "energy_timeline": {
+                "first_minute": int(first_t), "step_minutes": 1,
+                "soc_kwh": soc_val[:, b_idx].tolist(),
+                "charge_kwh": (power_val[:, b_idx] * dt).tolist(),
+            },
         })
 
     # Station utilization
@@ -981,7 +990,7 @@ def solve_optimization(
             if electrification_feasible
             else (
                 f"{len(infeasible_buses)} of {len(buses)} bus(es) require battery slack "
-                "beyond the configured max_packs."
+                "beyond the selected physical battery configuration."
             )
         ),
         "num_buses": len(buses),

@@ -95,12 +95,13 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
     if status != "verified":
         result.electrification_feasible = False
         result.electrification_summary = {
-            **result.electrification_summary, "status": "unverified",
+            **result.electrification_summary, "status": "infeasible" if status == "physical_limits_exceeded" else "unverified",
             "message": f"Full-forecast feasibility not established: {status}",
         }
         for row in result.battery_results.values():
-            row["physical_feasible"] = False
-            row["feasibility_status"] = "unverified"
+            row["verification_status"] = status
+            if status != "physical_limits_exceeded":
+                row["feasibility_status"] = "unverified"
     result.solve_time_seconds = elapsed
     return result, {
         "status": status, "iterations": history, "elapsed_seconds": elapsed,

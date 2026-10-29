@@ -61,7 +61,12 @@ def _assert_staging_database() -> None:
         and url.username == "admin"
         and url.database == "elettra"
     )
-    assert is_local_staging or is_ephemeral_ci, (
+    is_isolated_local = (
+        os.environ.get("ELETTRA_EPHEMERAL_TEST_DATABASE") == url.database
+        and url.database.startswith("elettra_test_")
+        and url.username == "admin"
+    )
+    assert is_local_staging or is_ephemeral_ci or is_isolated_local, (
         "User isolation integration tests may write only to staging on port "
         "9004 or the ephemeral GitHub Actions PostgreSQL service; got "
         f"{url.render_as_string(hide_password=True)}"
@@ -778,6 +783,7 @@ def test_direct_foreign_reads_and_derived_calculations_are_404(
         f"{SIM}/prediction-runs/{foreign['prediction']}",
         f"{SIM}/prediction-runs/{foreign['prediction']}/predictions",
         f"{SIM}/optimization-runs/{foreign['optimization']}",
+        f"{SIM}/optimization-runs/{foreign['optimization']}/basis/aggregate_q95",
         f"{YEARLY}/{foreign['yearly']}",
         f"{YEARLY}/{foreign['yearly']}/energy-summary",
         f"{YEARLY}/{foreign['yearly']}/costs?bus_length_m=12",
@@ -794,6 +800,9 @@ def test_direct_foreign_reads_and_derived_calculations_are_404(
     for url in urls:
         response = client.get(url, headers=headers)
         assert response.status_code == 404, (url, response.status_code, response.text)
+
+    assert client.post(f"{SIM}/optimization-runs/{foreign['optimization']}/basis/aggregate_q95",
+                       headers=headers).status_code == 404
 
     response = client.post(
         f"{SIM}/trip-statistics/",
