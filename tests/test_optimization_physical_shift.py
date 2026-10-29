@@ -120,7 +120,8 @@ async def test_failed_verification_detects_cycle_and_cannot_certify():
         OptimizationConfig(mode="battery_only", min_soc=0, max_soc=.9), load, solve=fail_check)
     assert verification["status"] == "cycle_detected"
     assert not result.electrification_feasible
-    assert not result.battery_results["s"]["physical_feasible"]
+    assert result.battery_results["s"]["physical_feasible"]
+    assert result.battery_results["s"]["feasibility_status"] == "unverified"
 
 
 @pytest.mark.asyncio

@@ -327,6 +327,9 @@ class OptimizationRunListItemRead(BaseModel):
     completed_at: Optional[datetime] = None
     electrification_feasible: Optional[bool] = None
     solver_status: Optional[str] = None
+    consumption_basis: Optional[str] = None
+    quantile_consumption: Optional[str] = None
+    verification_status: Optional[str] = None
     objective_value: Optional[float] = None
     model_config = ConfigDict(from_attributes=True)
 

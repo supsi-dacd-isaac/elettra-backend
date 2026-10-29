@@ -484,8 +484,16 @@ class OptimizationRequest(BaseModel):
     state_of_health: float = Field(default=1.0, ge=0.0, le=1.0, examples=[1.0])
     quantile_consumption: str = Field(
         default="mean", examples=["mean"],
-        description="Which prediction quantile to use: mean, median, or a numeric quantile like 0.95.",
+        description="Legacy per-trip basis: mean, median, or a numeric quantile. 0.95 is NOT aggregate Q95.",
     )
+    consumption_basis: Optional[Literal["mean", "aggregate_q95"]] = Field(
+        default=None,
+        description="Project decision basis. aggregate_q95 samples independent trip occurrences and conditions the profile on the shift total Q95. None preserves the legacy per-trip setting.",
+    )
+    aggregate_sample_count: int = Field(default=100_000, ge=10_000, le=1_000_000)
+    aggregate_max_samples: int = Field(default=500_000, ge=10_000, le=1_000_000)
+    aggregate_seed: int = Field(default=20261029, ge=0, le=4294967295)
+    aggregate_precision_kwh: float = Field(default=0.25, gt=0, le=10)
 
     # Battery sizing
     battery_sizing_mode: Literal["per_bus", "per_route"] = Field(
@@ -544,6 +552,12 @@ class OptimizationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_fields(self):
+        if self.consumption_basis is not None and self.quantile_consumption != "mean":
+            raise ValueError("consumption_basis cannot be combined with a legacy per-trip quantile")
+        if self.aggregate_max_samples < self.aggregate_sample_count:
+            raise ValueError("aggregate_max_samples must be at least aggregate_sample_count")
+        if self.min_soc >= self.max_soc or self.state_of_health <= 0:
+            raise ValueError("A positive usable SOC window and state_of_health are required")
         if not self.shift_ids or len(set(self.shift_ids)) != len(self.shift_ids):
             raise ValueError("shift_ids must be non-empty and unique")
         if self.reference_prediction_run_ids:
