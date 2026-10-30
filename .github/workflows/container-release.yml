@@ -3,6 +3,8 @@ name: Test and release backend container
 on:
   workflow_dispatch:
   push:
+    branches:
+      - "fix/**"
     tags:
       - "v*.*.*"
 
@@ -109,7 +111,7 @@ jobs:
           retention-days: 14
 
   publish-image:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/fix/')
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -146,7 +148,19 @@ jobs:
           echo "tag=$core_tag" >> "$GITHUB_OUTPUT"
           echo "commit=$core_commit" >> "$GITHUB_OUTPUT"
 
+      - name: Select target platforms
+        id: target
+        env:
+          IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          if [ "$IS_RELEASE" = "true" ]; then
+            echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+          else
+            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up QEMU
+        if: startsWith(github.ref, 'refs/tags/')
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -165,10 +179,11 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
-            type=sha,prefix=sha-,format=short
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=sha,prefix=sha-,format=short,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=sha,prefix=candidate-,format=short,enable=${{ startsWith(github.ref, 'refs/heads/fix/') }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Elettra backend
@@ -179,7 +194,7 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.target.outputs.platforms }}
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}

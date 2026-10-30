@@ -479,6 +479,8 @@ async def create_optimization_run(
     # `name` is a first-class column on optimization_runs; keep it out of
     # input_params (which is reserved for solver/technical inputs).
     input_params = request.model_dump(mode="json", exclude={"name"})
+    if request.evaluate_both_bases:
+        input_params["consumption_basis"] = "mean"
 
     run = OptimizationRuns(
         user_id=current_user.id,
@@ -492,12 +494,33 @@ async def create_optimization_run(
     db.add(run)
     await db.flush()
     run_id = run.id
+    comparison = None
+    basis_ids = None
+    if request.evaluate_both_bases:
+        from simulation.aggregate_consumption import METHOD_VERSION
+        comparison = OptimizationRuns(
+            user_id=current_user.id, bus_model_id=request.bus_model_id, mode=request.mode,
+            name=f"{request.name} · Q95", status="pending",
+            prediction_run_ids=list(run.prediction_run_ids) if run.prediction_run_ids else None,
+            input_params={**input_params, "consumption_basis": "aggregate_q95",
+                          "basis_source_run_id": str(run_id), "paired_basis_role": "comparison",
+                          "basis_method_version": METHOD_VERSION},
+        )
+        db.add(comparison)
+        await db.flush()
+        basis_ids = {"mean": str(run_id), "aggregate_q95": str(comparison.id)}
+        run.input_params = {**input_params, "paired_basis_role": "primary",
+                            "basis_run_ids": basis_ids, "basis_method_version": METHOD_VERSION}
+        comparison.input_params = {**comparison.input_params, "basis_run_ids": basis_ids}
     await db.commit()
 
     from app.services.optimization import run_optimization_background
-    background_tasks.add_task(run_optimization_background, run_id)
+    if comparison is not None:
+        background_tasks.add_task(run_optimization_background, run_id, comparison.id)
+    else:
+        background_tasks.add_task(run_optimization_background, run_id)
 
-    return OptimizationSubmitResponse(optimization_run_id=run_id)
+    return OptimizationSubmitResponse(optimization_run_id=run_id, basis_run_ids=basis_ids)
 
 
 @router.get(
@@ -517,10 +540,14 @@ async def list_optimization_runs(
     pagination: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
+    include_basis_variants: bool = Query(False),
 ):
     base_query = select(OptimizationRuns).where(
-        OptimizationRuns.user_id == current_user.id
+        OptimizationRuns.user_id == current_user.id,
     )
+    if include_basis_variants is not True:
+        base_query = base_query.where(
+            OptimizationRuns.input_params["paired_basis_role"].astext.is_distinct_from("comparison"))
 
     total = await db.scalar(
         select(func.count()).select_from(base_query.subquery())
@@ -535,10 +562,29 @@ async def list_optimization_runs(
         .offset(pagination.skip)
         .limit(pagination.limit)
     )
+    runs = list(items_result.scalars().all())
     items = [
         _serialize_optimization_run_list_item(r)
-        for r in items_result.scalars().all()
+        for r in runs
     ]
+    paired_ids = {UUID(rid) for run in runs
+                  for rid in (run.input_params or {}).get("basis_run_ids", {}).values()}
+    if paired_ids and include_basis_variants is not True:
+        pairs = await db.execute(select(
+            OptimizationRuns.id, OptimizationRuns.status,
+            OptimizationRuns.results["electrification_feasible"].label("feasible"),
+            OptimizationRuns.results["forecast_verification"]["status"].astext.label("verification"),
+        ).where(OptimizationRuns.id.in_(paired_ids), OptimizationRuns.user_id == current_user.id))
+        summaries = {str(r.id): {"status": r.status, "electrification_feasible": r.feasible,
+                                "verification_status": r.verification} for r in pairs.all()}
+        for item, run in zip(items, runs):
+            ids = (run.input_params or {}).get("basis_run_ids")
+            if ids:
+                item.basis_summaries = {basis: summaries.get(rid, {"status": "unavailable"})
+                                        for basis, rid in ids.items()}
+                states = [row["status"] for row in item.basis_summaries.values()]
+                item.status = ("running" if any(s in {"pending", "running"} for s in states)
+                               else "completed" if "completed" in states else "failed")
     return build_paginated_response(
         items=items,
         total=int(total or 0),
@@ -561,6 +607,9 @@ async def get_optimization_run(
 async def _basis_comparison(db, current_user, run_id, basis):
     from simulation.aggregate_consumption import METHOD_VERSION
     source = await get_owned_optimization_run(db, run_id, current_user.id)
+    paired_id = (source.input_params or {}).get("basis_run_ids", {}).get(basis)
+    if paired_id:
+        return source, await get_owned_optimization_run(db, UUID(paired_id), current_user.id)
     root_id = (source.input_params or {}).get("basis_source_run_id")
     if root_id:
         source = await get_owned_optimization_run(db, UUID(root_id), current_user.id)
@@ -608,6 +657,7 @@ async def create_basis_comparison(
             **source.input_params, "name": f"{source.name or 'Evaluation'} · {'Q95' if basis == 'aggregate_q95' else 'Mean'}",
             "prediction_run_ids": source.input_params.get("prediction_run_ids") or getattr(source, "prediction_run_ids", None),
             "consumption_basis": basis, "quantile_consumption": "mean",
+            "evaluate_both_bases": False,
         })
     except ValidationError as exc:
         raise HTTPException(status_code=409, detail="Historical inputs cannot be reused; create a new evaluation with complete parameters") from exc
@@ -636,25 +686,32 @@ async def delete_optimization_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Optimization run not found")
 
+    runs = [run]
+    paired = (run.input_params or {}).get("basis_run_ids", {})
+    for other_id in set(paired.values()) - {str(run_id)}:
+        runs.append(await get_owned_optimization_run(db, UUID(other_id), current_user.id))
+    if paired and any(candidate.status in {"pending", "running"} for candidate in runs):
+        raise HTTPException(status_code=409, detail="Wait for both evaluations to finish before deleting them")
     try:
-        linked_analyses = (
-            await db.execute(
-                select(YearlyAnalysis).where(
-                    YearlyAnalysis.optimization_run_id == run_id
+        for candidate in runs:
+            linked_analyses = (
+                await db.execute(
+                    select(YearlyAnalysis).where(
+                        YearlyAnalysis.optimization_run_id == candidate.id
+                    )
                 )
+            ).scalars().all()
+            for analysis in linked_analyses:
+                await get_owned_yearly_analysis(db, analysis.id, current_user.id)
+                analysis.features = stamp_yearly_analysis_owner(
+                    analysis.features, current_user.id
+                )
+            await db.execute(
+                update(YearlyAnalysis)
+                .where(YearlyAnalysis.optimization_run_id == candidate.id)
+                .values(optimization_run_id=None)
             )
-        ).scalars().all()
-        for analysis in linked_analyses:
-            await get_owned_yearly_analysis(db, analysis.id, current_user.id)
-            analysis.features = stamp_yearly_analysis_owner(
-                analysis.features, current_user.id
-            )
-        await db.execute(
-            update(YearlyAnalysis)
-            .where(YearlyAnalysis.optimization_run_id == run_id)
-            .values(optimization_run_id=None)
-        )
-        await db.delete(run)
+            await db.delete(candidate)
         await db.commit()
     except SQLAlchemyError as exc:
         await db.rollback()
