@@ -271,9 +271,26 @@ def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
             ),
         )
 
+    extra = {}
+    battery_rows = [battery_results[str(row["shift_id"])] for row in per_bus_summary]
+    if all(row.get("selected_battery_cost_chf") is not None for row in battery_rows):
+        extra["battery_investment_chf"] = sum(_require_number(row["selected_battery_cost_chf"], "selected_battery_cost_chf") for row in battery_rows)
+    charger_rows = list((installed_chargers or {}).values())
+    if charger_rows and all(isinstance(row.get("cost_breakdown"), dict) for row in charger_rows):
+        point_total = common_total = 0.0
+        for row in charger_rows:
+            parts = row["cost_breakdown"]
+            points = _require_number(parts.get("chargers_cost_chf"), "chargers_cost_chf")
+            common = _require_number(parts.get("site_fixed_cost_chf"), "site_fixed_cost_chf") + _require_number(parts.get("site_power_cost_chf"), "site_power_cost_chf")
+            if abs(points + common - row["cost_chf"]) > 0.01:
+                raise HTTPException(status_code=422, detail="Infrastructure cost breakdown is inconsistent")
+            point_total += points
+            common_total += common
+        extra.update(charging_points_cost_chf=point_total, site_infrastructure_cost_chf=common_total)
     return {
         "optimized_battery_capacity_kwh": optimized_battery_capacity_kwh,
         "installation_cost_chf": installation_cost_chf,
+        **extra,
     }
 
 
@@ -1447,10 +1464,7 @@ async def get_yearly_costs(
                     status_code=500,
                     detail="Optimization CAPEX inputs were not prepared.",
                 )
-            inv_battery = (
-                batt_cpk
-                * optimization_capex_inputs["optimized_battery_capacity_kwh"]
-            )
+            inv_battery = optimization_capex_inputs.get("battery_investment_chf", batt_cpk * optimization_capex_inputs["optimized_battery_capacity_kwh"])
             inv_charging_infrastructure = optimization_capex_inputs["installation_cost_chf"]
             ebus_capex = [
                 CapexLineItem(
@@ -1474,6 +1488,13 @@ async def get_yearly_costs(
                     ),
                 ),
             ]
+            if "charging_points_cost_chf" in optimization_capex_inputs:
+                ebus_capex = ebus_capex[:2] + [
+                    CapexLineItem(name="Charging points", investment_chf=round(optimization_capex_inputs["charging_points_cost_chf"], 2),
+                        lifetime_years=lt_chg, annualized_chf_per_year=round(_annualize(optimization_capex_inputs["charging_points_cost_chf"], lt_chg, ir), 2)),
+                    CapexLineItem(name="Site connection and shared infrastructure", investment_chf=round(optimization_capex_inputs["site_infrastructure_cost_chf"], 2),
+                        lifetime_years=lt_conn, annualized_chf_per_year=round(_annualize(optimization_capex_inputs["site_infrastructure_cost_chf"], lt_conn, ir), 2)),
+                ]
         else:
             inv_battery = batt_cpk * battery_capacity_kwh
             inv_charger = ch_a * charger_power_kw + ch_b

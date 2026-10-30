@@ -27,7 +27,9 @@ async def paired_db_session():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode',['battery_only','charging_only','joint'])
-async def test_paired_creation_is_one_transaction_and_one_background_task(monkeypatch,mode):
+@pytest.mark.parametrize('basis',[None,'mean','aggregate_q95'])
+@pytest.mark.parametrize('explicit_pair',[False,True])
+async def test_paired_creation_is_one_transaction_and_one_background_task(monkeypatch,mode,basis,explicit_pair):
     owner,sid,pid,model=uuid4(),uuid4(),uuid4(),uuid4()
     pred=NS(id=pid,user_id=owner,shift_id=sid,bus_model_id=model,status='completed',
         model_name='test',prediction_stack='legacy',auxiliary_estimator_release=None,
@@ -56,8 +58,8 @@ async def test_paired_creation_is_one_transaction_and_one_background_task(monkey
             assert all(set(r.input_params['basis_run_ids'])=={'mean','aggregate_q95'} for r in self.rows)
     db=DB();tasks=BackgroundTasks()
     request=OptimizationRequest(name='Pair',mode=mode,shift_ids=[sid],prediction_run_ids=[pid],
-        reference_prediction_run_ids={sid:pid},battery_cost_per_kwh=300,evaluate_both_bases=True,
-        consumption_basis='aggregate_q95')
+        reference_prediction_run_ids={sid:pid},battery_cost_per_kwh=300,
+        consumption_basis=basis,**({'evaluate_both_bases':True} if explicit_pair else {}))
     response=await router.create_optimization_run(tasks,request,db,NS(id=owner,company_id=uuid4()))
     mean,q95=db.rows
     assert response.optimization_run_id==mean.id
@@ -71,6 +73,13 @@ async def test_paired_creation_is_one_transaction_and_one_background_task(monkey
     for row in db.rows:
         assert row.user_id==owner and row.mode==mode
         assert row.input_params['reference_prediction_run_ids']=={str(sid):str(pid)}
+
+
+def test_explicit_single_basis_and_historical_inputs_remain_supported():
+    params=dict(name='Historical',mode='battery_only',shift_ids=[uuid4()],prediction_run_ids=[uuid4()])
+    assert not OptimizationRequest(**params,evaluate_both_bases=False).evaluate_both_bases
+    assert not OptimizationRequest(**params,quantile_consumption='0.95').evaluate_both_bases
+    assert not OptimizationRequest(**params,lock_entire_dwell=False).evaluate_both_bases
 
 
 @pytest.mark.asyncio
@@ -97,24 +106,16 @@ async def test_paired_lookup_checks_both_owners_and_never_starts_work(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_background_calculates_both_with_shared_request_local_caches(monkeypatch):
+async def test_background_dispatches_both_processes_together(monkeypatch):
     from app.services import optimization as service
-    first,second=uuid4(),uuid4();calls=[]
-    class Session:
-        async def __aenter__(self):return self
-        async def __aexit__(self,*args):pass
-    async def run(db,key,*,profile_cache,statistics_cache):
-        if key==first:
-            profile_cache['p']='complete-distribution';statistics_cache['s']='features'
-            # A failed basis normally returns after persisting its own failure.
-        else:
-            assert profile_cache['p']=='complete-distribution'
-            assert statistics_cache['s']=='features'
-        calls.append(key)
-    monkeypatch.setattr(service,'AsyncSessionLocal',Session)
-    monkeypatch.setattr(service,'run_optimization',run)
-    await service.run_optimization_background(first,second)
-    assert calls==[first,second]
+    first, second = uuid4(), uuid4()
+    calls = []
+    async def workers(*ids):
+        calls.append(ids)
+    monkeypatch.setattr(service, 'run_workers', workers)
+    await service.run_optimization_background(first, second)
+    await service.run_optimization_background(first)
+    assert calls == [(first, second), (first,)]
 
 
 def test_paired_request_requires_full_dwell_and_rejects_legacy_quantiles():
@@ -174,6 +175,9 @@ async def test_list_groups_pairs_but_yearly_selector_can_request_each_design(pai
         summaries=by_id[ids['mean']].basis_summaries
         assert summaries['mean']['electrification_feasible'] is True
         assert summaries['aggregate_q95']['electrification_feasible'] is False
+        for rid in ids.values():
+            detail = await router.get_optimization_run(rid, db, user)
+            assert detail.basis_summaries == summaries
         expanded=await router.list_optimization_runs(PaginationParams(skip=0,limit=100),db,user,True)
         by_id={str(r.id):r for r in expanded.items}
         assert set(ids.values()) <= set(by_id)

@@ -20,6 +20,11 @@ def test_independent_repeated_occurrences_reduce_tail_and_reproduce_seed():
     assert 275 < sum(a['aggregate_q95']) < 300
     assert sum(a['aggregate_q95']) < np.quantile(support, .95, axis=1).sum()-100
     assert sum(a['aggregate_q95']) == pytest.approx(a['statistics']['q95_total_kwh'])
+    histogram = a['statistics']['total_energy_histogram']
+    assert histogram == b['statistics']['total_energy_histogram']
+    assert sum(histogram['counts']) == a['statistics']['samples']
+    assert len(histogram['bin_edges_kwh']) == len(histogram['counts']) + 1
+    assert histogram['bin_edges_kwh'][0] < 240 < a['statistics']['q95_total_kwh'] < histogram['bin_edges_kwh'][-1]
     assert shift_seed(42, 'a') != shift_seed(42, 'b')
 
 
@@ -27,6 +32,7 @@ def test_degenerate_distribution_and_bounded_precision_refinement():
     fixed = aggregate_profile(np.array([[2, 2], [3, 3]]), options=AggregateOptions(100, 400))
     assert fixed['aggregate_q95'] == [2, 3]
     assert fixed['statistics']['samples'] == 100
+    assert fixed['statistics']['total_energy_histogram'] == {'bin_edges_kwh': [4.5, 5.5], 'counts': [100]}
     uncertain = aggregate_profile(np.tile(np.linspace(0, 100, 450), (5, 1)),
         options=AggregateOptions(100, 400, precision_kwh=1e-9))
     assert uncertain['statistics']['samples'] == 400
@@ -88,6 +94,9 @@ async def test_all_modes_verify_fixed_mass_with_shared_chargers_and_replay(mode)
     analysis = build_energy_analysis(buses, result, profiles, config, basis='aggregate_q95', verified=True)
     for b in buses:
         row = analysis['per_shift'][b.shift_id]
+        assert row['trip_intervals'] == [
+            {'departure_minute': 0, 'arrival_minute': 10},
+            {'departure_minute': 20, 'arrival_minute': 30}]
         assert row['usable_kwh'] == pytest.approx(row['nominal_kwh']*.9*.7)
         assert row['cases']['aggregate_q95']['within_soc_limits']
         assert row['cases']['mean']['margin_kwh'] > row['cases']['aggregate_q95']['margin_kwh']

@@ -152,3 +152,21 @@ def test_mechanical_mass_delta_includes_signed_sensitivity(sensitivity):
     result = solve_optimization([b], [], OptimizationConfig(mode="battery_only", min_soc=0,
         max_soc=.9, fixed_battery_packs={"s": 9}, fixed_station_slots={}, allow_excess_packs=False))
     assert result.per_bus_summary[0]["min_soc_kwh"] == pytest.approx(405-(100-50*sensitivity))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['battery_only', 'charging_only', 'joint'])
+async def test_mean_feasible_q95_infeasible_remain_independent(mode):
+    async def load(packs):
+        return [simple_bus(100, packs['s'])], {'s': 'mean-exact'}
+    config = OptimizationConfig(mode=mode, min_soc=0, max_soc=.9,
+        allow_excess_packs=False, battery_cost_per_kwh=100)
+    mean, mean_check = await optimize_and_verify([simple_bus(100)], [], config, load)
+    async def must_not_load(_):
+        pytest.fail('No selected design exists to forecast')
+    q95, q95_check = await optimize_and_verify([simple_bus(1000)], [], config, must_not_load)
+    assert mean_check['status'] == 'verified' and mean.electrification_feasible
+    assert q95_check['status'] == 'infeasible'
+    assert q95.solver_status == 'infeasible' and not q95.electrification_feasible
+    assert q95.electrification_summary['status'] == 'infeasible'
+    assert q95.battery_results == {} and q95.per_bus_summary == []

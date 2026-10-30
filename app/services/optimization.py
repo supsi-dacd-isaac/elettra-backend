@@ -17,10 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from elettra_core import PASSENGER_MASS_KG
 
-from app.database import AsyncSessionLocal
 from app.models import (
     Buses,
     BusesModels,
+    Depots,
     GtfsStops,
     GtfsStopsTimes,
     GtfsTrips,
@@ -40,10 +40,12 @@ from simulation.optimization_model import (
 )
 from simulation.optimization_contract import CONTRACT_VERSION, pack_count, select_references
 from simulation.optimization_verification import optimize_and_verify
+from simulation.infeasibility_diagnostics import diagnose_infeasible_cycle
 from simulation.aggregate_consumption import AggregateOptions, PredictiveDistributionUnavailable
 from simulation.energy_analysis import build_energy_analysis
 from app.services.aggregate_consumption import load_aggregate_profile
 from app.services.runtime_release import PredictionStack, resolve_prediction_selection
+from app.services.optimization_process import run_workers, threads_per_worker
 
 logger = logging.getLogger(__name__)
 
@@ -358,7 +360,8 @@ async def prepare_optimization_input(
         model = await db.get(BusesModels, bus_model_id)
         if model is None:
             raise ValueError(f"Bus model {bus_model_id} not found")
-        specs = model.specs or {}
+        specs = {**(model.specs or {}), "_bus_model_id": str(bus_model_id),
+                 "_bus_model_name": getattr(model, "name", None)}
         _bus_model_cache[bus_model_id] = specs
         return specs
 
@@ -383,12 +386,17 @@ async def prepare_optimization_input(
         station_list.append(StationData(
             stop_id=str(sid),
             stop_name=stop_name_map.get(str(sid), str(sid)),
-            slot_costs_chf=cs.get("slot_costs_chf", []),
+            slot_costs_chf=cs.get("slot_costs_chf") or [],
+            cost_model=cs.get("cost_model"),
             num_fixed_slots=cs.get("num_slots"),
             max_total_power_kw=cs.get("max_total_power_kw", 450),
             max_power_per_slot_kw=cs.get("max_power_per_slot_kw"),
         ))
     station_stop_id_to_idx = {s.stop_id: i for i, s in enumerate(station_list)}
+    depot_stop_ids = set()
+    if params.get("daily_cycle"):
+        depot_stop_ids = {str(sid) for sid in (await db.execute(select(Depots.stop_id).where(
+            Depots.user_id == optimization_run.user_id))).scalars() if sid is not None}
 
     prediction_runs: list[PredictionRuns] = []
     for pred_run_id in prediction_run_ids:
@@ -477,6 +485,20 @@ async def prepare_optimization_input(
         min_packs_spec = int(specs.get("min_battery_packs", 10))
         max_packs_spec = int(specs.get("max_battery_packs", 14))
         max_charging_power = float(specs.get("max_charging_power_kw", 450))
+        pack_cost = specs.get("battery_pack_cost_chf")
+        if pack_cost is None and params.get("battery_cost_per_kwh") is not None:
+            pack_cost = float(params["battery_cost_per_kwh"]) * pack_size
+        if pack_cost is not None:
+            pack_cost = float(pack_cost)
+            if not math.isfinite(pack_cost) or pack_cost < 0:
+                raise ValueError(f"{shift_name}: invalid battery pack cost in the bus model")
+        if optimization_run.mode == "joint" and pack_cost is None:
+            raise ValueError(f"{shift_name}: set battery_pack_cost_chf in the bus model before joint optimization")
+        bus_cost = specs.get("cost")
+        if bus_cost is not None:
+            bus_cost = float(bus_cost)
+            if not math.isfinite(bus_cost) or bus_cost < 0:
+                raise ValueError(f"{shift_name}: invalid bus cost in the bus model")
 
         ctx = pred_run.contextual_parameters or {}
         ref_packs = pack_count(pred_run)
@@ -491,6 +513,7 @@ async def prepare_optimization_input(
         trip_preds = trip_predictions[str(pred_run.id)]
 
         trip_data_list: list[TripData] = []
+        first_stop_id = last_stop_id = None
         for tp in trip_preds:
             stop_times_result = await db.execute(
                 select(GtfsStopsTimes)
@@ -509,6 +532,9 @@ async def prepare_optimization_input(
                 raise ValueError(f"Trip {tp.trip_id} has invalid stop times")
 
             end_stop_id = str(last_st.stop_id)
+            if first_stop_id is None:
+                first_stop_id = str(first_st.stop_id)
+            last_stop_id = end_stop_id
             end_station_idx = station_stop_id_to_idx.get(end_stop_id, -1)
 
             consumption = _get_consumption_value(tp, quantile_consumption)
@@ -523,6 +549,11 @@ async def prepare_optimization_input(
                 sensitivity=sensitivity,
             ))
 
+        if params.get("daily_cycle"):
+            if first_stop_id != last_stop_id or first_stop_id not in depot_stop_ids:
+                raise ValueError(f"{shift_name}: daily repetition requires the existing trips to start and end at the same depot; no transfers are added")
+            if first_stop_id not in station_stop_id_to_idx:
+                raise ValueError(f"{shift_name}: select the start/end depot in charging infrastructure")
         buses.append(BusData(
             shift_id=str(pred_run.shift_id),
             shift_name=shift_name,
@@ -534,6 +565,11 @@ async def prepare_optimization_input(
             max_packs=max_packs_spec,
             reference_packs=int(ref_packs),
             trips=trip_data_list,
+            depot_station_idx=station_stop_id_to_idx.get(last_stop_id, -1),
+            battery_pack_cost_chf=pack_cost,
+            bus_cost_chf=bus_cost,
+            bus_model_id=specs.get("_bus_model_id"),
+            bus_model_name=specs.get("_bus_model_name"),
         ))
 
     # Build OptimizationConfig
@@ -542,7 +578,7 @@ async def prepare_optimization_input(
         min_soc=params.get("min_soc", 0.4),
         max_soc=params.get("max_soc", 0.9),
         state_of_health=params.get("state_of_health", 1.0),
-        battery_cost_per_kwh=params.get("battery_cost_per_kwh", 0.0),
+        battery_cost_per_kwh=params.get("battery_cost_per_kwh") or 0.0,
         max_battery_penalty_per_kwh=params.get("max_battery_penalty_per_kwh", 1e6),
         battery_sizing_mode=params.get("battery_sizing_mode", "per_bus"),
         min_session_duration_minutes=params.get("min_session_duration_minutes", 0),
@@ -553,7 +589,10 @@ async def prepare_optimization_input(
         early_charging_weight=params.get("early_charging_weight", 0.0),
         soc_increase_weight=params.get("soc_increase_weight", 1e4),
         depot_dwell_minutes_after=params.get("depot_dwell_minutes_after", 0),
+        daily_cycle=params.get("daily_cycle", False),
+        depot_peak_shaving=params.get("depot_peak_shaving", False),
         solver_name=params.get("solver_name", "highs"),
+        solver_threads=threads_per_worker(),
         max_solver_time_seconds=params.get("max_solver_time_seconds"),
         mip_rel_gap=params.get("mip_rel_gap"),
         mip_abs_gap=params.get("mip_abs_gap"),
@@ -571,7 +610,7 @@ async def prepare_optimization_input(
 async def run_optimization(
     db: AsyncSession,
     optimization_run_id: UUID,
-    *, profile_cache=None, statistics_cache=None,
+    *, profile_cache=None, statistics_cache=None, execution_metadata=None,
 ) -> None:
     """Execute the full optimization pipeline for a given run."""
     run = await db.get(OptimizationRuns, optimization_run_id)
@@ -707,6 +746,7 @@ async def run_optimization(
 
         async def progress(state):
             run.results = {"contract_version": CONTRACT_VERSION,
+                           **({"execution": execution_metadata} if execution_metadata else {}),
                            "forecast_verification": {"status": "running", **state}}
             await db.commit()
 
@@ -715,6 +755,12 @@ async def run_optimization(
             time_budget_seconds=max(.001, budget-(time.monotonic()-pipeline_started)),
             on_progress=progress,
         )
+        diagnostics = None
+        if result.solver_status == "infeasible":
+            await progress({"phase": "infeasibility_diagnostics"})
+            diagnostics = await diagnose_infeasible_cycle(
+                buses, stations, opt_config, load_exact,
+                time_budget_seconds=budget-(time.monotonic()-pipeline_started))
         selected_ids = verification["final_reference_prediction_run_ids"] or initial_ids
         selected_runs = [pred for pred in provenance_runs if str(pred.id) in selected_ids.values()]
         prediction_provenance = _prediction_provenance(selected_runs)
@@ -759,6 +805,8 @@ async def run_optimization(
             "per_bus_summary": result.per_bus_summary,
             "station_utilization": result.station_utilization,
             "charging_schedule_policy": result.charging_schedule_policy,
+            "daily_cycle": result.daily_cycle,
+            "infeasibility_diagnostics": diagnostics,
             "prediction_provenance": prediction_provenance,
             "prediction_component_breakdown": prediction_components,
         }
@@ -767,6 +815,9 @@ async def run_optimization(
         else:
             run.status = "completed"
         run.completed_at = datetime.now(timezone.utc)
+        if execution_metadata:
+            run.results = {**run.results, "execution": {**execution_metadata,
+                "finished_at": run.completed_at.isoformat()}}
         await db.commit()
 
     except Exception as e:
@@ -776,7 +827,9 @@ async def run_optimization(
             run = await db.get(OptimizationRuns, optimization_run_id)
             if run is not None:
                 run.status = "failed"
-                run.results = {"error": str(e)}
+                run.completed_at = datetime.now(timezone.utc)
+                run.results = {"error": str(e), **({"execution": {**execution_metadata,
+                    "finished_at": run.completed_at.isoformat()}} if execution_metadata else {})}
                 await db.commit()
         except Exception:
             logger.exception("Failed to update optimization run %s status to 'failed'", optimization_run_id)
@@ -787,15 +840,5 @@ async def run_optimization(
 # ---------------------------------------------------------------------------
 
 async def run_optimization_background(optimization_run_id: UUID, comparison_run_id: UUID | None = None) -> None:
-    """Wrapper called from BackgroundTasks. Opens its own DB session."""
-    async with AsyncSessionLocal() as db:
-        try:
-            # Sequential solvers avoid oversubscribing HiGHS and sharing an
-            # AsyncSession across tasks. Complete distributions are reused at
-            # matching masses; each basis still gets its own verified design.
-            profiles, statistics = {}, {}
-            for run_id in [optimization_run_id, comparison_run_id]:
-                if run_id is not None:
-                    await run_optimization(db, run_id, profile_cache=profiles, statistics_cache=statistics)
-        except Exception:
-            logger.exception("Background optimization failed for %s", optimization_run_id)
+    """Run each basis in an independent process; wait for both to finish."""
+    await run_workers(*(key for key in (optimization_run_id, comparison_run_id) if key is not None))

@@ -87,3 +87,22 @@ def test_new_yearly_analysis_requires_verified_design_not_old_solver_success():
     with pytest.raises(HTTPException) as exc:
         _require_verified_optimization(run, "owner")
     assert exc.value.status_code == 409
+
+@pytest.mark.asyncio
+async def test_joint_resolves_pack_cost_from_bus_model(context):
+    db, run = context
+    run.mode = 'joint'
+    run.input_params['battery_cost_per_kwh'] = 999
+    db.specs['battery_pack_cost_chf'] = 12345
+    db.specs['cost'] = 450000
+    buses, _, _ = await service.prepare_optimization_input(db, run, [p.id for p in db.predictions])
+    assert buses[0].battery_pack_cost_chf == 12345
+    assert buses[0].bus_cost_chf == 450000
+    assert buses[0].bus_model_id == str(db.model)
+
+@pytest.mark.asyncio
+async def test_joint_rejects_missing_model_pack_cost_without_legacy_fallback(context):
+    db, run = context
+    run.mode = 'joint'
+    with pytest.raises(ValueError, match='battery_pack_cost_chf'):
+        await service.prepare_optimization_input(db, run, [p.id for p in db.predictions])

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from typing import Annotated, Any, Literal, Optional
 from uuid import UUID
 from pydantic import (
@@ -217,32 +219,43 @@ class PredictionRequest(BaseModel):
 # Optimization request schemas
 # ---------------------------------------------------------------------------
 
+class InfrastructureCostConfig(BaseModel):
+    """One-time CAPEX. Power-priced infrastructure uses the configured AC connection."""
+    station_type: Literal["depot", "pantograph"]
+    point_cost_chf: float = Field(ge=0, allow_inf_nan=False)
+    site_fixed_cost_chf: float = Field(ge=0, allow_inf_nan=False)
+    connection_cost_per_kw_chf: float = Field(ge=0, allow_inf_nan=False)
+    ac_dc_efficiency: float = Field(default=0.95, gt=0, le=1, allow_inf_nan=False)
+    source: str = Field(default="infras2026-calibrated-v1", max_length=100)
+
+
 class ChargingStationConfig(BaseModel):
     """Configuration for a candidate (or fixed) charging station at a stop.
 
     Which fields are required depends on the optimization mode:
 
-    - **battery_only**: `num_slots` is required (chargers are fixed, battery is optimized).
-      `slot_costs_chf` is ignored.
-    - **charging_only** / **joint**: `slot_costs_chf` is required (charger installation
-      is optimized). `num_slots` is ignored.
+    - With `cost_model`, `num_slots` is the fixed count in **battery_only** and
+      the maximum candidate count in **charging_only** / **joint**.
+    - Legacy requests use `num_slots` in **battery_only**, or marginal
+      `slot_costs_chf` in **charging_only** / **joint**.
     - **All modes**: `stop_id`, `max_total_power_kw` are always required.
       `max_power_per_slot_kw` is optional in every mode (defaults to the bus-level power cap).
     """
     stop_id: UUID
+    cost_model: Optional[InfrastructureCostConfig] = None
     slot_costs_chf: Optional[list[float]] = Field(
         default=None,
         examples=[[350000, 150000, 150000]],
         description=(
             "Marginal installation cost (CHF) per additional charger slot. "
-            "Required for charging_only and joint modes. Ignored in battery_only."
+            "Legacy alternative to cost_model for charging_only and joint. Ignored in battery_only."
         ),
     )
     num_slots: Optional[int] = Field(
         default=None, examples=[2],
         description=(
-            "Number of already-installed charger slots at this station. "
-            "Required for battery_only mode. Ignored in charging_only and joint."
+            "Fixed charger count in battery_only; maximum candidate count when "
+            "using cost_model in charging_only or joint."
         ),
     )
     max_total_power_kw: float = Field(
@@ -404,11 +417,13 @@ class OptimizationRequest(BaseModel):
       and `max_total_power_kw` (and optionally `max_power_per_slot_kw`).
     - **charging_only**: Battery sizes are fixed (from the prediction reference);
       the solver decides where to install chargers and how many slots. Each station
-      must specify `slot_costs_chf` and `max_total_power_kw` (and optionally
+      must specify `cost_model` with `num_slots` (or legacy `slot_costs_chf`)
+      and `max_total_power_kw` (and optionally
       `max_power_per_slot_kw`).
     - **joint**: Both charger installation and battery sizing are optimized
-      simultaneously. Requires `slot_costs_chf` per station, `max_total_power_kw`,
-      and `battery_cost_per_kwh` at the request level. `max_power_per_slot_kw` is
+      simultaneously. Requires `cost_model` with `num_slots` (or legacy
+      `slot_costs_chf`) per station, `max_total_power_kw`,
+      and the battery pack cost in the bus model. `max_power_per_slot_kw` is
       optional.
 
     Bus model specs (pack size, min/max packs, max charging power) are resolved
@@ -474,7 +489,7 @@ class OptimizationRequest(BaseModel):
         description=(
             "Charging station configurations. In battery_only mode these are fixed "
             "installations (num_slots required). In charging_only / joint mode these "
-            "are candidates for the optimizer (slot_costs_chf required)."
+            "are candidates (cost_model with num_slots, or legacy slot_costs_chf)."
         ),
     )
 
@@ -490,24 +505,25 @@ class OptimizationRequest(BaseModel):
         default=None,
         description="Project decision basis. aggregate_q95 samples independent trip occurrences and conditions the profile on the shift total Q95. None preserves the legacy per-trip setting.",
     )
-    evaluate_both_bases: bool = Field(default=False,
-        description="Create and calculate linked Mean and aggregate-Q95 designs in one evaluation.")
+    evaluate_both_bases: bool = Field(default=True,
+        description="Calculate linked Mean and aggregate-Q95 designs by default. Explicit single-basis requests and legacy per-trip/session inputs remain supported.")
     aggregate_sample_count: int = Field(default=100_000, ge=10_000, le=1_000_000)
     aggregate_max_samples: int = Field(default=500_000, ge=10_000, le=1_000_000)
     aggregate_seed: int = Field(default=20261029, ge=0, le=4294967295)
     aggregate_precision_kwh: float = Field(default=0.25, gt=0, le=10)
 
     # Battery sizing
-    battery_sizing_mode: Literal["per_bus", "per_route"] = Field(
+    battery_sizing_mode: Literal["per_bus", "uniform", "per_route"] = Field(
         default="per_bus",
         description=(
             "battery_only / joint only. 'per_bus' allows each bus to have a different "
-            "battery size; 'per_route' ties all buses on the same route to the same pack count."
+            "battery size; 'uniform' selects one pack count for all buses (same pack size). "
+            "'per_route' is retained only for legacy requests."
         ),
     )
     battery_cost_per_kwh: Optional[float] = Field(
-        default=None, examples=[300.0],
-        description="Required for joint mode. CHF per kWh of additional battery capacity within [min_packs, max_packs].",
+        default=None, examples=[300.0], ge=0, allow_inf_nan=False,
+        description="Legacy fallback only. Joint optimization uses battery_pack_cost_chf from each bus model.",
     )
     max_battery_penalty_per_kwh: float = Field(
         default=1e6, examples=[1000000.0],
@@ -518,6 +534,8 @@ class OptimizationRequest(BaseModel):
     )
 
     # Depot charging
+    daily_cycle: bool = Field(default=False, description="Verify a repeating 24-hour duty and recharge at the existing start/end depot before the next departure.")
+    depot_peak_shaving: bool = Field(default=False, description="Simulate depot smart charging with hardware, plug assignments and daytime charging fixed.")
     depot_dwell_minutes_after: int = Field(
         default=0, ge=0,
         description="Minutes of dwell at last trip's end station after arrival (for depot overnight charging)",
@@ -554,6 +572,15 @@ class OptimizationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_fields(self):
+        if self.depot_peak_shaving and not self.daily_cycle:
+            raise ValueError("Depot peak shaving requires a daily cycle")
+        if self.daily_cycle and (not self.lock_entire_dwell or self.depot_dwell_minutes_after or self.cp_slack_minutes):
+            raise ValueError("Daily cycles require entire-dwell occupancy, no extra depot dwell and zero charger cooldown")
+        # Older frontend bundles omit this field. A normal feasibility request
+        # must still produce both designs; only historical inputs keep the old
+        # default when their quantile/session contract cannot support a pair.
+        if "evaluate_both_bases" not in self.model_fields_set:
+            self.evaluate_both_bases = self.quantile_consumption == "mean" and self.lock_entire_dwell
         if self.evaluate_both_bases and (self.quantile_consumption != "mean" or not self.lock_entire_dwell):
             raise ValueError("Paired evaluations require mean trip forecasts and entire-dwell occupancy")
         if self.consumption_basis is not None and self.quantile_consumption != "mean":
@@ -572,14 +599,20 @@ class OptimizationRequest(BaseModel):
         if self.mode == "charging_only" and not self.prediction_run_ids:
             if self.prediction_params is None or self.prediction_params.num_battery_packs is None:
                 raise ValueError("charging_only requires an explicit battery pack count")
-        if self.mode == "joint" and self.battery_cost_per_kwh is None:
-            raise ValueError("battery_cost_per_kwh is required for joint mode")
         if self.mode in ("charging_only", "joint"):
             for cs in self.charging_stations:
-                if not cs.slot_costs_chf:
+                if not cs.slot_costs_chf and cs.cost_model is None:
                     raise ValueError(
                         f"slot_costs_chf is required for each charging station in {self.mode} mode"
                     )
+        for cs in self.charging_stations:
+            if cs.cost_model is not None:
+                if cs.num_slots is None or cs.num_slots < 0:
+                    raise ValueError("Costed stations require a nonnegative num_slots")
+                if cs.slot_costs_chf is not None:
+                    raise ValueError("Use cost_model or legacy slot_costs_chf, not both")
+                if not math.isfinite(cs.max_total_power_kw) or cs.max_total_power_kw < 0:
+                    raise ValueError("Costed stations require finite nonnegative DC site power")
         if self.mode == "battery_only":
             for cs in self.charging_stations:
                 if cs.num_slots is None:

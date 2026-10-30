@@ -638,6 +638,13 @@ async def root():
     }
 
 
+@app.get("/api/v1/version", tags=["Root"])
+async def deployment_version(response: Response):
+    """Lightweight public image version; does not probe models or the database."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"version": settings.app_version}
+
+
 @app.get(
     "/health",
     response_model=HealthCheckResponse,

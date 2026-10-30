@@ -567,16 +567,8 @@ async def list_optimization_runs(
         _serialize_optimization_run_list_item(r)
         for r in runs
     ]
-    paired_ids = {UUID(rid) for run in runs
-                  for rid in (run.input_params or {}).get("basis_run_ids", {}).values()}
-    if paired_ids and include_basis_variants is not True:
-        pairs = await db.execute(select(
-            OptimizationRuns.id, OptimizationRuns.status,
-            OptimizationRuns.results["electrification_feasible"].label("feasible"),
-            OptimizationRuns.results["forecast_verification"]["status"].astext.label("verification"),
-        ).where(OptimizationRuns.id.in_(paired_ids), OptimizationRuns.user_id == current_user.id))
-        summaries = {str(r.id): {"status": r.status, "electrification_feasible": r.feasible,
-                                "verification_status": r.verification} for r in pairs.all()}
+    if include_basis_variants is not True:
+        summaries = await _load_basis_summaries(db, runs, current_user.id)
         for item, run in zip(items, runs):
             ids = (run.input_params or {}).get("basis_run_ids")
             if ids:
@@ -593,6 +585,20 @@ async def list_optimization_runs(
     )
 
 
+async def _load_basis_summaries(db, runs, user_id):
+    paired_ids = {UUID(rid) for run in runs
+                  for rid in (run.input_params or {}).get("basis_run_ids", {}).values()}
+    if not paired_ids:
+        return {}
+    pairs = await db.execute(select(
+        OptimizationRuns.id, OptimizationRuns.status,
+        OptimizationRuns.results["electrification_feasible"].label("feasible"),
+        OptimizationRuns.results["forecast_verification"]["status"].astext.label("verification"),
+    ).where(OptimizationRuns.id.in_(paired_ids), OptimizationRuns.user_id == user_id))
+    return {str(r.id): {"status": r.status, "electrification_feasible": r.feasible,
+                        "verification_status": r.verification} for r in pairs.all()}
+
+
 @router.get("/optimization-runs/{run_id}", response_model=OptimizationRunsRead)
 async def get_optimization_run(
     run_id: UUID,
@@ -601,7 +607,13 @@ async def get_optimization_run(
 ):
     """Get optimization run status and results."""
     run = await get_owned_optimization_run(db, run_id, current_user.id)
-    return _serialize_optimization_run(run)
+    result = _serialize_optimization_run(run)
+    ids = (run.input_params or {}).get("basis_run_ids")
+    if ids:
+        summaries = await _load_basis_summaries(db, [run], current_user.id)
+        result.basis_summaries = {basis: summaries.get(rid, {"status": "unavailable"})
+                                  for basis, rid in ids.items()}
+    return result
 
 
 async def _basis_comparison(db, current_user, run_id, basis):

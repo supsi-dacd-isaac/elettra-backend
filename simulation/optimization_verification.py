@@ -38,6 +38,9 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
                      "reference_packs": {b.shift_id: b.reference_packs for b in buses},
                      "linear_objective_value": result.objective_value}
             history.append(entry)
+            if result.solver_status == "infeasible":
+                status = "infeasible"
+                break
             if result.solver_status != "optimal":
                 status = "solver_not_optimal"
                 break
@@ -97,7 +100,7 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
     if status != "verified":
         result.electrification_feasible = False
         result.electrification_summary = {
-            **result.electrification_summary, "status": "infeasible" if status == "physical_limits_exceeded" else "unverified",
+            **result.electrification_summary, "status": "infeasible" if status in {"physical_limits_exceeded", "infeasible"} else "unverified",
             "message": f"Full-forecast feasibility not established: {status}",
         }
         for row in result.battery_results.values():

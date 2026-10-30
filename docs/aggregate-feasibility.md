@@ -1,14 +1,18 @@
 # Mean and aggregate-Q95 feasibility
 
-New clients submit `consumption_basis: mean | aggregate_q95`. The default for
-older clients is unchanged. `quantile_consumption: "0.95"` still means the
-individual trip quantile; it cannot be combined with an explicit new basis.
+New clients submit `consumption_basis: mean | aggregate_q95`. Normal requests
+default to calculating both designs, including requests from older browser
+bundles that omit `evaluate_both_bases`. Explicit `false` retains single-basis
+behaviour for historical comparison flows. Legacy per-trip quantiles or partial
+dwell occupancy retain their single-basis default. `quantile_consumption:
+"0.95"` still means the individual trip quantile; it cannot be combined with an
+explicit new basis.
 
 The frontend now also submits `evaluate_both_bases: true`. One request validates
 the inputs and atomically creates a Mean run and an aggregate-Q95 run, linked by
 `input_params.basis_run_ids`. The response includes both IDs. Each has its own
 design, full-mass verification, schedule, status and provenance. A single
-background task calculates them sequentially and shares a request-local cache
+background task calculates them in independent bounded worker processes, each with a local cache
 of predictive distributions at matching masses. A failure of one basis does not
 discard the other. The time budget is per basis. Entire-dwell occupancy is
 required for paired requests.
@@ -81,3 +85,102 @@ the real QRF adapter, SOH, charging timing/curtailment, the three modes, shared
 chargers, full mass verification, service caching, legacy requests and privacy.
 The offline 40502 fixture reproduces 13/14 packs without intermediate charging
 and 10/10 with a 450 kW pantograph (mean/Q95 respectively).
+
+## Parallel execution resources
+
+Mean and Q95 run in separate Python processes with separate database sessions,
+model validation and prediction caches. The response still contains both run IDs;
+completion of one basis does not cancel or replace the other. Proven infeasibility
+is a completed result, distinct from a technical failure.
+
+`ELETTRA_OPTIMIZATION_WORKERS` limits concurrent optimization processes per API
+process (default 2). Additional evaluations queue. Set
+`ELETTRA_OPTIMIZATION_THREADS_PER_WORKER` to cap HiGHS/Gurobi and numerical-library
+threads per worker (default 2). Restart the API after changing these settings.
+For Elettra's 32 physical cores, a starting configuration is 2 workers × 16 threads
+with one API process; benchmark under real concurrent load before increasing it.
+Multiple API replicas multiply this budget. Logical threads are not physical cores.
+The same solver cap applies to verification, charging priority and peak shaving.
+
+Each result records worker PID, thread limit and start/end timestamps in
+`results.execution`, allowing actual overlap to be checked. Fresh processes have
+model initialization overhead and intentionally do not share mutable in-memory
+caches. A crash marks only its run as failed; cancellation reaps the child process.
+
+## Infeasible daily-cycle diagnostics
+
+A proven infeasible daily cycle retains its infeasible status. Within the remaining
+run budget (up to 60 seconds), a separate diagnostic sizes and verifies the same
+vehicle blocks with only next-departure energy closure removed. In-service charging,
+whole-dwell plug occupation, the selected optimization mode and physical battery
+limits remain unchanged. Virtual excess packs remain explicitly unverified.
+
+`results.infeasibility_diagnostics` holds this separate battery result, forecast
+verification and reason codes. Never substitute it for the full evaluation's
+hardware, costs, SOC schedule or paired feasibility. For charger-only optimization,
+the diagnostic battery is the configured fixed size, not a new minimum size.
+
+Overnight diagnostics compare energy needed by the diagnostic daytime design with
+an optimistic bound using exclusive charger access and the available dwell time.
+A positive shortfall proves the configured power is insufficient for that design;
+shared plug conflicts are also reported with whole-stay occupation. These are not
+an overnight schedule or globally optimized infrastructure upgrades. If no single
+limiting resource can be isolated, the UI identifies the daily-cycle constraints
+without inventing a cause. Failed or timed-out diagnostics never change the original
+result and never manufacture a battery requirement.
+
+## Infrastructure and battery investment inputs
+
+New requests store a `cost_model` on each station: point cost (CHF), fixed common
+site cost (CHF), connection coefficient (CHF/kW AC), AC/DC efficiency and source.
+For an active site, investment is `n * point_cost + site_fixed_cost +
+connection_cost_per_kw * configured_site_dc_power / efficiency`; a site with no
+installed points costs zero. Common costs are charged once, on the first slot;
+the solver's ordered-slot constraint prevents skipping that slot. The configured
+site capacity is retained even if fewer points are selected. Peak shaving does
+not retroactively reduce connection investment.
+
+Local UI defaults (editable in Advanced costs, collapsed initially):
+
+| Site | DC power/point | CHF/point | Fixed CHF/site | CHF/kW AC |
+| --- | ---: | ---: | ---: | ---: |
+| Depot | 150 kW | 110,000 | 250,000 | 250 |
+| Terminus / pantograph | 450 kW | 430,000 | 320,000 | 320 |
+
+Efficiency defaults to 95%. These are modeling assumptions calibrated to the
+total-infrastructure ranges in [INFRAS 2026](https://www.infras.ch/media/filer_public/79/e5/79e599d9-0dae-491e-ac2b-19f07385834a/4166a_technologiestudie_elektrobusse_vov_schlussbericht.pdf#page=49),
+using the fixed-plus-power structure of [Grauers et al. 2020](https://research.chalmers.se/publication/518986/file/518986_Fulltext.pdf#page=10).
+They are not three separately published INFRAS prices. Calibration assumes ten
+150 kW points per depot (about 174.5 kCHF/point including shared costs) and one
+450 kW pantograph (about 901.6 kCHF total); ten depot points is our reference
+assumption, not a rule applied to the actual configuration.
+
+All three modes report investment. Charging-only and joint include the complete
+site investment in their objective; battery-only reports the fixed infrastructure
+investment without using it to size batteries. Results persist `cost_breakdown`
+per station for display and annual analysis. Annual CAPEX separates charging
+points from site connection/common infrastructure, using their respective
+lifetimes. Historical results without cost inputs retain their prior semantics;
+they must be recalculated to obtain this breakdown.
+
+Joint sizing uses each bus model's `battery_pack_cost_chf` rather than a UI CHF/kWh
+override. The solver's incremental battery objective and the full selected
+battery investment are stored separately. `selected_battery_cost_chf` is used by
+linked annual analysis. The old request-level CHF/kWh field remains only as a
+fallback for legacy clients whose bus models lack a pack price.
+
+The General result lists every selected vehicle block (one bus per block), its
+physical selected packs and nominal capacity, bus price excluding the battery,
+full battery investment and complete vehicle investment, with fleet totals.
+New results snapshot the model ID/name, body price and pack price so a subsequent
+model edit does not change historical investment. Legacy shared-model results can
+use current model prices with an explicit disclosure; unavailable prices remain
+unknown instead of producing a misleading partial total. Diagnostic excess packs
+are never included in installed investment.
+
+Battery-only and joint requests offer `per_bus` (independent sizes) or `uniform`
+(one pack count across every selected vehicle block, also across routes). Uniform
+sizing requires equal pack capacities and adds equality constraints inside the
+solver, including forecast verification; it is not a post-processing maximum.
+Charging-only keeps the user-selected fixed battery size. The API continues to
+accept `per_route` for legacy clients, but new UI requests no longer offer it.
