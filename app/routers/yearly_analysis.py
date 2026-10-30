@@ -70,6 +70,7 @@ from app.services.yearly_weather_recalculation import (
     DEFAULT_CLUSTER_START,
     binding_for_series_id,
     prediction_run_provenance,
+    preview_yearly_weather_reference,
     require_uniform_prediction_provenance,
     resolve_analysis_weather_binding,
 )
@@ -674,6 +675,19 @@ async def list_yearly_analyses(
         skip=pagination.skip,
         limit=pagination.limit,
     )
+
+
+@router.get("/weather-reference")
+async def yearly_weather_reference(
+    optimization_run_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    optimization = await get_owned_optimization_run(db, optimization_run_id, current_user.id)
+    try:
+        return await preview_yearly_weather_reference(db, optimization)
+    except AnalysisWeatherResolutionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/{yearly_analysis_id}", response_model=YearlyAnalysisRead)
@@ -1646,6 +1660,7 @@ async def get_yearly_costs(
 async def get_yearly_lca(
     yearly_analysis_id: UUID,
     annual_km: Optional[float] = Query(None, gt=0),
+    annual_km_by_shift: Optional[str] = Query(None, max_length=100000),
     shift_id: Optional[UUID] = Query(None),
     lifetime_bus: Optional[float] = Query(None, gt=0),
     lifetime_battery: Optional[float] = Query(None, gt=0),
@@ -1657,7 +1672,7 @@ async def get_yearly_lca(
     current_user: Users = Depends(get_current_user),
 ):
     from app.services.parameterized_lca import (
-        METHOD, LcaIncomplete, MobitoolClient, build_vehicles, evaluate_fleet,
+        METHOD, LcaIncomplete, MobitoolClient, build_vehicles, evaluate_fleet, representative_vehicles,
     )
     ya = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
     runs = await _load_prediction_runs(db, yearly_analysis_id)
@@ -1676,13 +1691,22 @@ async def get_yearly_lca(
             detail="annual_km is required when shift_id is provided",
         )
     try:
+        mileage_by_shift = None
+        if annual_km_by_shift is not None:
+            try:
+                mileage_by_shift = json.loads(annual_km_by_shift)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=422, detail="Invalid mileage mapping")
+            if not isinstance(mileage_by_shift, dict):
+                raise HTTPException(status_code=422, detail="Mileage must be a mapping of vehicle block IDs to annual kilometres")
         vehicles = build_vehicles(runs, energy, ya.features or {}, specs, {
             "annual_km": annual_km, "shift_id": shift_id,
+            "annual_km_by_shift": mileage_by_shift,
             "lifetime_bus": lifetime_bus, "lifetime_battery": lifetime_battery,
             "lifetime_diesel_bus": lifetime_diesel_bus, "battery_chemistry": battery_chemistry,
             "electricity_mix": electricity_mix, "diesel_consumption_l_per_km": diesel_consumption_l_per_km,
         })
-        result = await evaluate_fleet(vehicles, MobitoolClient(_lca_base_url()))
+        result = await evaluate_fleet(representative_vehicles(vehicles), MobitoolClient(_lca_base_url()))
     except LcaIncomplete as exc:
         result = {"methodology_version": METHOD, "status": "incomplete", "reason": str(exc),
                   "indicators": {}, "vehicles": []}

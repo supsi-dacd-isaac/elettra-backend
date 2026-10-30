@@ -136,6 +136,14 @@ def build_vehicles(runs, energy, features, specs_by_model, overrides=None):
     """
     overrides = {k: v for k, v in (overrides or {}).items() if v is not None}
     saved = (features or {}).get("assessment_assumptions") or {}
+    # Saved annual economics and environmental assessment use the same physical
+    # service lives. The discount rate and financial horizon do not alter LCA.
+    tco = saved.get("tco") or {}
+    saved = {**saved, **({"lifetime_bus": tco["bodyLife"]} if "bodyLife" in tco else {}),
+             **({"lifetime_battery": tco["batteryLife"]} if "batteryLife" in tco else {}),
+             **({"lifetime_diesel_bus": tco["dieselLife"]} if "dieselLife" in tco else {}),
+             **({"diesel_consumption_l_per_km": tco["dieselConsumption"]} if "dieselConsumption" in tco else {}),
+             **({"annual_km_by_shift": tco["annualKmByShift"]} if "annualKmByShift" in tco else {})}
     assumptions = {**saved, **overrides}
     features = features or {}
     scenarios = {str(s["prediction_run_id"]): s for s in energy["scenarios"]}
@@ -201,6 +209,11 @@ def build_vehicles(runs, energy, features, specs_by_model, overrides=None):
     total = sum(g["annual_km"] for g in groups.values())
     number(total, "total annual distance", positive=True)
     requested_annual_km = assumptions.get("annual_km")
+    by_shift = assumptions.get("annual_km_by_shift")
+    if by_shift is not None:
+        if not isinstance(by_shift, dict) or set(by_shift) != set(groups):
+            raise LcaIncomplete("Annual mileage must specify every selected physical shift exactly once")
+        by_shift = {sid: number(km, "requested shift annual distance", positive=True) for sid, km in by_shift.items()}
     requested_shift_id = assumptions.get("shift_id")
     normalized_shift_id = str(requested_shift_id) if requested_shift_id is not None else None
     if normalized_shift_id is not None and normalized_shift_id not in groups:
@@ -218,6 +231,7 @@ def build_vehicles(runs, energy, features, specs_by_model, overrides=None):
         shift_scale = (
             number(requested_annual_km, "requested shift annual distance", positive=True) / g["annual_km"]
             if requested_annual_km is not None and sid == normalized_shift_id
+            else by_shift[sid] / g["annual_km"] if by_shift is not None and requested_annual_km is None
             else global_scale
         )
         for key in ("annual_km", "dc_kwh", "diesel_heating_liters"):
@@ -247,6 +261,41 @@ def parameters(vehicle, metadata, *, diesel=False):
         result.update(electricEnergyStored=vehicle["battery_capacity_kwh"], batteryChemistry=chemistry,
                       batteryLifetimeReplacements=max(math.ceil(vehicle["lifetime_bus"]/vehicle["lifetime_battery"])-1, 0),
                       electricityMix=mix)
+    return result
+
+
+def representative_vehicles(vehicles):
+    """Pool interchangeable buses; retain the actual duty energy predictions.
+
+    Lifetime inventories use mean mileage per bus. Consumption and passenger
+    occupancy are distance weighted, rather than an average of duty ratios.
+    Different physical configurations are never pooled.
+    """
+    keys = ("bus_model_id", "bus_length_m", "battery_capacity_kwh",
+            "battery_chemistry", "lifetime_bus", "lifetime_battery",
+            "lifetime_diesel_bus", "electricity_mix", "diesel_consumption_l_per_km")
+    grouped = OrderedDict()
+    for vehicle in vehicles:
+        key = tuple(vehicle.get(k) for k in keys)
+        grouped.setdefault(key, []).append(vehicle)
+    result = []
+    for members in grouped.values():
+        count = len(members)
+        km = sum(v["annual_km"] for v in members)
+        representative = copy.deepcopy(members[0])
+        representative.update(
+            shift_id=members[0]["shift_id"] if count == 1 else "group-" + members[0]["shift_id"],
+            shift_ids=[v["shift_id"] for v in members],
+            vehicle_count=count,
+            aggregation="interchangeable_buses",
+            passengers=sum(v["passengers"] * v["annual_km"] for v in members) / km,
+            prediction_run_ids=[rid for v in members for rid in v["prediction_run_ids"]],
+        )
+        for field in ("annual_km", "dc_kwh", "diesel_heating_liters"):
+            representative[field] = sum(v[field] for v in members) / count
+        representative["energy_boundary"] = energy_boundary(representative["dc_kwh"])
+        representative["sources"]["aggregation"] = "distance_weighted_duties_equal_bus_use"
+        result.append(representative)
     return result
 
 
@@ -308,16 +357,18 @@ async def evaluate_fleet(vehicles, client):
     totals = {}
     if complete:
         for ind in UNITS:
-            parts = [v["indicators"][ind] for v in results]
+            parts = [(v["indicators"][ind], v.get("vehicle_count", 1)) for v in results]
             totals[ind] = {"unit": UNITS[ind]}
             for key in ("electricity_operation", "diesel_heating", "other_lifecycle", "total", "diesel_comparator_total"):
-                totals[ind][key] = sum(p[key] for p in parts)
+                totals[ind][key] = sum(p[key] * count for p, count in parts)
             for key in ("phases", "diesel_comparator_phases", "diesel_heating_phases"):
-                totals[ind][key] = {phase: sum(p[key][phase] for p in parts) for phase in PHASES}
+                totals[ind][key] = {phase: sum(p[key][phase] * count for p, count in parts) for phase in PHASES}
             totals[ind]["saving"] = totals[ind]["diesel_comparator_total"]-totals[ind]["total"]
     return {"methodology_version": METHOD, "status": "complete" if complete else "incomplete", "vehicles": results,
-            "vehicle_count": len(vehicles), "annual_km": sum(v["annual_km"] for v in vehicles),
-            "energy_boundary": energy_boundary(sum(v["dc_kwh"] for v in vehicles)), "indicators": totals,
+            "vehicle_count": sum(v.get("vehicle_count", 1) for v in vehicles),
+            "representative_count": len(vehicles),
+            "annual_km": sum(v["annual_km"] * v.get("vehicle_count", 1) for v in vehicles),
+            "energy_boundary": energy_boundary(sum(v["dc_kwh"] * v.get("vehicle_count", 1) for v in vehicles)), "indicators": totals,
             "provenance": {"base_url": client.base_url, "data_version": catalog()["data_version"],
                            "diesel_heating_methodology": diesel_heating_config()["methodology_version"]},
             "limitations": ["Representative Mobitool inventories, not manufacturer-specific LCA.",
