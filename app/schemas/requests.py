@@ -490,6 +490,8 @@ class OptimizationRequest(BaseModel):
         default=None,
         description="Project decision basis. aggregate_q95 samples independent trip occurrences and conditions the profile on the shift total Q95. None preserves the legacy per-trip setting.",
     )
+    evaluate_both_bases: bool = Field(default=False,
+        description="Create and calculate linked Mean and aggregate-Q95 designs in one evaluation.")
     aggregate_sample_count: int = Field(default=100_000, ge=10_000, le=1_000_000)
     aggregate_max_samples: int = Field(default=500_000, ge=10_000, le=1_000_000)
     aggregate_seed: int = Field(default=20261029, ge=0, le=4294967295)
@@ -552,6 +554,8 @@ class OptimizationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_fields(self):
+        if self.evaluate_both_bases and (self.quantile_consumption != "mean" or not self.lock_entire_dwell):
+            raise ValueError("Paired evaluations require mean trip forecasts and entire-dwell occupancy")
         if self.consumption_basis is not None and self.quantile_consumption != "mean":
             raise ValueError("consumption_basis cannot be combined with a legacy per-trip quantile")
         if self.aggregate_max_samples < self.aggregate_sample_count:

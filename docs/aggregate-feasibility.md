@@ -4,6 +4,22 @@ New clients submit `consumption_basis: mean | aggregate_q95`. The default for
 older clients is unchanged. `quantile_consumption: "0.95"` still means the
 individual trip quantile; it cannot be combined with an explicit new basis.
 
+The frontend now also submits `evaluate_both_bases: true`. One request validates
+the inputs and atomically creates a Mean run and an aggregate-Q95 run, linked by
+`input_params.basis_run_ids`. The response includes both IDs. Each has its own
+design, full-mass verification, schedule, status and provenance. A single
+background task calculates them sequentially and shares a request-local cache
+of predictive distributions at matching masses. A failure of one basis does not
+discard the other. The time budget is per basis. Entire-dwell occupancy is
+required for paired requests.
+
+The list shows one evaluation with separate basis summaries, hiding only the
+paired comparison row. Selecting Mean/Q95 opens the corresponding complete run
+without starting work, so economics and yearly analyses keep an unambiguous run
+ID. Historical single-basis evaluations retain their original semantics.
+Deleting either member deletes the pair atomically and detaches their yearly
+analyses; deletion is rejected while either calculation is pending/running.
+
 The aggregate method samples independent occurrences from the complete
 conditional predictive distribution. Repeated trip IDs get separate draws.
 The equal-weight QRF adapter requires `max_samples_leaf=1`, discovers the actual
@@ -24,6 +40,20 @@ selected shift and shared charger remains in the problem. Full predictions and
 Q95 profiles are recalculated at the selected physical mass before fixed-design
 verification. Failed verification reanchors within the existing bounded loop.
 Diagnostic excess packs never constitute a verified installable configuration.
+
+The fixed-design verification pass now optimizes charging reserve, without a
+third solve or any change to selected battery packs or installed slots. It
+minimizes `sum(dt * usable_capacity * (1 - usable_SOC_fraction)^2)` over each
+bus's own duty including its terminal state. A convex 20-segment linear
+epigraph keeps the problem MILP without extra binary variables. Low SOC has
+greater marginal priority per kWh; this is a soft, horizon-wide preference
+subordinate to feasibility for every bus, not a strict arrival-order dispatch
+rule. Charger assignments, whole-dwell occupation, connection delays and shared
+site power limits remain constraints. The reserve objective is skipped if no
+charger is installed. Session outputs include `slot_number` and
+`connected_without_charging_minutes`; `charging_schedule_policy` records the
+method. SOC and diagnostics use this verified schedule directly. No new
+simulation is needed to generate the schedule.
 
 The results JSON stores `consumption_analysis`, per-occurrence profiles, seeds,
 model/mass/features provenance, sampling precision, and fixed-plan diagnostics.

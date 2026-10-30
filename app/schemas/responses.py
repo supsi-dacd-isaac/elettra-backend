@@ -14,6 +14,7 @@ class PredictionSubmitResponse(BaseModel):
 
 class OptimizationSubmitResponse(BaseModel):
     optimization_run_id: UUID
+    basis_run_ids: Optional[dict[str, UUID]] = None
 
 
 class OptimizationDeleteResponse(BaseModel):
@@ -328,6 +329,7 @@ class OptimizationRunListItemRead(BaseModel):
     electrification_feasible: Optional[bool] = None
     solver_status: Optional[str] = None
     consumption_basis: Optional[str] = None
+    basis_summaries: Optional[dict] = None
     quantile_consumption: Optional[str] = None
     verification_status: Optional[str] = None
     objective_value: Optional[float] = None

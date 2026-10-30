@@ -61,11 +61,13 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
             # The same trip estimator and schedule, at the chosen physical mass.
             check_config = remaining_config(fixed_battery_packs=packs,
                                             fixed_station_slots=slots,
-                                            allow_excess_packs=False)
+                                            allow_excess_packs=False,
+                                            charging_objective="soc_reserve")
             if on_progress:
                 await on_progress({"iteration": iteration, "phase": "fixed_design_verification", "iterations": history})
             checked = await asyncio.to_thread(solve, exact_buses, stations, check_config)
             entry["verification_solver_status"] = checked.solver_status
+            entry["charging_schedule_policy"] = checked.charging_schedule_policy
             entry["exact_prediction_run_ids"] = references
             entry["linear_energy_kwh"] = {
                 b.shift_id: sum(t.base_energy_kwh + t.sensitivity *

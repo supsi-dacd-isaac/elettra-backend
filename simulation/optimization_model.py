@@ -113,6 +113,7 @@ class OptimizationConfig:
     fixed_battery_packs: Optional[Dict[str, int]] = None
     fixed_station_slots: Optional[Dict[str, int]] = None
     allow_excess_packs: bool = True
+    charging_objective: str = "feasibility"
 
 
 @dataclass
@@ -133,6 +134,7 @@ class OptimizationResult:
 
     per_bus_summary: List[dict]
     station_utilization: Dict[str, dict]
+    charging_schedule_policy: Dict[str, object] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -760,6 +762,12 @@ def solve_optimization(
         return obj
 
     m.obj = Objective(rule=obj_rule, sense=minimize)
+    schedule_policy = {}
+    if config.charging_objective == "soc_reserve":
+        from simulation.charging_priority import apply_reserve_objective
+        schedule_policy = apply_reserve_objective(m, buses, config, arrays["first_t"])
+    elif config.charging_objective != "feasibility":
+        raise ValueError("Unknown charging objective")
 
     # -----------------------------------------------------------------------
     # Solve
@@ -945,6 +953,14 @@ def solve_optimization(
             connect_val[:, b_idx], power_val[:, b_idx],
             station_at_minute[:, b_idx], stations, first_t,
         )
+        for session in sessions:
+            start = session["start_minute"] - first_t
+            s_idx = int(station_at_minute[start, b_idx])
+            session["slot_number"] = next((k + 1 for s, k in m.InstallIndex
+                if s == s_idx and (start, b_idx, s, k) in m.AssignIndex
+                and value(m.assign[start, b_idx, s, k]) > .5), None)
+            end = session["end_minute"] - first_t
+            session["connected_without_charging_minutes"] = int(np.sum(power_val[start:end, b_idx] < 1e-6))
         per_bus_summary.append({
             "shift_id": bus.shift_id,
             "shift_name": bus.shift_name,
@@ -1011,6 +1027,7 @@ def solve_optimization(
         total_infeasibility_penalty_chf=total_infeasibility_penalty,
         per_bus_summary=per_bus_summary,
         station_utilization=station_util,
+        charging_schedule_policy=schedule_policy,
     )
 
 

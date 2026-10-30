@@ -571,6 +571,7 @@ async def prepare_optimization_input(
 async def run_optimization(
     db: AsyncSession,
     optimization_run_id: UUID,
+    *, profile_cache=None, statistics_cache=None,
 ) -> None:
     """Execute the full optimization pipeline for a given run."""
     run = await db.get(OptimizationRuns, optimization_run_id)
@@ -586,7 +587,8 @@ async def run_optimization(
         basis = params.get("consumption_basis") or (
             "mean" if params.get("quantile_consumption", "mean") == "mean" else "legacy_trip_quantile")
         aggregate_options = AggregateOptions.from_params(params)
-        profile_cache, statistics_cache = {}, {}
+        profile_cache = {} if profile_cache is None else profile_cache
+        statistics_cache = {} if statistics_cache is None else statistics_cache
         budget = params.get("optimization_time_budget_seconds", 900)
 
         async def profiles_for(references):
@@ -756,6 +758,7 @@ async def run_optimization(
             "total_infeasibility_penalty_chf": result.total_infeasibility_penalty_chf,
             "per_bus_summary": result.per_bus_summary,
             "station_utilization": result.station_utilization,
+            "charging_schedule_policy": result.charging_schedule_policy,
             "prediction_provenance": prediction_provenance,
             "prediction_component_breakdown": prediction_components,
         }
@@ -783,10 +786,16 @@ async def run_optimization(
 # Background task wrapper
 # ---------------------------------------------------------------------------
 
-async def run_optimization_background(optimization_run_id: UUID) -> None:
+async def run_optimization_background(optimization_run_id: UUID, comparison_run_id: UUID | None = None) -> None:
     """Wrapper called from BackgroundTasks. Opens its own DB session."""
     async with AsyncSessionLocal() as db:
         try:
-            await run_optimization(db, optimization_run_id)
+            # Sequential solvers avoid oversubscribing HiGHS and sharing an
+            # AsyncSession across tasks. Complete distributions are reused at
+            # matching masses; each basis still gets its own verified design.
+            profiles, statistics = {}, {}
+            for run_id in [optimization_run_id, comparison_run_id]:
+                if run_id is not None:
+                    await run_optimization(db, run_id, profile_cache=profiles, statistics_cache=statistics)
         except Exception:
             logger.exception("Background optimization failed for %s", optimization_run_id)
