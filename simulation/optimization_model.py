@@ -268,6 +268,8 @@ def solve_optimization(
 ) -> OptimizationResult:
     """Build and solve the charging-point / battery-sizing MILP."""
     t_start = time.time()
+    logger.info('Building optimization model: objective=%s, mode=%s, buses=%d',
+                config.charging_objective, config.mode, len(buses))
 
     arrays = _prepare_arrays(buses, stations, config)
     num_steps = arrays["num_steps"]
@@ -823,8 +825,8 @@ def solve_optimization(
     n_vars = sum(1 for _ in m.component_data_objects(Var, active=True))
     n_cons = sum(1 for _ in m.component_data_objects(Constraint, active=True))
     logger.info(
-        "Solving with %s: %d buses, %d steps, %d stations, %d vars, %d constraints",
-        solver_key, num_buses, num_steps, len(stations), n_vars, n_cons,
+        "Model built in %.2fs; solving with %s: %d buses, %d steps, %d stations, %d vars, %d constraints",
+        time.time()-t_start, solver_key, num_buses, num_steps, len(stations), n_vars, n_cons,
     )
 
     for b in range(num_buses):
@@ -903,6 +905,7 @@ def solve_optimization(
             shave_depot_peaks(m, solver, daily_context, config)
         else:
             daily_context['peak_status'] = 'unavailable'
+    solve_time = time.time() - t_start
 
     try:
         obj_val = float(value(m.obj))

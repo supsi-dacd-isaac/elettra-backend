@@ -745,6 +745,8 @@ async def run_optimization(
             return exact_buses, exact_ids
 
         async def progress(state):
+            logger.info('Optimization phase: %s (iteration %s, elapsed %.1fs)',
+                        state.get('phase'), state.get('iteration'), time.monotonic()-pipeline_started)
             run.results = {"contract_version": CONTRACT_VERSION,
                            **({"execution": execution_metadata} if execution_metadata else {}),
                            "forecast_verification": {"status": "running", **state}}

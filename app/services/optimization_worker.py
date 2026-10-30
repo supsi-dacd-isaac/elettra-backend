@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 from datetime import datetime, timezone
@@ -9,6 +10,8 @@ from uuid import UUID
 
 
 async def execute(run_id: UUID) -> None:
+    logging.basicConfig(level=logging.INFO,
+                        format=f'%(asctime)s [optimization {run_id} pid=%(process)d] %(name)s %(levelname)s %(message)s')
     from app.database import AsyncSessionLocal, engine
     from app.models import OptimizationRuns
     from app.services.elevation_profiles import validate_configured_release
@@ -18,6 +21,7 @@ async def execute(run_id: UUID) -> None:
 
     execution = {"pid": os.getpid(), "threads": threads_per_worker(),
                  "started_at": datetime.now(timezone.utc).isoformat()}
+    logging.getLogger(__name__).info('Starting worker with %d solver threads', execution['threads'])
     try:
         async with AsyncSessionLocal() as db:
             run = await db.get(OptimizationRuns, run_id)

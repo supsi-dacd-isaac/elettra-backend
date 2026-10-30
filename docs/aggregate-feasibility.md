@@ -107,6 +107,31 @@ Each result records worker PID, thread limit and start/end timestamps in
 model initialization overhead and intentionally do not share mutable in-memory
 caches. A crash marks only its run as failed; cancellation reaps the child process.
 
+## Bounded depot peak shaving
+
+After fixed-design verification, depot peak shaving uses a separate continuous
+LP containing only overnight interval powers and one peak per depot. It does not
+fix/reload the large daytime MILP. Battery sizes, installed chargers, daytime
+charging and whole-stay plug assignments are unchanged. The existing depot
+intervals and connection buffers are retained. The maximum fixed daytime load
+inside each interval enforces the site limit at every minute, including overlaps
+across midnight.
+
+Refinement has at most five seconds of solver time, further limited by the
+remaining verification budget. A feasible nonoptimal solution is sufficient;
+every candidate is checked for finite nonnegative power, charger/site limits,
+unchanged next-departure energy and no increase in any depot peak. Failure or
+timeout without a valid candidate retains the already feasible schedule.
+`daily_cycle.peak_shaving` reports the method, solution quality, model size and
+elapsed time. This step cannot improve an infeasible design or change its CAPEX.
+
+Worker logs include the run ID/PID, configured solver threads, pipeline phase,
+model construction time and separate peak-refinement timing. Configure
+`ELETTRA_OPTIMIZATION_THREADS_PER_WORKER=16` and `ELETTRA_OPTIMIZATION_WORKERS=2`
+on a suitably sized server for concurrent Mean/Q95 workers. These are available
+solver threads, not a promise of constant CPU use: model construction and parts
+of presolve are serial.
+
 ## Infeasible daily-cycle diagnostics
 
 A proven infeasible daily cycle retains its infeasible status. Within the remaining
