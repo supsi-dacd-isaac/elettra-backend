@@ -1,0 +1,33 @@
+# Falco-only notification routing. Raw events remain in Falco's JSON logs.
+global:
+  resolve_timeout: 2h
+  slack_api_url_file: /run/alertmanager/slack-webhook
+
+route:
+  receiver: slack-falco
+  group_by: [hostname, severity]
+  group_wait: 5m
+  group_interval: 30m
+  repeat_interval: 4h
+  routes:
+    - receiver: slack-falco
+      matchers:
+        - severity="critical"
+      group_by: [hostname, rule, severity]
+      group_wait: 10s
+      group_interval: 15m
+      repeat_interval: 1h
+
+receivers:
+  - name: slack-falco
+    slack_configs:
+      - send_resolved: false
+        username: Falco
+        title: '{{ .CommonLabels.hostname }} | {{ .CommonLabels.severity }} | {{ len .Alerts.Firing }} eventi'
+        color: '{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+        text: |-
+          {{ range $i, $alert := .Alerts.Firing }}{{ if lt $i 5 }}
+          • *{{ $alert.Labels.rule }}* — container: `{{ $alert.Labels.container_name }}`, processo: `{{ $alert.Labels.proc_name }}`, uid: `{{ $alert.Labels.user_uid }}`
+          {{ end }}{{ end }}
+          {{ if gt (len .Alerts.Firing) 5 }}Mostrati 5 esempi su {{ len .Alerts.Firing }} eventi.{{ end }}
+          Dettagli completi nei log di elettra-falco. Ripetizioni raggruppate; nessun blocco degli accessi.

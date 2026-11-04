@@ -230,28 +230,60 @@ services:
     privileged: true
     pid: host
     network_mode: host
+    environment:
+      - FALCO_HOSTNAME=elettra
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/host/var/run/docker.sock:ro
       - /dev:/host/dev:ro
       - /proc:/host/proc:ro
       - ./falco/falco.yaml:/etc/falco/falco.yaml:ro
       - ./falco/rules.d:/etc/falco/rules.d:ro
       - falco-logs:/var/log/falco
       - falco-run:/run/falco
-    command: ["falco", "-c", "/etc/falco/falco.yaml"]
+    command:
+      - falco
+      - -c
+      - /etc/falco/falco.yaml
+      - -p
+      - "container_id=%container.id container_name=%container.name image=%container.image.repository process=%proc.name executable=%proc.exepath pid=%proc.pid parent=%proc.pname uid=%user.uid"
 
-  # Falcosidekick — forwards Falco alerts to Slack (and other outputs)
+  # Falcosidekick forwards Warning+ events to a dedicated grouping service.
   falcosidekick:
-    image: falcosecurity/falcosidekick:2.9.3
+    image: falcosecurity/falcosidekick:2.34.1@sha256:d4f0d7c538ede3fe4a491143c45c0787bf4fc24e6fcac6d39dff6721d75a9419
     container_name: elettra-falcosidekick
     restart: unless-stopped
     depends_on:
-      - falco
+      - falco-alertmanager
     ports:
-      - "2801:2801"
+      - "127.0.0.1:2801:2801"
     environment:
-      - SLACK_WEBHOOKURL=${SLACK_WEBHOOK_URL}
-      - SLACK_MINIMUMPRIORITY=warning
+      - ALERTMANAGER_HOSTPORT=http://falco-alertmanager:9093
+      - ALERTMANAGER_ENDPOINT=/api/v2/alerts
+      - ALERTMANAGER_MINIMUMPRIORITY=warning
+
+  # Only Falco alerts use this instance; it has no published host ports.
+  falco-alertmanager:
+    image: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
+    container_name: elettra-falco-alertmanager
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+    entrypoint: ["/bin/sh", "/etc/alertmanager/entrypoint.sh"]
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --cluster.listen-address=
+    tmpfs:
+      - /run/alertmanager:uid=65534,gid=65534,mode=0700
+    volumes:
+      - ./falco/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./falco/alertmanager-entrypoint.sh:/etc/alertmanager/entrypoint.sh:ro
+      - falco-alertmanager-data:/alertmanager
 
   # Diun - Docker Image Update Notifier
   diun:
@@ -286,4 +318,5 @@ volumes:
   osrm-data:
   falco-logs:
   falco-run:
+  falco-alertmanager-data:
   diun-data:

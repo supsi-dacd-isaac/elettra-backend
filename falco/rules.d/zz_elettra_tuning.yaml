@@ -1,0 +1,82 @@
+# Loaded after elettra_rules.yaml. Keep existing/site-specific rules intact.
+# These exceptions affect detection only; Falco never grants or blocks DB access.
+
+- list: elettra_postgresql_containers
+  items: [elettra-db, elettra-user-staging-db, elettra-grid94-staging-db-1,
+          elettra-grid94-test-db, elettra-road-snap-staging-db-20260828,
+          elettra-road-snap-gate-db, dream-postgres, dream-postgres-staging,
+          dream-local-dream-postgres-1, dream-pv-registry-dream-postgres-1,
+          forecast-api-postgres-1, timescaledb]
+
+- list: elettra_postgresql_images
+  items: [postgres, library/postgres, docker.io/library/postgres,
+          timescale/timescaledb, docker.io/timescale/timescaledb]
+
+- list: elettra_postgresql_executables
+  items: [/usr/local/bin/postgres, /usr/lib/postgresql/16/bin/postgres]
+
+- macro: user_expected_database_access
+  condition: >
+    (container and
+     container.name in (elettra_postgresql_containers) and
+     container.image.repository in (elettra_postgresql_images) and
+     proc.name = postgres and proc.exepath in (elettra_postgresql_executables))
+  override:
+    condition: replace
+
+# Merely starting an SQL client is routine administration, not evidence of abuse.
+# Retain this audit event locally without forwarding it to Slack.
+- rule: Database Connection from Non-Database Container
+  priority: NOTICE
+  output: >
+    Database client started outside the primary database container
+    (user=%user.name uid=%user.uid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     proc=%proc.name exe=%proc.exepath pid=%proc.pid parent=%proc.pname)
+  override:
+    priority: replace
+    output: replace
+
+# Keep host/unknown-container access covered. Only the PostgreSQL server in an
+# explicitly known DB container is exempt; shells, cat, backup tools, etc. are not.
+- rule: Unauthorized Database Access Attempt
+  condition: >
+    open_read and
+    (fd.name contains "/var/lib/postgresql/" or
+     fd.name contains "/etc/postgresql/" or
+     fd.name contains "postgresql.conf") and
+    not user_expected_database_access
+  output: >
+    Unexpected PostgreSQL file access
+    (user=%user.name uid=%user.uid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     proc=%proc.name exe=%proc.exepath pid=%proc.pid parent=%proc.pname
+     event=%evt.type file=%fd.name)
+  override:
+    condition: replace
+    output: replace
+
+- macro: user_expected_minio_access
+  condition: >
+    (container.image.repository in (minio/minio, docker.io/minio/minio) and
+     proc.name = minio and proc.exepath = /usr/bin/minio)
+  override:
+    condition: replace
+
+# The TCP readiness probes observed on the MinIO services trigger the upstream
+# stream-redirection rule. Match only this local probe, its ancestry and image.
+- macro: user_known_stand_streams_redirect_activities
+  condition: >
+    or (container.image.repository in (minio/minio, docker.io/minio/minio) and
+     proc.name = bash and proc.pname = timeout and
+     proc.aname[2] in (sh, containerd-shim) and
+     proc.cmdline = "bash -c :> /dev/tcp/127.0.0.1/9000" and
+     fd.sip = 127.0.0.1 and fd.rport = 9000)
+  override:
+    condition: append
+
+# IPv6 loopback is also local. The original rule only excluded IPv4 loopback.
+- rule: Unexpected Network Connection
+  condition: and fd.net != "::1/128"
+  override:
+    condition: append
