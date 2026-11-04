@@ -51,7 +51,55 @@
     (user=%user.name uid=%user.uid container=%container.name
      container_id=%container.id image=%container.image.repository
      proc=%proc.name exe=%proc.exepath pid=%proc.pid parent=%proc.pname
-     event=%evt.type file=%fd.name)
+     ppid=%proc.ppid parent_exe=%proc.aexepath[1] vpid=%proc.vpid
+     cgroups=%thread.cgroups event=%evt.type file=%fd.name)
+  override:
+    condition: replace
+    output: replace
+
+# Compose may temporarily prefix a container name during replacement. Identify
+# the API by its stable project/service labels, image, user and executable.
+# Exempt only its own configuration file; other readers remain observable.
+- macro: elettra_known_api_container
+  condition: >
+    (container and
+     container.label[com.docker.compose.project] in
+       (elettra-backend, elettra-user-staging, elettra-grid94-staging) and
+     container.label[com.docker.compose.service] = app and
+     container.image.repository = ghcr.io/supsi-dacd-isaac/elettra-backend)
+
+- macro: elettra_api_reading_own_configuration
+  condition: >
+    (elettra_known_api_container and
+     user.uid = 999 and
+     proc.name in (uvicorn, python, python3, python3.12) and
+     proc.exepath = /usr/local/bin/python3.12 and
+     fd.name = /app/config/elettra-config.docker.yaml)
+
+# The runtime also opens the mount target while preparing an API container.
+# Restrict this to the observed runtime executable, parent, UID and exact target.
+- macro: elettra_api_configuration_mount_setup
+  condition: >
+    (elettra_known_api_container and user.uid = 0 and
+     proc.name = "runc:[1:CHILD]" and proc.exepath = /usr/bin/runc and
+     proc.pname = runc and proc.aexepath[1] = /usr/bin/runc and
+     fd.name startswith /ssd2/docker/overlay2/ and
+     fd.name endswith /merged/app/config/elettra-config.docker.yaml)
+
+- rule: Elettra Configuration Access
+  condition: >
+    open_read and container and
+    fd.name contains "elettra-config" and
+    not elettra_api_reading_own_configuration and
+    not elettra_api_configuration_mount_setup
+  output: >
+    Unexpected Elettra configuration reader
+    (user=%user.name uid=%user.uid container=%container.name
+     container_id=%container.id image=%container.image.repository
+     project=%container.label[com.docker.compose.project]
+     service=%container.label[com.docker.compose.service]
+     proc=%proc.name exe=%proc.exepath pid=%proc.pid parent=%proc.pname
+     flags=%evt.arg.flags file=%fd.name)
   override:
     condition: replace
     output: replace

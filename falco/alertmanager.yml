@@ -1,6 +1,8 @@
 # Falco-only notification routing. Raw events remain in Falco's JSON logs.
 global:
-  resolve_timeout: 2h
+  # Falco sends discrete events, not continuously refreshed health checks.
+  # Expire isolated events before the critical reminder interval elapses.
+  resolve_timeout: 15m
   slack_api_url_file: /run/alertmanager/slack-webhook
 
 route:

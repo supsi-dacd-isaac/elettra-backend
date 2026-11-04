@@ -17,7 +17,9 @@ Alertmanager, so there is no duplicate direct Slack delivery from Falcosidekick.
 | Warning / Error | One group per host: first summary after 5 minutes, updates no more often than every 30 minutes, unchanged reminders after 4 hours |
 | Critical / Alert / Emergency | One group per host and rule: first notification after 10 seconds, updates no more often than every 15 minutes, unchanged reminders after 1 hour |
 
-Alertmanager's `resolve_timeout: 2h` governs event expiry. Do not set
+Alertmanager's `resolve_timeout: 15m` governs event expiry. An isolated event
+expires before the reminder interval, preventing reminders about old activity
+when no new event has occurred. Do not set
 `ALERTMANAGER_EXPIRESAFTER`: the sidekick payload does not supply `startsAt`, and
 explicit future `endsAt` timestamps have undesirable start-time semantics with
 this Alertmanager version. Resolved notifications are disabled.
@@ -42,6 +44,16 @@ preserves site edits to `elettra_rules.yaml`.
 - The exact MinIO loopback TCP readiness probe is excluded from the upstream
   stream-redirection rule using the image, command, ancestry and destination.
 - IPv6 loopback is excluded from the external-network rule, like IPv4 loopback.
+- Normal API configuration reads require the known Compose project and `app`
+  service labels, backend image, UID 999, Python/Uvicorn executable, and exact
+  configuration path. This also covers staging and temporary Compose renames.
+  Other readers, including shell tools inside the API container, remain covered.
+  The verified `runc` startup process preparing this exact API configuration mount
+  is also excluded, restricted by the same container identity and runtime ancestry.
+
+Database events without container metadata are not automatically trusted. Their
+output includes the parent PID/executable, namespace PID and cgroups to investigate
+missing attribution without broadly exempting host PostgreSQL processes.
 
 Review the explicit container/executable lists when adding or upgrading database
 services. Changes to these lists affect alerts only, never DB access rights.
@@ -79,12 +91,16 @@ Limit deployments to the monitoring services:
 
 ```bash
 docker compose up -d --no-deps --no-build falco-alertmanager falcosidekick falco
+docker compose restart falco-alertmanager
 docker compose restart falco-exporter
 ```
 
 Do not run an unrestricted Compose update or restart database/application services
 for monitoring changes. Falco watches its rule files and reloads when they change;
 use a separately mounted candidate directory for validation before replacement.
+Restart Alertmanager after updating its configuration: a Git checkout can replace
+the bind-mounted file's inode, leaving a SIGHUP reload reading the old file. Verify
+the loaded `global.resolve_timeout` through its `/api/v2/status` endpoint.
 
 Check the pipeline without printing container environments or the rendered
 Compose configuration, which contain credentials:
