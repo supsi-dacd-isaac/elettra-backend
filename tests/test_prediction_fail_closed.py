@@ -54,6 +54,26 @@ def _complete_stats():
 
 
 @pytest.mark.asyncio
+async def test_request_cache_reuses_trips_without_losing_occurrences_or_outliving_request():
+    trip = uuid4()
+    structures = [SimpleNamespace(trip_id=trip, sequence_number=number) for number in [10, 20]]
+    cache = {}
+    with (
+        patch("app.services.prediction._load_trip_elevation", new=AsyncMock(return_value=pd.DataFrame({"altitude_m": [1.0]}))) as elevation,
+        patch("app.services.prediction.compute_global_trip_statistics_combined", return_value=_complete_stats()),
+        patch("app.services.prediction.extract_stop_to_stop_statistics_for_schedule", return_value={}),
+        patch("app.services.prediction.extract_route_difficulty_metrics_from_elevation", return_value={}),
+    ):
+        first = await load_shift_trip_statistics(_Session(structures, [_schedule_rows('a')]), uuid4(), trip_cache=cache)
+        second = await load_shift_trip_statistics(_Session(structures, []), uuid4(), trip_cache=cache)
+        assert first == second
+        assert [item['sequence_number'] for item in first] == [10, 20]
+        assert elevation.await_count == 1
+        await load_shift_trip_statistics(_Session(structures, [_schedule_rows('a')]), uuid4(), trip_cache={})
+        assert elevation.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_shift_statistics_preserve_structure_order_and_cardinality():
     structures = _structures()
     session = _Session(structures, [_schedule_rows("a"), _schedule_rows("b"), _schedule_rows("c")])

@@ -54,7 +54,9 @@ async def test_service_uses_full_profile_at_selected_mass_once_per_reference(mon
         return [bus], [StationData('p','P',[100],1,300,300)], config
     async def components(*args, **kwargs): return None
     monkeypatch.setattr(service, 'prepare_optimization_input', prepare)
-    monkeypatch.setattr(service, 'load_aggregate_profile', profile)
+    async def profiles(db, requests, **kwargs):
+        return {str(pred.id): await profile(db, pred, **kwargs) for pred, _ in requests}
+    monkeypatch.setattr(service, 'load_aggregate_profiles', profiles)
     monkeypatch.setattr(service, '_prediction_provenance', lambda runs: {})
     monkeypatch.setattr(service, '_prediction_component_summary', components)
     shared = {}
@@ -152,12 +154,12 @@ async def test_distribution_loader_accepts_database_numeric_decimals_and_rejects
     class DB:
         async def get(self,*args): return NS(specs={})
         async def execute(self,*args): return NS(scalars=lambda:NS(all=lambda:records))
-    async def statistics(*args): return stats
+    async def statistics(*args, **kwargs): return stats
     monkeypatch.setattr(loader,'physical_bus_mass',lambda *args,**kwargs:mass)
     monkeypatch.setattr(loader,'resolve_prediction_selection',lambda **kwargs:NS(stack=PredictionStack.LEGACY))
     monkeypatch.setattr(loader,'validate_model_stack_contract',lambda *args:None)
     monkeypatch.setattr(loader,'_model_passenger_mass_kg',lambda *args:68)
-    monkeypatch.setattr(loader,'get_predictor',lambda *args:NS(metadata={},model=NS(),prepare_features=lambda *args:pd.DataFrame({'distance':[1,2]})))
+    monkeypatch.setattr(loader,'get_predictor',lambda *args:NS(metadata={},model=NS(),prepare_features=lambda *args, **kwargs:pd.DataFrame({'distance':[1,2]})))
     monkeypatch.setattr(loader,'load_shift_trip_statistics',statistics)
     monkeypatch.setattr(loader,'build_aux_energy_fn',lambda *args:None)
     monkeypatch.setattr(loader,'empirical_qrf_support',lambda *args,**kwargs:(np.array([[9,11],[19,21]]),np.array([10,20]),{}))

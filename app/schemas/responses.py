@@ -12,6 +12,14 @@ class PredictionSubmitResponse(BaseModel):
     prediction_run_ids: list[UUID]
 
 
+class YearlyPredictionScenarioResponse(PredictionSubmitResponse):
+    scenario_id: str
+
+
+class YearlyPredictionSubmitResponse(PredictionSubmitResponse):
+    scenarios: list[YearlyPredictionScenarioResponse]
+
+
 class OptimizationSubmitResponse(BaseModel):
     optimization_run_id: UUID
     basis_run_ids: Optional[dict[str, UUID]] = None
