@@ -1007,6 +1007,11 @@ async def read_calendar_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_as
 @router.get("/gtfs-stops/by-trip/{trip_id}", response_model=List[GtfsStopsReadWithTimes])
 async def read_stops_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
     """Get all GTFS stops for a given trip ID"""
+    # Authorize the complete trip before reading any of its stops.  The generic
+    # stop filter resolves agency ownership through every occurrence of a stop
+    # in gtfs_stops_times; applying it here again is both redundant and very
+    # expensive.  The trip_id predicate below keeps the returned rows inside
+    # the already-authorized shared GTFS or user-owned auxiliary trip.
     await get_accessible_gtfs_trip(
         db, trip_id, current_user.id, current_user.company_id
     )
@@ -1019,7 +1024,6 @@ async def read_stops_by_trip(trip_id: UUID, db: AsyncSession = Depends(get_async
         .join(GtfsStopsTimes, GtfsStops.id == GtfsStopsTimes.stop_id)
         .filter(
             GtfsStopsTimes.trip_id == trip_id,
-            gtfs_stop_accessible_filter(current_user.id, current_user.company_id),
         )
         .order_by(GtfsStopsTimes.stop_sequence)
     )

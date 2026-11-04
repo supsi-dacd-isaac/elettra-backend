@@ -721,6 +721,61 @@ def test_agency_gtfs_is_shared_but_other_agencies_are_hidden(
         assert client.get(url, headers=headers).status_code == 404, url
 
 
+@pytest.mark.parametrize("side,other", [("a", "b"), ("b", "a")])
+def test_stops_by_trip_returns_ordered_stops_only_for_authorized_auxiliary_trip(
+    client: TestClient,
+    isolation_context: dict,
+    side: str,
+    other: str,
+) -> None:
+    ctx = isolation_context
+    headers = _headers(ctx[side]["token"])
+    own = ctx[side]["resource"]
+    foreign = ctx[other]["resource"]
+
+    response = client.get(
+        f"{GTFS}/gtfs-stops/by-trip/{own['aux_trip']}", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    stops = response.json()
+    assert [stop["id"] for stop in stops] == [
+        own["depot_stop"],
+        own["depot_stop"],
+    ]
+    assert [stop["arrival_time"] for stop in stops] == ["08:00:00", "08:10:00"]
+
+    foreign_response = client.get(
+        f"{GTFS}/gtfs-stops/by-trip/{foreign['aux_trip']}", headers=headers
+    )
+    missing_response = client.get(
+        f"{GTFS}/gtfs-stops/by-trip/{uuid.uuid4()}", headers=headers
+    )
+    assert foreign_response.status_code == missing_response.status_code == 404
+    assert foreign_response.json() == missing_response.json()
+
+
+def test_stops_by_trip_does_not_reapply_the_generic_stop_filter(
+    client: TestClient,
+    isolation_context: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import gtfs as gtfs_router
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("The authorized-trip endpoint reapplied the stop filter")
+
+    monkeypatch.setattr(
+        gtfs_router,
+        "gtfs_stop_accessible_filter",
+        fail_if_called,
+    )
+    response = client.get(
+        f"{GTFS}/gtfs-stops/by-trip/{isolation_context['shared']['trip_id']}",
+        headers=_headers(isolation_context["a"]["token"]),
+    )
+    assert response.status_code == 200, response.text
+
+
 def test_agency_admin_can_manage_accounts_only_inside_own_agency(
     client: TestClient, isolation_context: dict
 ) -> None:
