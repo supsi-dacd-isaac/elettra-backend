@@ -268,6 +268,31 @@ def test_yearly_costs_optimization_capex_uses_linked_run_without_manual_inputs(
     assert payload["ebus"]["opex_items"][0]["cost_chf_per_year"] == round(500 / .94, 2)
 
 
+def test_yearly_costs_preserve_pack_price_and_split_site_investment(client, fake_yearly_costs):
+    results = fake_yearly_costs.db.optimization_results
+    results["battery_results"]["shift-1"]["selected_battery_cost_chf"] = 60_000
+    results["installed_chargers"]["stop-1"]["cost_breakdown"] = {
+        "chargers_cost_chf": 8000,
+        "site_fixed_cost_chf": 3000,
+        "site_power_cost_chf": 1345,
+    }
+    response = _get_costs(
+        client, fake_yearly_costs.yearly_analysis_id, include_capex=True,
+        capex_source="optimization", battery_cost_per_kwh=999,
+        lifetime_charger=15, lifetime_connection=30,
+    )
+    assert response.status_code == 200, response.text
+    items = {item["name"]: item for item in response.json()["ebus"]["capex_items"]}
+    # The fixture contains two buses with the same block: price each battery,
+    # while the shared site investment is counted only once.
+    assert items["Battery"]["investment_chf"] == 120_000
+    assert items["Charging points"]["investment_chf"] == 8000
+    assert items["Charging points"]["lifetime_years"] == 15
+    assert items["Site connection and shared infrastructure"]["investment_chf"] == 4345
+    assert items["Site connection and shared infrastructure"]["lifetime_years"] == 30
+    assert "Optimized charging infrastructure" not in items
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected_status", "expected_detail"),
     [

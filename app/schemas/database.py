@@ -167,6 +167,7 @@ class TripPredictionsRead(BaseModel):
 
 class OptimizationRunsRead(BaseModel):
     id: UUID
+    basis_summaries: Optional[dict] = None
     user_id: UUID
     bus_model_id: Optional[UUID] = None
     name: Optional[str] = Field(

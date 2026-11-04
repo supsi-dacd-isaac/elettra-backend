@@ -14,11 +14,20 @@ class PredictionSubmitResponse(BaseModel):
 
 class OptimizationSubmitResponse(BaseModel):
     optimization_run_id: UUID
+    basis_run_ids: Optional[dict[str, UUID]] = None
 
 
 class OptimizationDeleteResponse(BaseModel):
     deleted: bool
     id: UUID
+
+
+class ChargingStopCandidateRead(BaseModel):
+    stop_id: UUID
+    stop_name: str
+    is_depot: bool = False
+    is_custom: bool = False
+    depot_bus_count: int = Field(default=0, ge=0)
 
 
 class ElevationProfileJobResponse(BaseModel):
@@ -328,6 +337,7 @@ class OptimizationRunListItemRead(BaseModel):
     electrification_feasible: Optional[bool] = None
     solver_status: Optional[str] = None
     consumption_basis: Optional[str] = None
+    basis_summaries: Optional[dict] = None
     quantile_consumption: Optional[str] = None
     verification_status: Optional[str] = None
     objective_value: Optional[float] = None

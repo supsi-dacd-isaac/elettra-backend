@@ -70,6 +70,7 @@ from app.services.yearly_weather_recalculation import (
     DEFAULT_CLUSTER_START,
     binding_for_series_id,
     prediction_run_provenance,
+    preview_yearly_weather_reference,
     require_uniform_prediction_provenance,
     resolve_analysis_weather_binding,
 )
@@ -271,9 +272,26 @@ def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
             ),
         )
 
+    extra = {}
+    battery_rows = [battery_results[str(row["shift_id"])] for row in per_bus_summary]
+    if all(row.get("selected_battery_cost_chf") is not None for row in battery_rows):
+        extra["battery_investment_chf"] = sum(_require_number(row["selected_battery_cost_chf"], "selected_battery_cost_chf") for row in battery_rows)
+    charger_rows = list((installed_chargers or {}).values())
+    if charger_rows and all(isinstance(row.get("cost_breakdown"), dict) for row in charger_rows):
+        point_total = common_total = 0.0
+        for row in charger_rows:
+            parts = row["cost_breakdown"]
+            points = _require_number(parts.get("chargers_cost_chf"), "chargers_cost_chf")
+            common = _require_number(parts.get("site_fixed_cost_chf"), "site_fixed_cost_chf") + _require_number(parts.get("site_power_cost_chf"), "site_power_cost_chf")
+            if abs(points + common - row["cost_chf"]) > 0.01:
+                raise HTTPException(status_code=422, detail="Infrastructure cost breakdown is inconsistent")
+            point_total += points
+            common_total += common
+        extra.update(charging_points_cost_chf=point_total, site_infrastructure_cost_chf=common_total)
     return {
         "optimized_battery_capacity_kwh": optimized_battery_capacity_kwh,
         "installation_cost_chf": installation_cost_chf,
+        **extra,
     }
 
 
@@ -657,6 +675,19 @@ async def list_yearly_analyses(
         skip=pagination.skip,
         limit=pagination.limit,
     )
+
+
+@router.get("/weather-reference")
+async def yearly_weather_reference(
+    optimization_run_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    optimization = await get_owned_optimization_run(db, optimization_run_id, current_user.id)
+    try:
+        return await preview_yearly_weather_reference(db, optimization)
+    except AnalysisWeatherResolutionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/{yearly_analysis_id}", response_model=YearlyAnalysisRead)
@@ -1447,10 +1478,7 @@ async def get_yearly_costs(
                     status_code=500,
                     detail="Optimization CAPEX inputs were not prepared.",
                 )
-            inv_battery = (
-                batt_cpk
-                * optimization_capex_inputs["optimized_battery_capacity_kwh"]
-            )
+            inv_battery = optimization_capex_inputs.get("battery_investment_chf", batt_cpk * optimization_capex_inputs["optimized_battery_capacity_kwh"])
             inv_charging_infrastructure = optimization_capex_inputs["installation_cost_chf"]
             ebus_capex = [
                 CapexLineItem(
@@ -1474,6 +1502,13 @@ async def get_yearly_costs(
                     ),
                 ),
             ]
+            if "charging_points_cost_chf" in optimization_capex_inputs:
+                ebus_capex = ebus_capex[:2] + [
+                    CapexLineItem(name="Charging points", investment_chf=round(optimization_capex_inputs["charging_points_cost_chf"], 2),
+                        lifetime_years=lt_chg, annualized_chf_per_year=round(_annualize(optimization_capex_inputs["charging_points_cost_chf"], lt_chg, ir), 2)),
+                    CapexLineItem(name="Site connection and shared infrastructure", investment_chf=round(optimization_capex_inputs["site_infrastructure_cost_chf"], 2),
+                        lifetime_years=lt_conn, annualized_chf_per_year=round(_annualize(optimization_capex_inputs["site_infrastructure_cost_chf"], lt_conn, ir), 2)),
+                ]
         else:
             inv_battery = batt_cpk * battery_capacity_kwh
             inv_charger = ch_a * charger_power_kw + ch_b
@@ -1625,6 +1660,7 @@ async def get_yearly_costs(
 async def get_yearly_lca(
     yearly_analysis_id: UUID,
     annual_km: Optional[float] = Query(None, gt=0),
+    annual_km_by_shift: Optional[str] = Query(None, max_length=100000),
     shift_id: Optional[UUID] = Query(None),
     lifetime_bus: Optional[float] = Query(None, gt=0),
     lifetime_battery: Optional[float] = Query(None, gt=0),
@@ -1636,7 +1672,7 @@ async def get_yearly_lca(
     current_user: Users = Depends(get_current_user),
 ):
     from app.services.parameterized_lca import (
-        METHOD, LcaIncomplete, MobitoolClient, build_vehicles, evaluate_fleet,
+        METHOD, LcaIncomplete, MobitoolClient, build_vehicles, evaluate_fleet, representative_vehicles,
     )
     ya = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
     runs = await _load_prediction_runs(db, yearly_analysis_id)
@@ -1655,13 +1691,22 @@ async def get_yearly_lca(
             detail="annual_km is required when shift_id is provided",
         )
     try:
+        mileage_by_shift = None
+        if annual_km_by_shift is not None:
+            try:
+                mileage_by_shift = json.loads(annual_km_by_shift)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=422, detail="Invalid mileage mapping")
+            if not isinstance(mileage_by_shift, dict):
+                raise HTTPException(status_code=422, detail="Mileage must be a mapping of vehicle block IDs to annual kilometres")
         vehicles = build_vehicles(runs, energy, ya.features or {}, specs, {
             "annual_km": annual_km, "shift_id": shift_id,
+            "annual_km_by_shift": mileage_by_shift,
             "lifetime_bus": lifetime_bus, "lifetime_battery": lifetime_battery,
             "lifetime_diesel_bus": lifetime_diesel_bus, "battery_chemistry": battery_chemistry,
             "electricity_mix": electricity_mix, "diesel_consumption_l_per_km": diesel_consumption_l_per_km,
         })
-        result = await evaluate_fleet(vehicles, MobitoolClient(_lca_base_url()))
+        result = await evaluate_fleet(representative_vehicles(vehicles), MobitoolClient(_lca_base_url()))
     except LcaIncomplete as exc:
         result = {"methodology_version": METHOD, "status": "incomplete", "reason": str(exc),
                   "indicators": {}, "vehicles": []}

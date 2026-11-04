@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update
+from sqlalchemy import exists, select, func, true, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import get_async_session
@@ -17,11 +17,18 @@ from app.schemas.responses import (
     OptimizationDeleteResponse,
     CombinedTripStatisticsResponse,
     OptimizationRunListItemRead,
+    ChargingStopCandidateRead,
 )
 from app.schemas.pagination import (
     PaginatedResponse, PaginationParams, build_paginated_response,
 )
-from app.schemas.requests import TripStatisticsRequest, PredictionRequest, OptimizationRequest, _OPTIMIZATION_EXAMPLES
+from app.schemas.requests import (
+    ChargingStopCandidatesRequest,
+    TripStatisticsRequest,
+    PredictionRequest,
+    OptimizationRequest,
+    _OPTIMIZATION_EXAMPLES,
+)
 from app.schemas.external_apis import (
     PvgisTmyResponse,
     PvgisTmyMetadataResponse,
@@ -32,7 +39,8 @@ from app.schemas.external_apis import (
 from app.models import (
     Users,
     GtfsTrips, GtfsStops, GtfsStopsTimes,
-    PredictionRuns, TripPredictions, Shifts, BusesModels,
+    PredictionRuns, TripPredictions, Shifts, ShiftsStructures, Buses, BusesModels,
+    Depots,
     OptimizationRuns, YearlyAnalysis,
 )
 from app.core.auth import get_current_user
@@ -45,6 +53,7 @@ from app.core.ownership import (
     get_owned_shift,
     get_owned_yearly_analysis,
     prediction_run_owned_filter,
+    shift_trips_accessible_filter,
     stamp_yearly_analysis_owner,
 )
 from app.services.weather import (
@@ -229,8 +238,122 @@ def _assert_yearly_prediction_stack_compatible(
 
 
 # ---------------------------------------------------------------------------
+# Charging-stop candidate endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/charging-stops/candidates",
+    response_model=list[ChargingStopCandidateRead],
+)
+async def list_charging_stop_candidates(
+    request: ChargingStopCandidatesRequest,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    """Return unique trip termini for a complete set of owned shifts.
+
+    Authorization is deliberately performed for the complete request before
+    reading stop rows.  A mixed owned/foreign request therefore fails without
+    disclosing which UUID is missing or belongs to another user.
+    """
+
+    shift_ids = list(dict.fromkeys(request.shift_ids))
+    requested_ids = set(shift_ids)
+    accessible_result = await db.execute(
+        select(Shifts.id)
+        .join(Buses, Shifts.bus_id == Buses.id)
+        .where(
+            Shifts.id.in_(requested_ids),
+            Buses.user_id == current_user.id,
+            shift_trips_accessible_filter(
+                current_user.id,
+                current_user.company_id,
+            ),
+        )
+    )
+    if set(accessible_result.scalars().all()) != requested_ids:
+        raise HTTPException(
+            status_code=404,
+            detail="One or more shifts were not found",
+        )
+
+    terminal_stop = (
+        select(GtfsStopsTimes.stop_id.label("stop_id"))
+        .where(GtfsStopsTimes.trip_id == ShiftsStructures.trip_id)
+        .order_by(
+            GtfsStopsTimes.stop_sequence.desc().nulls_last(),
+            GtfsStopsTimes.id.desc(),
+        )
+        .limit(1)
+        .correlate(ShiftsStructures)
+        .lateral("terminal_stop")
+    )
+    is_owned_depot = exists(
+        select(1)
+        .select_from(Depots)
+        .where(
+            Depots.stop_id == GtfsStops.id,
+            Depots.user_id == current_user.id,
+        )
+    )
+    terminal_result = await db.execute(
+        select(
+            ShiftsStructures.shift_id,
+            ShiftsStructures.sequence_number,
+            GtfsStops.id.label("stop_id"),
+            GtfsStops.stop_name,
+            is_owned_depot.label("is_depot"),
+        )
+        .select_from(ShiftsStructures)
+        .outerjoin(terminal_stop, true())
+        .outerjoin(GtfsStops, GtfsStops.id == terminal_stop.c.stop_id)
+        .where(ShiftsStructures.shift_id.in_(requested_ids))
+    )
+
+    shift_order = {shift_id: index for index, shift_id in enumerate(shift_ids)}
+    rows = sorted(
+        terminal_result.all(),
+        key=lambda row: (
+            shift_order[row.shift_id],
+            row.sequence_number,
+        ),
+    )
+    last_sequence_by_shift: dict[UUID, int] = {}
+    for row in rows:
+        last_sequence_by_shift[row.shift_id] = max(
+            row.sequence_number,
+            last_sequence_by_shift.get(row.shift_id, row.sequence_number),
+        )
+
+    candidates: dict[UUID, dict] = {}
+    for row in rows:
+        if row.stop_id is None:
+            continue
+        candidate = candidates.setdefault(
+            row.stop_id,
+            {
+                "stop_id": row.stop_id,
+                "stop_name": row.stop_name or str(row.stop_id),
+                "is_depot": bool(row.is_depot),
+                "is_custom": False,
+                "depot_bus_count": 0,
+            },
+        )
+        if (
+            row.is_depot
+            and row.sequence_number == last_sequence_by_shift[row.shift_id]
+        ):
+            candidate["depot_bus_count"] += 1
+            candidate["is_custom"] = True
+
+    return [ChargingStopCandidateRead(**candidate) for candidate in candidates.values()]
+
+
+# ---------------------------------------------------------------------------
 # Prediction Runs endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("/prediction-runs/", response_model=PredictionSubmitResponse)
 async def create_prediction_runs(
@@ -342,12 +465,13 @@ async def create_prediction_runs(
 async def list_prediction_runs(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
+    yearly_analysis_id: UUID | None = None,
 ):
-    result = await db.execute(
-        select(PredictionRuns)
-        .where(prediction_run_owned_filter(current_user.id))
-        .order_by(PredictionRuns.created_at.desc())
-    )
+    query = select(PredictionRuns).where(prediction_run_owned_filter(current_user.id))
+    if yearly_analysis_id is not None:
+        await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
+        query = query.where(PredictionRuns.yearly_analysis_id == yearly_analysis_id)
+    result = await db.execute(query.order_by(PredictionRuns.created_at.desc()))
     return result.scalars().all()
 
 
@@ -479,6 +603,8 @@ async def create_optimization_run(
     # `name` is a first-class column on optimization_runs; keep it out of
     # input_params (which is reserved for solver/technical inputs).
     input_params = request.model_dump(mode="json", exclude={"name"})
+    if request.evaluate_both_bases:
+        input_params["consumption_basis"] = "mean"
 
     run = OptimizationRuns(
         user_id=current_user.id,
@@ -492,12 +618,33 @@ async def create_optimization_run(
     db.add(run)
     await db.flush()
     run_id = run.id
+    comparison = None
+    basis_ids = None
+    if request.evaluate_both_bases:
+        from simulation.aggregate_consumption import METHOD_VERSION
+        comparison = OptimizationRuns(
+            user_id=current_user.id, bus_model_id=request.bus_model_id, mode=request.mode,
+            name=f"{request.name} · Q95", status="pending",
+            prediction_run_ids=list(run.prediction_run_ids) if run.prediction_run_ids else None,
+            input_params={**input_params, "consumption_basis": "aggregate_q95",
+                          "basis_source_run_id": str(run_id), "paired_basis_role": "comparison",
+                          "basis_method_version": METHOD_VERSION},
+        )
+        db.add(comparison)
+        await db.flush()
+        basis_ids = {"mean": str(run_id), "aggregate_q95": str(comparison.id)}
+        run.input_params = {**input_params, "paired_basis_role": "primary",
+                            "basis_run_ids": basis_ids, "basis_method_version": METHOD_VERSION}
+        comparison.input_params = {**comparison.input_params, "basis_run_ids": basis_ids}
     await db.commit()
 
     from app.services.optimization import run_optimization_background
-    background_tasks.add_task(run_optimization_background, run_id)
+    if comparison is not None:
+        background_tasks.add_task(run_optimization_background, run_id, comparison.id)
+    else:
+        background_tasks.add_task(run_optimization_background, run_id)
 
-    return OptimizationSubmitResponse(optimization_run_id=run_id)
+    return OptimizationSubmitResponse(optimization_run_id=run_id, basis_run_ids=basis_ids)
 
 
 @router.get(
@@ -517,10 +664,14 @@ async def list_optimization_runs(
     pagination: PaginationParams = Depends(),
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
+    include_basis_variants: bool = Query(False),
 ):
     base_query = select(OptimizationRuns).where(
-        OptimizationRuns.user_id == current_user.id
+        OptimizationRuns.user_id == current_user.id,
     )
+    if include_basis_variants is not True:
+        base_query = base_query.where(
+            OptimizationRuns.input_params["paired_basis_role"].astext.is_distinct_from("comparison"))
 
     total = await db.scalar(
         select(func.count()).select_from(base_query.subquery())
@@ -535,16 +686,41 @@ async def list_optimization_runs(
         .offset(pagination.skip)
         .limit(pagination.limit)
     )
+    runs = list(items_result.scalars().all())
     items = [
         _serialize_optimization_run_list_item(r)
-        for r in items_result.scalars().all()
+        for r in runs
     ]
+    if include_basis_variants is not True:
+        summaries = await _load_basis_summaries(db, runs, current_user.id)
+        for item, run in zip(items, runs):
+            ids = (run.input_params or {}).get("basis_run_ids")
+            if ids:
+                item.basis_summaries = {basis: summaries.get(rid, {"status": "unavailable"})
+                                        for basis, rid in ids.items()}
+                states = [row["status"] for row in item.basis_summaries.values()]
+                item.status = ("running" if any(s in {"pending", "running"} for s in states)
+                               else "completed" if "completed" in states else "failed")
     return build_paginated_response(
         items=items,
         total=int(total or 0),
         skip=pagination.skip,
         limit=pagination.limit,
     )
+
+
+async def _load_basis_summaries(db, runs, user_id):
+    paired_ids = {UUID(rid) for run in runs
+                  for rid in (run.input_params or {}).get("basis_run_ids", {}).values()}
+    if not paired_ids:
+        return {}
+    pairs = await db.execute(select(
+        OptimizationRuns.id, OptimizationRuns.status,
+        OptimizationRuns.results["electrification_feasible"].label("feasible"),
+        OptimizationRuns.results["forecast_verification"]["status"].astext.label("verification"),
+    ).where(OptimizationRuns.id.in_(paired_ids), OptimizationRuns.user_id == user_id))
+    return {str(r.id): {"status": r.status, "electrification_feasible": r.feasible,
+                        "verification_status": r.verification} for r in pairs.all()}
 
 
 @router.get("/optimization-runs/{run_id}", response_model=OptimizationRunsRead)
@@ -555,12 +731,21 @@ async def get_optimization_run(
 ):
     """Get optimization run status and results."""
     run = await get_owned_optimization_run(db, run_id, current_user.id)
-    return _serialize_optimization_run(run)
+    result = _serialize_optimization_run(run)
+    ids = (run.input_params or {}).get("basis_run_ids")
+    if ids:
+        summaries = await _load_basis_summaries(db, [run], current_user.id)
+        result.basis_summaries = {basis: summaries.get(rid, {"status": "unavailable"})
+                                  for basis, rid in ids.items()}
+    return result
 
 
 async def _basis_comparison(db, current_user, run_id, basis):
     from simulation.aggregate_consumption import METHOD_VERSION
     source = await get_owned_optimization_run(db, run_id, current_user.id)
+    paired_id = (source.input_params or {}).get("basis_run_ids", {}).get(basis)
+    if paired_id:
+        return source, await get_owned_optimization_run(db, UUID(paired_id), current_user.id)
     root_id = (source.input_params or {}).get("basis_source_run_id")
     if root_id:
         source = await get_owned_optimization_run(db, UUID(root_id), current_user.id)
@@ -608,6 +793,7 @@ async def create_basis_comparison(
             **source.input_params, "name": f"{source.name or 'Evaluation'} · {'Q95' if basis == 'aggregate_q95' else 'Mean'}",
             "prediction_run_ids": source.input_params.get("prediction_run_ids") or getattr(source, "prediction_run_ids", None),
             "consumption_basis": basis, "quantile_consumption": "mean",
+            "evaluate_both_bases": False,
         })
     except ValidationError as exc:
         raise HTTPException(status_code=409, detail="Historical inputs cannot be reused; create a new evaluation with complete parameters") from exc
@@ -636,25 +822,32 @@ async def delete_optimization_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Optimization run not found")
 
+    runs = [run]
+    paired = (run.input_params or {}).get("basis_run_ids", {})
+    for other_id in set(paired.values()) - {str(run_id)}:
+        runs.append(await get_owned_optimization_run(db, UUID(other_id), current_user.id))
+    if paired and any(candidate.status in {"pending", "running"} for candidate in runs):
+        raise HTTPException(status_code=409, detail="Wait for both evaluations to finish before deleting them")
     try:
-        linked_analyses = (
-            await db.execute(
-                select(YearlyAnalysis).where(
-                    YearlyAnalysis.optimization_run_id == run_id
+        for candidate in runs:
+            linked_analyses = (
+                await db.execute(
+                    select(YearlyAnalysis).where(
+                        YearlyAnalysis.optimization_run_id == candidate.id
+                    )
                 )
+            ).scalars().all()
+            for analysis in linked_analyses:
+                await get_owned_yearly_analysis(db, analysis.id, current_user.id)
+                analysis.features = stamp_yearly_analysis_owner(
+                    analysis.features, current_user.id
+                )
+            await db.execute(
+                update(YearlyAnalysis)
+                .where(YearlyAnalysis.optimization_run_id == candidate.id)
+                .values(optimization_run_id=None)
             )
-        ).scalars().all()
-        for analysis in linked_analyses:
-            await get_owned_yearly_analysis(db, analysis.id, current_user.id)
-            analysis.features = stamp_yearly_analysis_owner(
-                analysis.features, current_user.id
-            )
-        await db.execute(
-            update(YearlyAnalysis)
-            .where(YearlyAnalysis.optimization_run_id == run_id)
-            .values(optimization_run_id=None)
-        )
-        await db.delete(run)
+            await db.delete(candidate)
         await db.commit()
     except SQLAlchemyError as exc:
         await db.rollback()

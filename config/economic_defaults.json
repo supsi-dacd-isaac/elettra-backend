@@ -5,7 +5,7 @@
   "lifetime_battery": 8,
   "lifetime_charger": 15,
   "lifetime_connection": 30,
-  "lifetime_diesel_bus": 10,
+  "lifetime_diesel_bus": 12,
   "bus_length_m": 12,
   "battery_capacity_kwh": 300,
   "charger_power_kw": 150,

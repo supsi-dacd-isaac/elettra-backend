@@ -38,6 +38,9 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
                      "reference_packs": {b.shift_id: b.reference_packs for b in buses},
                      "linear_objective_value": result.objective_value}
             history.append(entry)
+            if result.solver_status == "infeasible":
+                status = "infeasible"
+                break
             if result.solver_status != "optimal":
                 status = "solver_not_optimal"
                 break
@@ -61,11 +64,13 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
             # The same trip estimator and schedule, at the chosen physical mass.
             check_config = remaining_config(fixed_battery_packs=packs,
                                             fixed_station_slots=slots,
-                                            allow_excess_packs=False)
+                                            allow_excess_packs=False,
+                                            charging_objective="soc_reserve")
             if on_progress:
                 await on_progress({"iteration": iteration, "phase": "fixed_design_verification", "iterations": history})
             checked = await asyncio.to_thread(solve, exact_buses, stations, check_config)
             entry["verification_solver_status"] = checked.solver_status
+            entry["charging_schedule_policy"] = checked.charging_schedule_policy
             entry["exact_prediction_run_ids"] = references
             entry["linear_energy_kwh"] = {
                 b.shift_id: sum(t.base_energy_kwh + t.sensitivity *
@@ -95,7 +100,7 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
     if status != "verified":
         result.electrification_feasible = False
         result.electrification_summary = {
-            **result.electrification_summary, "status": "infeasible" if status == "physical_limits_exceeded" else "unverified",
+            **result.electrification_summary, "status": "infeasible" if status in {"physical_limits_exceeded", "infeasible"} else "unverified",
             "message": f"Full-forecast feasibility not established: {status}",
         }
         for row in result.battery_results.values():

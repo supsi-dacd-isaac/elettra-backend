@@ -135,6 +135,10 @@ def build_energy_analysis(buses, result, profiles, config, *, basis, verified):
             "state_of_health": config.state_of_health,
             "reference": source["reference"], "statistics": source["statistics"],
             "occurrences": source["occurrences"],
+            # Preserve the timetable used by this result for display-only
+            # interpolation, even if the source shift is edited later.
+            "trip_intervals": [{"departure_minute": trip.departure_minute,
+                                "arrival_minute": trip.arrival_minute} for trip in bus.trips],
             "trip_profiles_kwh": {key: source[key] for key in cases}, "cases": cases,
             "verified_soc_kwh": timeline["soc_kwh"],
             "plan_fingerprint": hashlib.sha256(json.dumps({

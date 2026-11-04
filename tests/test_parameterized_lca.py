@@ -10,6 +10,7 @@ from app.services.parameterized_lca import (
     LcaIncomplete, MobitoolClient, PHASES, build_vehicles, catalog, impacts,
     normalize_electric, parameters,
     evaluate_fleet,
+    representative_vehicles,
 )
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures/mobitool_grid94_reference.json").read_text())
@@ -54,6 +55,8 @@ def test_weather_not_vehicle_count_and_mileage_reparameterizes_lifetime():
     vehicles=build_vehicles(runs,energy,features,{})
     assert len(vehicles)==2
     assert vehicles[0]["annual_km"]==20000
+    assert vehicles[0]["lifetime_diesel_bus"] == 12
+    assert build_vehicles(runs, energy, features, {}, {"lifetime_diesel_bus": 10})[0]["lifetime_diesel_bus"] == 10
     assert vehicles[0]["sources"]["battery_chemistry"]=="declared_default"
     scaled=build_vehicles(runs,energy,features,{}, {"annual_km":80000})
     meta=catalog()["vehicles"][catalog()["classes"]["13m"]["electric"]]
@@ -177,6 +180,65 @@ def test_snapshot_precedes_mutated_specs_and_nominal_capacity_is_preserved():
     assert vehicles[0]["battery_chemistry"] == "LFP"
     assert vehicles[0]["battery_capacity_kwh"] == 400
     assert vehicles[0]["sources"]["lifetime_bus"] == "prediction_snapshot"
+
+
+def test_representative_bus_uses_distance_weighted_consumption_and_equal_mileage():
+    runs, energy, features = inputs()
+    for scenario in energy["scenarios"][:2]:
+        scenario.update(annual_distance_km=40000, annual_electric_kwh=72000)
+    for scenario in energy["scenarios"][2:]:
+        scenario.update(annual_distance_km=10000, annual_electric_kwh=8000)
+    groups = representative_vehicles(build_vehicles(runs, energy, features, {}))
+    assert len(groups) == 1
+    assert groups[0]["vehicle_count"] == 2
+    assert groups[0]["annual_km"] == 50000
+    assert groups[0]["dc_kwh"] == 80000
+    assert groups[0]["dc_kwh"] / groups[0]["annual_km"] == 1.6
+    assert groups[0]["shift_ids"] == ["a", "b"]
+    runs[-1].contextual_parameters["battery_capacity_kwh"] = 500
+    runs[-2].contextual_parameters["battery_capacity_kwh"] = 500
+    assert len(representative_vehicles(build_vehicles(runs, energy, features, {}))) == 2
+
+
+def test_saved_comparator_and_group_mileage_are_shared_by_finance_and_lca():
+    runs, energy, features = inputs()
+    features["assessment_assumptions"] = {"tco": {"bodyLife": 15, "batteryLife": 9,
+        "dieselLife": 11, "dieselConsumption": .6, "annualKmByShift": {"a": 40000, "b": 10000}}}
+    vehicles = build_vehicles(runs, energy, features, {})
+    assert [v["annual_km"] for v in vehicles] == [40000, 10000]
+    assert [v["dc_kwh"] for v in vehicles] == [60000, 15000]
+    assert all(v["lifetime_diesel_bus"] == 11 and v["diesel_consumption_l_per_km"] == .6 for v in vehicles)
+    preview = build_vehicles(runs, energy, features, {}, {"annual_km_by_shift": {"a": 20000, "b": 30000}})
+    assert [v["annual_km"] for v in preview] == [20000, 30000]
+    group = representative_vehicles(preview)[0]
+    assert group["annual_km"] == 25000
+    assert group["dc_kwh"] == 37500
+    with pytest.raises(LcaIncomplete, match="every selected"):
+        build_vehicles(runs, energy, features, {}, {"annual_km_by_shift": {"a": 20000}})
+    with pytest.raises(LcaIncomplete):
+        build_vehicles(runs, energy, features, {}, {"annual_km_by_shift": {"a": -1, "b": 20000}})
+
+
+@pytest.mark.asyncio
+async def test_representative_lca_evaluates_once_and_scales_impacts(monkeypatch):
+    runs, energy, features = inputs()
+    groups = representative_vehicles(build_vehicles(runs, energy, features, {}))
+    calls = []
+    async def evaluate(vehicle, client):
+        calls.append(vehicle)
+        indicator = {"electricity_operation": 100, "diesel_heating": 0, "other_lifecycle": 200,
+                     "total": 300, "diesel_comparator_total": 500,
+                     **{key: dict.fromkeys(PHASES, 10) for key in ("phases", "diesel_comparator_phases", "diesel_heating_phases")}}
+        return {**vehicle, "status": "complete", "indicators": {key: indicator for key in PAIRS[0]}}
+    monkeypatch.setattr("app.services.parameterized_lca.evaluate_vehicle", evaluate)
+    result = await evaluate_fleet(groups, SimpleNamespace(base_url="fixture"))
+    assert len(calls) == 1
+    assert result["representative_count"] == 1
+    assert result["vehicle_count"] == 2
+    assert result["annual_km"] == 40000
+    assert result["energy_boundary"]["dc_kwh"] == 60000
+    assert result["indicators"]["gwp100a"]["total"] == 600
+    assert result["indicators"]["gwp100a"]["phases"]["vehicle"] == 20
 
 
 @pytest.mark.asyncio

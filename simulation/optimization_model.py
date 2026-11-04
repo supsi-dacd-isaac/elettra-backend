@@ -51,6 +51,11 @@ class BusData:
     max_packs: int
     reference_packs: int  # pack count used in the prediction run
     trips: List[TripData] = field(default_factory=list)
+    depot_station_idx: int = -1
+    battery_pack_cost_chf: Optional[float] = None
+    bus_cost_chf: Optional[float] = None  # vehicle without traction batteries
+    bus_model_id: Optional[str] = None
+    bus_model_name: Optional[str] = None
 
 
 @dataclass
@@ -73,6 +78,7 @@ class StationData:
     num_fixed_slots: Optional[int]  # fixed slots (battery_only mode)
     max_total_power_kw: float
     max_power_per_slot_kw: Optional[float]
+    cost_model: Optional[dict] = None
 
 
 @dataclass
@@ -101,9 +107,12 @@ class OptimizationConfig:
 
     # Depot charging
     depot_dwell_minutes_after: int = 0
+    daily_cycle: bool = False
+    depot_peak_shaving: bool = False
 
     # Solver
     solver_name: str = "highs"
+    solver_threads: Optional[int] = None
     max_solver_time_seconds: Optional[int] = None
     mip_rel_gap: Optional[float] = None
     mip_abs_gap: Optional[float] = None
@@ -113,6 +122,7 @@ class OptimizationConfig:
     fixed_battery_packs: Optional[Dict[str, int]] = None
     fixed_station_slots: Optional[Dict[str, int]] = None
     allow_excess_packs: bool = True
+    charging_objective: str = "feasibility"
 
 
 @dataclass
@@ -133,6 +143,8 @@ class OptimizationResult:
 
     per_bus_summary: List[dict]
     station_utilization: Dict[str, dict]
+    charging_schedule_policy: Dict[str, object] = field(default_factory=dict)
+    daily_cycle: Dict[str, object] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +180,7 @@ def _prepare_arrays(
     first_t = min(all_times)
     last_t = max(all_times)
 
-    depot_after = config.depot_dwell_minutes_after
+    depot_after = 0 if config.daily_cycle else config.depot_dwell_minutes_after
     if depot_after > 0:
         last_t = last_t + depot_after
 
@@ -256,6 +268,8 @@ def solve_optimization(
 ) -> OptimizationResult:
     """Build and solve the charging-point / battery-sizing MILP."""
     t_start = time.time()
+    logger.info('Building optimization model: objective=%s, mode=%s, buses=%d',
+                config.charging_objective, config.mode, len(buses))
 
     arrays = _prepare_arrays(buses, stations, config)
     num_steps = arrays["num_steps"]
@@ -277,13 +291,8 @@ def solve_optimization(
     battery_offset = np.array([b.battery_offset_kwh for b in buses])
     excess_pack_big_m = _estimate_excess_pack_upper_bounds(buses, config)
 
-    # Station slot costs
-    station_slot_costs: List[List[float]] = []
-    for s in stations:
-        if config.mode == "battery_only" and s.num_fixed_slots is not None:
-            station_slot_costs.append([0.0] * s.num_fixed_slots)
-        else:
-            station_slot_costs.append(list(s.slot_costs_chf or []))
+    from simulation.infrastructure_costs import station_slot_costs as resolve_slot_costs, infrastructure_cost_breakdown
+    station_slot_costs = [resolve_slot_costs(s, config.mode) for s in stations]
 
     power_limits_by_station = {i: s.max_total_power_kw for i, s in enumerate(stations)}
 
@@ -369,7 +378,15 @@ def solve_optimization(
             m.B, rule=max_out_physical_packs_before_excess_rule
         )
 
-    # Per-route equality constraints for battery sizing
+    # A single physical pack count for the entire selected fleet. Legacy
+    # per-route grouping below is kept separate for historical requests.
+    if config.battery_sizing_mode == "uniform" and config.mode != "charging_only":
+        if not np.allclose(pack_size, pack_size[0], rtol=0, atol=1e-6):
+            raise ValueError("Uniform battery sizing requires the same battery pack size for every bus")
+        m.uniform_battery = Constraint(
+            m.B, rule=lambda mdl, b: Constraint.Skip if b == 0 else mdl.n_packs[b] == mdl.n_packs[0])
+
+    # Per-route equality constraints for legacy battery sizing
     if config.battery_sizing_mode == "per_route" and config.mode != "charging_only":
         route_groups: Dict[str, List[int]] = {}
         for b_idx, bus in enumerate(buses):
@@ -728,7 +745,8 @@ def solve_optimization(
             for b in mdl.B:
                 ps = float(pack_size[b])
                 mp = float(min_packs[b])
-                obj += cost_per_kwh * (mdl.n_packs[b] - mp) * ps
+                pack_cost = buses[b].battery_pack_cost_chf
+                obj += (pack_cost if pack_cost is not None else cost_per_kwh * ps) * (mdl.n_packs[b] - mp)
                 obj += penalty_per_kwh * mdl.n_excess_packs[b] * ps
         elif config.mode == "battery_only":
             w = float(config.soc_increase_weight)
@@ -760,6 +778,16 @@ def solve_optimization(
         return obj
 
     m.obj = Objective(rule=obj_rule, sense=minimize)
+    daily_context = None
+    if config.daily_cycle:
+        from simulation.depot_cycle import add_daily_cycle
+        daily_context = add_daily_cycle(m, buses, stations, config, arrays)
+    schedule_policy = {}
+    if config.charging_objective == "soc_reserve":
+        from simulation.charging_priority import apply_reserve_objective
+        schedule_policy = apply_reserve_objective(m, buses, config, arrays["first_t"])
+    elif config.charging_objective != "feasibility":
+        raise ValueError("Unknown charging objective")
 
     # -----------------------------------------------------------------------
     # Solve
@@ -768,6 +796,10 @@ def solve_optimization(
     if solver_key not in {"highs", "gurobi"}:
         raise ValueError(f"Unsupported solver '{config.solver_name}'")
     solver = SolverFactory(solver_key)
+    if config.solver_threads is not None:
+        if config.solver_threads < 1:
+            raise ValueError("solver_threads must be positive")
+        solver.options["threads" if solver_key == "highs" else "Threads"] = config.solver_threads
 
     rel_gap = 0.0 if config.mip_rel_gap is None else max(0.0, config.mip_rel_gap)
     abs_gap = 0.0 if config.mip_abs_gap is None else max(0.0, config.mip_abs_gap)
@@ -793,8 +825,8 @@ def solve_optimization(
     n_vars = sum(1 for _ in m.component_data_objects(Var, active=True))
     n_cons = sum(1 for _ in m.component_data_objects(Constraint, active=True))
     logger.info(
-        "Solving with %s: %d buses, %d steps, %d stations, %d vars, %d constraints",
-        solver_key, num_buses, num_steps, len(stations), n_vars, n_cons,
+        "Model built in %.2fs; solving with %s: %d buses, %d steps, %d stations, %d vars, %d constraints",
+        time.time()-t_start, solver_key, num_buses, num_steps, len(stations), n_vars, n_cons,
     )
 
     for b in range(num_buses):
@@ -809,14 +841,37 @@ def solve_optimization(
             len(buses[b].trips),
         )
     try:
-        lp_path = "/tmp/optim_debug.lp"
+        lp_path = f"/tmp/optim_debug-{os.getpid()}.lp"
         m.write(lp_path, io_options={"symbolic_solver_labels": True})
         logger.info("Wrote LP model to %s (%d bytes)", lp_path, os.path.getsize(lp_path))
     except Exception as write_exc:
         logger.warning("Could not write LP file: %s", write_exc)
 
+    def no_solution(status, message, *, infeasible=False):
+        return OptimizationResult(
+            solver_status=status, objective_value=-1.0,
+            solve_time_seconds=round(time.time() - t_start, 2),
+            electrification_feasible=False,
+            electrification_summary={
+                "status": "infeasible" if infeasible else "unverified",
+                "message": message, "infeasible_buses": [],
+            },
+            installed_chargers={}, total_installation_cost_chf=0.0,
+            battery_results={}, total_battery_cost_chf=0.0,
+            total_infeasibility_penalty_chf=0.0,
+            per_bus_summary=[], station_utilization={},
+        )
+
     try:
-        results = solver.solve(m, tee=True)
+        # Inspect termination before loading: HiGHS raises on an infeasible
+        # model if automatic loading is enabled, hiding the actual outcome.
+        results = solver.solve(m, tee=True, load_solutions=False)
+        term_cond = str(results.solver.termination_condition)
+        if term_cond == "infeasible":
+            return no_solution("infeasible", "No feasible solution satisfies the configured constraints.", infeasible=True)
+        if not len(results.solution):
+            return no_solution(term_cond, "No solution is available; feasibility has not been established.")
+        m.solutions.load_from(results)
     except Exception as exc:
         solve_time = time.time() - t_start
         logger.error("Solver raised exception after %.1fs: %s", solve_time, exc)
@@ -841,6 +896,16 @@ def solve_optimization(
     solve_time = time.time() - t_start
     term_cond = str(results.solver.termination_condition)
     logger.info("Solver finished: %s (%.1fs)", term_cond, solve_time)
+
+    if daily_context is not None and term_cond == "optimal" and config.charging_objective == "soc_reserve" and config.depot_peak_shaving:
+        from simulation.depot_cycle import shave_depot_peaks
+        remaining = (config.max_solver_time_seconds or 900) - (time.time() - t_start)
+        if remaining > 0:
+            solver.options["time_limit" if solver_key == "highs" else "TimeLimit"] = remaining
+            shave_depot_peaks(m, solver, daily_context, config)
+        else:
+            daily_context['peak_status'] = 'unavailable'
+    solve_time = time.time() - t_start
 
     try:
         obj_val = float(value(m.obj))
@@ -868,6 +933,9 @@ def solve_optimization(
             "num_slots": count,
             "cost_chf": cost,
         }
+        if station.cost_model is not None:
+            installed_chargers[station.stop_id]["cost_breakdown"] = infrastructure_cost_breakdown(
+                station.cost_model, station.max_total_power_kw, count)
         total_install_cost += cost
 
     # Battery results
@@ -886,13 +954,22 @@ def solve_optimization(
 
         if config.mode == "joint":
             extra_packs = np_val - int(min_packs[b_idx])
-            total_battery_cost += extra_packs * float(pack_size[b_idx]) * config.battery_cost_per_kwh
+            total_battery_cost += extra_packs * (bus.battery_pack_cost_chf if bus.battery_pack_cost_chf is not None else float(pack_size[b_idx]) * config.battery_cost_per_kwh)
             total_infeasibility_penalty += ne_val * float(pack_size[b_idx]) * config.max_battery_penalty_per_kwh
         elif config.mode in {"battery_only", "charging_only"}:
             total_infeasibility_penalty += ne_val * float(pack_size[b_idx]) * config.max_battery_penalty_per_kwh
 
         battery_results[bus.shift_id] = {
             "shift_name": bus.shift_name,
+            "bus_model_id": bus.bus_model_id,
+            "bus_model_name": bus.bus_model_name,
+            "investment_cost_source": "bus_model_snapshot",
+            "pack_size_kwh": float(pack_size[b_idx]),
+            "bus_cost_chf": bus.bus_cost_chf,
+            "selected_vehicle_cost_chf": (bus.bus_cost_chf + np_val * bus.battery_pack_cost_chf)
+                if bus.bus_cost_chf is not None and bus.battery_pack_cost_chf is not None else None,
+            "battery_pack_cost_chf": bus.battery_pack_cost_chf,
+            "selected_battery_cost_chf": np_val * bus.battery_pack_cost_chf if bus.battery_pack_cost_chf is not None else None,
             "reference_packs": bus.reference_packs,
             "base_packs": int(min_packs[b_idx]),
             "optimized_packs": np_val,
@@ -945,9 +1022,22 @@ def solve_optimization(
             connect_val[:, b_idx], power_val[:, b_idx],
             station_at_minute[:, b_idx], stations, first_t,
         )
+        for session in sessions:
+            start = session["start_minute"] - first_t
+            s_idx = int(station_at_minute[start, b_idx])
+            session["slot_number"] = next((k + 1 for s, k in m.InstallIndex
+                if s == s_idx and (start, b_idx, s, k) in m.AssignIndex
+                and value(m.assign[start, b_idx, s, k]) > .5), None)
+            end = session["end_minute"] - first_t
+            session["connected_without_charging_minutes"] = int(np.sum(power_val[start:end, b_idx] < 1e-6))
         per_bus_summary.append({
             "shift_id": bus.shift_id,
             "shift_name": bus.shift_name,
+            "bus_model_id": bus.bus_model_id,
+            "bus_model_name": bus.bus_model_name,
+            "bus_cost_chf": bus.bus_cost_chf,
+            "battery_pack_cost_chf": bus.battery_pack_cost_chf,
+            "selected_battery_cost_chf": battery_results[bus.shift_id]["selected_battery_cost_chf"],
             "reference_packs": bus.reference_packs,
             "optimized_packs": battery_results[bus.shift_id]["optimized_packs"],
             "min_soc_kwh": float(np.min(soc_val[:, b_idx])),
@@ -998,6 +1088,11 @@ def solve_optimization(
         "infeasible_buses": infeasible_buses,
     }
 
+    daily_report = {}
+    if daily_context is not None:
+        from simulation.depot_cycle import daily_cycle_report
+        daily_report = daily_cycle_report(m, buses, stations, config, daily_context, per_bus_summary, station_util)
+
     return OptimizationResult(
         solver_status=term_cond,
         objective_value=obj_val,
@@ -1011,6 +1106,8 @@ def solve_optimization(
         total_infeasibility_penalty_chf=total_infeasibility_penalty,
         per_bus_summary=per_bus_summary,
         station_utilization=station_util,
+        charging_schedule_policy=schedule_policy,
+        daily_cycle=daily_report,
     )
 
 

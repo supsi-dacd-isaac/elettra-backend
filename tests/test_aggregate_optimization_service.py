@@ -15,7 +15,8 @@ from simulation.optimization_model import BusData, TripData, StationData, Optimi
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode', ['battery_only', 'charging_only', 'joint'])
 @pytest.mark.parametrize('basis', ['mean', 'aggregate_q95'])
-async def test_service_uses_full_profile_at_selected_mass_once_per_reference(monkeypatch, mode, basis):
+@pytest.mark.parametrize('paired', [False, True])
+async def test_service_uses_full_profile_at_selected_mass_once_per_reference(monkeypatch, mode, basis, paired):
     owner, sid, model, run_id = uuid4(), uuid4(), uuid4(), uuid4()
     predictions = [NS(id=uuid4(), shift_id=sid, user_id=owner, bus_model_id=model,
         status='completed', model_name='test', prediction_stack='legacy', auxiliary_estimator_release=None,
@@ -27,9 +28,13 @@ async def test_service_uses_full_profile_at_selected_mass_once_per_reference(mon
         input_params={'shift_ids':[str(sid)], 'consumption_basis':basis, 'quantile_consumption':'mean',
             'charging_stations':[{'stop_id':'p'}],
             'reference_prediction_run_ids':{str(sid):str(initial.id)}})
+    from copy import deepcopy
+    other = deepcopy(run)
+    other.id = uuid4()
+    other.input_params['consumption_basis'] = 'aggregate_q95' if basis == 'mean' else 'mean'
     class DB:
         async def get(self, entity, key):
-            if entity is OptimizationRuns: return run
+            if entity is OptimizationRuns: return run if key == run_id else other
             if entity is PredictionRuns: return next(p for p in predictions if p.id==key)
             raise AssertionError(entity)
         async def commit(self): pass
@@ -52,7 +57,13 @@ async def test_service_uses_full_profile_at_selected_mass_once_per_reference(mon
     monkeypatch.setattr(service, 'load_aggregate_profile', profile)
     monkeypatch.setattr(service, '_prediction_provenance', lambda runs: {})
     monkeypatch.setattr(service, '_prediction_component_summary', components)
-    await service.run_optimization(DB(), run_id)
+    shared = {}
+    await service.run_optimization(DB(), run_id, profile_cache=shared)
+    if paired:
+        await service.run_optimization(DB(), other.id, profile_cache=shared)
+        assert other.status == 'completed', other.results
+        assert other.results['forecast_verification']['status'] == 'verified'
+        assert other.results['consumption_analysis']['optimization_basis'] != basis
     assert run.status == 'completed', run.results
     assert run.results['forecast_verification']['status'] == 'verified'
     analysis=run.results['consumption_analysis']['per_shift'][str(sid)]

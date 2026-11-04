@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -140,22 +141,13 @@ async def _depot_point_for_analysis(
     )
     owner_depots = list(result.all())
     shift_ids = _shift_ids(analysis.features or {})
-    if shift_ids and owner_depots:
-        stop_result = await db.execute(
-            select(GtfsStopsTimes.stop_id)
-            .join(ShiftsStructures, ShiftsStructures.trip_id == GtfsStopsTimes.trip_id)
-            .where(ShiftsStructures.shift_id.in_(shift_ids))
-            .distinct()
-        )
-        shift_stop_ids = set(stop_result.scalars().all())
-        used = [(depot, stop) for depot, stop in owner_depots if depot.stop_id in shift_stop_ids]
-        if len(used) == 1:
-            depot, stop = used[0]
-            return float(stop.stop_lat), float(stop.stop_lon), f"shift-depot:{depot.id}"
-        if len(used) > 1:
-            raise AnalysisWeatherResolutionError(
-                f"analysis {analysis.id} uses multiple depot stops"
-            )
+    arrivals = []
+    if shift_ids:
+        arrivals = list((await db.execute(_shift_arrival_stops_query(shift_ids))).all())
+    selected = _most_used_arrival_depot(owner_depots, arrivals)
+    if selected is not None:
+        depot, stop = selected
+        return float(stop.stop_lat), float(stop.stop_lon), f"arrival-depot:{depot.id}"
     if len(owner_depots) == 1:
         depot, stop = owner_depots[0]
         return float(stop.stop_lat), float(stop.stop_lon), f"owner-depot:{depot.id}"
@@ -180,6 +172,10 @@ async def _depot_point_for_analysis(
         )
     )
     agency_depots = list(agency_result.all())
+    selected = _most_used_arrival_depot(agency_depots, arrivals)
+    if selected is not None:
+        depot, stop = selected
+        return float(stop.stop_lat), float(stop.stop_lon), f"arrival-depot:{depot.id}"
     unique_points = {
         (round(float(stop.stop_lat), 5), round(float(stop.stop_lon), 5), depot.id)
         for depot, stop in agency_depots
@@ -190,6 +186,46 @@ async def _depot_point_for_analysis(
         )
     latitude, longitude, depot_id = next(iter(unique_points))
     return latitude, longitude, f"agency-depot:{depot_id}"
+
+
+def _shift_arrival_stops_query(shift_ids: list[UUID]):
+    # Count one physical bus per vehicle block, at the final stop of its last trip.
+    ordered = select(
+        ShiftsStructures.shift_id,
+        GtfsStopsTimes.stop_id,
+        func.row_number().over(
+            partition_by=ShiftsStructures.shift_id,
+            order_by=(ShiftsStructures.sequence_number.desc(), GtfsStopsTimes.stop_sequence.desc().nulls_last()),
+        ).label("position"),
+    ).join(GtfsStopsTimes, GtfsStopsTimes.trip_id == ShiftsStructures.trip_id).where(
+        ShiftsStructures.shift_id.in_(shift_ids)
+    ).subquery()
+    return select(ordered.c.shift_id, ordered.c.stop_id).where(ordered.c.position == 1)
+
+
+def _most_used_arrival_depot(depots, arrivals):
+    counts = Counter(dict(arrivals).values())
+    candidates = [(depot, stop) for depot, stop in depots if counts[depot.stop_id] > 0]
+    # Equal counts: stable name/ID ordering, independent of selection or DB order.
+    return min(candidates, key=lambda row: (
+        -counts[row[0].stop_id], (row[1].stop_name or "").casefold(), str(row[0].id)
+    )) if candidates else None
+
+
+async def preview_yearly_weather_reference(db: AsyncSession, optimization: OptimizationRuns) -> dict:
+    """Use the same arrival-depot rule for the creation form and saved analysis."""
+    draft = YearlyAnalysis(id=optimization.id, features={
+        "config": {"shift_ids": optimization.input_params.get("shift_ids", [])}
+    })
+    latitude, longitude, resolution = await _depot_point_for_analysis(db, draft, optimization.user_id)
+    series = await _nearest_active_series(db, latitude, longitude)
+    depot = await db.get(Depots, UUID(resolution.split(":", 1)[1]))
+    return {
+        "weather_temperature_series_id": str(series.id),
+        "latitude": float(series.latitude), "longitude": float(series.longitude),
+        "depot_id": str(depot.id), "depot_name": depot.name,
+        "resolution": resolution,
+    }
 
 
 async def _nearest_active_series(

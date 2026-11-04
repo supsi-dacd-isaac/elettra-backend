@@ -1,4 +1,5 @@
 import uuid
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -76,6 +77,21 @@ def test_contract_requires_mileage_with_shift_scope(endpoint):
     response = client.get(url, params={"shift_id": run.shift_id})
     assert response.status_code == 422
     assert response.json()["detail"] == "annual_km is required when shift_id is provided"
+
+
+def test_contract_accepts_group_mileage_preview_without_saving(endpoint):
+    client, url, run = endpoint
+    response = client.get(url, params={"annual_km_by_shift": json.dumps({str(run.shift_id): 90000}),
+        "lifetime_diesel_bus": 11, "diesel_consumption_l_per_km": .6})
+    assert response.status_code == 200
+    v = response.json()["vehicles"][0]
+    assert v["annual_km"] == 90000
+    assert v["dc_kwh"] == 135000
+    assert v["lifetime_diesel_bus"] == 11
+    assert v["diesel_consumption_l_per_km"] == .6
+    assert client.get(url).json()["vehicles"][0]["annual_km"] == 60000
+    assert client.get(url, params={"annual_km_by_shift": '[]'}).status_code == 422
+    assert client.get(url, params={"annual_km_by_shift": '{'}).status_code == 422
 
 
 def test_ownership_and_required_inputs(endpoint):

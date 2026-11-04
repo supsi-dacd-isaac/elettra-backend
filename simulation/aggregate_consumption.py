@@ -140,6 +140,9 @@ def aggregate_profile(support, *, options=AggregateOptions(), seed=None):
     weights = variance/variance.sum() if variance.sum() > 0 else np.full(n_trips, 1/n_trips)
     profile += (q95-before)*weights
     mean = values.mean(axis=1)
+    # Reuse the final Monte Carlo sample: no new draws or optimization are
+    # needed to persist the distribution shown for this exact battery mass.
+    counts, edges = np.histogram(totals, bins=1 if ordered[0] == ordered[-1] else 60)
     return {
         "mean": mean.tolist(), "aggregate_q95": profile.tolist(),
         "statistics": {
@@ -149,6 +152,7 @@ def aggregate_profile(support, *, options=AggregateOptions(), seed=None):
             "seed": actual_seed, "request_seed": options.seed,
             "trip_occurrences": n_trips, "support_points": n_atoms,
             "mean_total_kwh": float(mean.sum()), "q95_total_kwh": q95,
+            "total_energy_histogram": {"bin_edges_kwh": edges.tolist(), "counts": counts.tolist()},
             "q95_monte_carlo_ci95_kwh": interval.tolist(),
             "precision_target_kwh": options.precision_kwh,
             "precision_met": halfwidth <= options.precision_kwh,

@@ -147,3 +147,40 @@ def test_any_mode_using_excess_packs_is_marked_infeasible(
     assert battery["optimized_packs"] == expected_physical_packs
     assert battery["excess_packs"] > 0
     assert battery["physical_feasible"] is False
+
+
+@pytest.mark.parametrize('mode', ['battery_only', 'charging_only', 'joint'])
+def test_infeasible_model_is_an_outcome_without_invented_solution(mode):
+    result = solve_optimization([_make_bus()], [], OptimizationConfig(
+        mode=mode, allow_excess_packs=False, battery_cost_per_kwh=100))
+    assert result.solver_status == 'infeasible'
+    assert result.electrification_summary['status'] == 'infeasible'
+    assert result.electrification_feasible is False
+    assert result.battery_results == {}
+    assert result.per_bus_summary == []
+    assert result.installed_chargers == {}
+
+
+def test_solver_exception_is_still_an_error(monkeypatch):
+    from types import SimpleNamespace
+    from simulation import optimization_model as model
+    def broken(*args, **kwargs):
+        raise RuntimeError('solver unavailable')
+    solver = SimpleNamespace(options={}, available=lambda **kwargs: True, solve=broken)
+    monkeypatch.setattr(model, 'SolverFactory', lambda *args, **kwargs: solver)
+    result = solve_optimization([_make_bus()], [], OptimizationConfig(mode='battery_only'))
+    assert result.solver_status.startswith('error:')
+    assert result.electrification_summary['status'] == 'solver_error'
+
+
+def test_timeout_without_solution_is_not_proven_infeasible(monkeypatch):
+    from types import SimpleNamespace
+    from simulation import optimization_model as model
+    solver = SimpleNamespace(options={}, available=lambda **kwargs: True,
+        solve=lambda *args, **kwargs: SimpleNamespace(
+            solver=SimpleNamespace(termination_condition='maxTimeLimit'), solution=[]))
+    monkeypatch.setattr(model, 'SolverFactory', lambda *args, **kwargs: solver)
+    result = solve_optimization([_make_bus()], [], OptimizationConfig(mode='battery_only'))
+    assert result.solver_status == 'maxTimeLimit'
+    assert result.electrification_summary['status'] == 'unverified'
+    assert result.battery_results == {}

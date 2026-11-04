@@ -721,6 +721,168 @@ def test_agency_gtfs_is_shared_but_other_agencies_are_hidden(
         assert client.get(url, headers=headers).status_code == 404, url
 
 
+@pytest.mark.parametrize("side,other", [("a", "b"), ("b", "a")])
+def test_stops_by_trip_returns_ordered_stops_only_for_authorized_auxiliary_trip(
+    client: TestClient,
+    isolation_context: dict,
+    side: str,
+    other: str,
+) -> None:
+    ctx = isolation_context
+    headers = _headers(ctx[side]["token"])
+    own = ctx[side]["resource"]
+    foreign = ctx[other]["resource"]
+
+    response = client.get(
+        f"{GTFS}/gtfs-stops/by-trip/{own['aux_trip']}", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    stops = response.json()
+    assert [stop["id"] for stop in stops] == [
+        own["depot_stop"],
+        own["depot_stop"],
+    ]
+    assert [stop["arrival_time"] for stop in stops] == ["08:00:00", "08:10:00"]
+    assert {
+        "id",
+        "stop_id",
+        "stop_name",
+        "stop_lat",
+        "stop_lon",
+        "arrival_time",
+        "departure_time",
+    } <= set(stops[0])
+
+    foreign_response = client.get(
+        f"{GTFS}/gtfs-stops/by-trip/{foreign['aux_trip']}", headers=headers
+    )
+    missing_response = client.get(
+        f"{GTFS}/gtfs-stops/by-trip/{uuid.uuid4()}", headers=headers
+    )
+    assert foreign_response.status_code == missing_response.status_code == 404
+    assert foreign_response.json() == missing_response.json()
+
+
+def test_stops_by_trip_does_not_reapply_the_generic_stop_filter(
+    client: TestClient,
+    isolation_context: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import gtfs as gtfs_router
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("The authorized-trip endpoint reapplied the stop filter")
+
+    monkeypatch.setattr(
+        gtfs_router,
+        "gtfs_stop_accessible_filter",
+        fail_if_called,
+    )
+    response = client.get(
+        f"{GTFS}/gtfs-stops/by-trip/{isolation_context['shared']['trip_id']}",
+        headers=_headers(isolation_context["a"]["token"]),
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_charging_stop_candidates_are_batched_deduplicated_and_depot_aware(
+    client: TestClient,
+    isolation_context: dict,
+) -> None:
+    ctx = isolation_context
+    user = ctx["a"]
+    resource = user["resource"]
+    headers = _headers(user["token"])
+    created_shift_ids = [
+        _create_shift(
+            client,
+            user=user,
+            bus_id=resource["bus"],
+            trip_id=ctx["shared"]["trip_id"],
+            label="batch shared",
+        ),
+        _create_shift(
+            client,
+            user=user,
+            bus_id=resource["bus"],
+            trip_id=resource["aux_trip"],
+            label="batch depot one",
+        ),
+        _create_shift(
+            client,
+            user=user,
+            bus_id=resource["bus"],
+            trip_id=resource["aux_trip"],
+            label="batch depot two",
+        ),
+    ]
+
+    try:
+        response = client.post(
+            f"{SIM}/charging-stops/candidates",
+            headers=headers,
+            json={
+                "shift_ids": [
+                    resource["shift"],
+                    *created_shift_ids,
+                    created_shift_ids[-1],
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        candidates = response.json()
+        stop_ids = [candidate["stop_id"] for candidate in candidates]
+        assert len(stop_ids) == len(set(stop_ids))
+
+        depot_candidate = next(
+            candidate
+            for candidate in candidates
+            if candidate["stop_id"] == resource["depot_stop"]
+        )
+        assert depot_candidate == {
+            "stop_id": resource["depot_stop"],
+            "stop_name": resource["prefix"] + " depot",
+            "is_depot": True,
+            "is_custom": True,
+            "depot_bus_count": 2,
+        }
+        assert any(not candidate["is_depot"] for candidate in candidates)
+    finally:
+        for shift_id in created_shift_ids:
+            response = client.delete(f"{USER}/shifts/{shift_id}", headers=headers)
+            assert response.status_code == 200, response.text
+
+
+def test_charging_stop_candidates_reject_mixed_foreign_and_missing_shifts(
+    client: TestClient,
+    isolation_context: dict,
+) -> None:
+    ctx = isolation_context
+    headers = _headers(ctx["a"]["token"])
+    own_shift = ctx["a"]["resource"]["shift"]
+    foreign_shift = ctx["b"]["resource"]["shift"]
+
+    foreign_response = client.post(
+        f"{SIM}/charging-stops/candidates",
+        headers=headers,
+        json={"shift_ids": [own_shift, foreign_shift]},
+    )
+    missing_response = client.post(
+        f"{SIM}/charging-stops/candidates",
+        headers=headers,
+        json={"shift_ids": [own_shift, str(uuid.uuid4())]},
+    )
+    assert foreign_response.status_code == missing_response.status_code == 404
+    assert foreign_response.json() == missing_response.json()
+
+    empty_response = client.post(
+        f"{SIM}/charging-stops/candidates",
+        headers=headers,
+        json={"shift_ids": []},
+    )
+    assert empty_response.status_code == 422
+
+
 def test_agency_admin_can_manage_accounts_only_inside_own_agency(
     client: TestClient, isolation_context: dict
 ) -> None:
