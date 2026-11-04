@@ -22,6 +22,14 @@ class OptimizationDeleteResponse(BaseModel):
     id: UUID
 
 
+class ChargingStopCandidateRead(BaseModel):
+    stop_id: UUID
+    stop_name: str
+    is_depot: bool = False
+    is_custom: bool = False
+    depot_bus_count: int = Field(default=0, ge=0)
+
+
 class ElevationProfileJobResponse(BaseModel):
     id: UUID
     trip_id: UUID

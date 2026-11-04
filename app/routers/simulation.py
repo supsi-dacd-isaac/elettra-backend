@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update
+from sqlalchemy import exists, select, func, true, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import get_async_session
@@ -17,11 +17,18 @@ from app.schemas.responses import (
     OptimizationDeleteResponse,
     CombinedTripStatisticsResponse,
     OptimizationRunListItemRead,
+    ChargingStopCandidateRead,
 )
 from app.schemas.pagination import (
     PaginatedResponse, PaginationParams, build_paginated_response,
 )
-from app.schemas.requests import TripStatisticsRequest, PredictionRequest, OptimizationRequest, _OPTIMIZATION_EXAMPLES
+from app.schemas.requests import (
+    ChargingStopCandidatesRequest,
+    TripStatisticsRequest,
+    PredictionRequest,
+    OptimizationRequest,
+    _OPTIMIZATION_EXAMPLES,
+)
 from app.schemas.external_apis import (
     PvgisTmyResponse,
     PvgisTmyMetadataResponse,
@@ -32,7 +39,8 @@ from app.schemas.external_apis import (
 from app.models import (
     Users,
     GtfsTrips, GtfsStops, GtfsStopsTimes,
-    PredictionRuns, TripPredictions, Shifts, BusesModels,
+    PredictionRuns, TripPredictions, Shifts, ShiftsStructures, Buses, BusesModels,
+    Depots,
     OptimizationRuns, YearlyAnalysis,
 )
 from app.core.auth import get_current_user
@@ -45,6 +53,7 @@ from app.core.ownership import (
     get_owned_shift,
     get_owned_yearly_analysis,
     prediction_run_owned_filter,
+    shift_trips_accessible_filter,
     stamp_yearly_analysis_owner,
 )
 from app.services.weather import (
@@ -229,8 +238,122 @@ def _assert_yearly_prediction_stack_compatible(
 
 
 # ---------------------------------------------------------------------------
+# Charging-stop candidate endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/charging-stops/candidates",
+    response_model=list[ChargingStopCandidateRead],
+)
+async def list_charging_stop_candidates(
+    request: ChargingStopCandidatesRequest,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    """Return unique trip termini for a complete set of owned shifts.
+
+    Authorization is deliberately performed for the complete request before
+    reading stop rows.  A mixed owned/foreign request therefore fails without
+    disclosing which UUID is missing or belongs to another user.
+    """
+
+    shift_ids = list(dict.fromkeys(request.shift_ids))
+    requested_ids = set(shift_ids)
+    accessible_result = await db.execute(
+        select(Shifts.id)
+        .join(Buses, Shifts.bus_id == Buses.id)
+        .where(
+            Shifts.id.in_(requested_ids),
+            Buses.user_id == current_user.id,
+            shift_trips_accessible_filter(
+                current_user.id,
+                current_user.company_id,
+            ),
+        )
+    )
+    if set(accessible_result.scalars().all()) != requested_ids:
+        raise HTTPException(
+            status_code=404,
+            detail="One or more shifts were not found",
+        )
+
+    terminal_stop = (
+        select(GtfsStopsTimes.stop_id.label("stop_id"))
+        .where(GtfsStopsTimes.trip_id == ShiftsStructures.trip_id)
+        .order_by(
+            GtfsStopsTimes.stop_sequence.desc().nulls_last(),
+            GtfsStopsTimes.id.desc(),
+        )
+        .limit(1)
+        .correlate(ShiftsStructures)
+        .lateral("terminal_stop")
+    )
+    is_owned_depot = exists(
+        select(1)
+        .select_from(Depots)
+        .where(
+            Depots.stop_id == GtfsStops.id,
+            Depots.user_id == current_user.id,
+        )
+    )
+    terminal_result = await db.execute(
+        select(
+            ShiftsStructures.shift_id,
+            ShiftsStructures.sequence_number,
+            GtfsStops.id.label("stop_id"),
+            GtfsStops.stop_name,
+            is_owned_depot.label("is_depot"),
+        )
+        .select_from(ShiftsStructures)
+        .outerjoin(terminal_stop, true())
+        .outerjoin(GtfsStops, GtfsStops.id == terminal_stop.c.stop_id)
+        .where(ShiftsStructures.shift_id.in_(requested_ids))
+    )
+
+    shift_order = {shift_id: index for index, shift_id in enumerate(shift_ids)}
+    rows = sorted(
+        terminal_result.all(),
+        key=lambda row: (
+            shift_order[row.shift_id],
+            row.sequence_number,
+        ),
+    )
+    last_sequence_by_shift: dict[UUID, int] = {}
+    for row in rows:
+        last_sequence_by_shift[row.shift_id] = max(
+            row.sequence_number,
+            last_sequence_by_shift.get(row.shift_id, row.sequence_number),
+        )
+
+    candidates: dict[UUID, dict] = {}
+    for row in rows:
+        if row.stop_id is None:
+            continue
+        candidate = candidates.setdefault(
+            row.stop_id,
+            {
+                "stop_id": row.stop_id,
+                "stop_name": row.stop_name or str(row.stop_id),
+                "is_depot": bool(row.is_depot),
+                "is_custom": False,
+                "depot_bus_count": 0,
+            },
+        )
+        if (
+            row.is_depot
+            and row.sequence_number == last_sequence_by_shift[row.shift_id]
+        ):
+            candidate["depot_bus_count"] += 1
+            candidate["is_custom"] = True
+
+    return [ChargingStopCandidateRead(**candidate) for candidate in candidates.values()]
+
+
+# ---------------------------------------------------------------------------
 # Prediction Runs endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("/prediction-runs/", response_model=PredictionSubmitResponse)
 async def create_prediction_runs(

@@ -407,6 +407,18 @@ _OPTIMIZATION_EXAMPLES = {
 }
 
 
+class ChargingStopCandidatesRequest(BaseModel):
+    """Selected shifts whose trip termini can host charging infrastructure."""
+
+    shift_ids: list[UUID] = Field(
+        min_length=1,
+        description=(
+            "One or more user-owned shifts. Duplicate UUIDs are accepted and "
+            "resolved once."
+        ),
+    )
+
+
 class OptimizationRequest(BaseModel):
     """Fleet charging and battery optimization request.
 
