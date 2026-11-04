@@ -25,6 +25,11 @@ if [ -f "tests/test.env" ]; then
     set +a  # stop automatically exporting
 fi
 
+# Fail before pytest collection if a local run does not use the dedicated
+# frontend/backend/database staging stack. CI is validated against its own
+# ephemeral PostgreSQL service by the same script.
+python test_support/staging_targets.py
+
 # Run pytest with any arguments passed to this script
 echo "Running tests..."
 pytest "$@"

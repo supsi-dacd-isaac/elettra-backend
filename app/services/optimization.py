@@ -49,6 +49,124 @@ from app.services.optimization_process import run_workers, threads_per_worker
 
 logger = logging.getLogger(__name__)
 
+
+class OptimizationInputValidationError(ValueError):
+    """Structured validation failure raised before the solver is started."""
+
+    def __init__(self, issues: list[dict], shifts: list[dict]):
+        if not issues:
+            raise ValueError("OptimizationInputValidationError requires at least one issue")
+        self.issues = [dict(issue) for issue in issues]
+        self.shifts = [dict(shift) for shift in shifts]
+        super().__init__("; ".join(str(issue["message"]) for issue in self.issues))
+
+    def failure_payload(self) -> dict:
+        failed_by_shift: dict[str, list[str]] = {}
+        for issue in self.issues:
+            failed_by_shift.setdefault(str(issue["shift_id"]), []).append(str(issue["code"]))
+
+        blocking_shift_ids = list(failed_by_shift)
+        shift_outcomes = []
+        for shift in self.shifts:
+            shift_id = str(shift["shift_id"])
+            outcome = {
+                "shift_id": shift_id,
+                "shift_name": str(shift["shift_name"]),
+            }
+            if shift_id in failed_by_shift:
+                outcome.update(
+                    status="validation_failed",
+                    failure_codes=failed_by_shift[shift_id],
+                )
+            else:
+                outcome.update(
+                    status="not_evaluated",
+                    blocked_by_shift_ids=blocking_shift_ids,
+                )
+            shift_outcomes.append(outcome)
+
+        return {
+            "code": "input_validation_failed",
+            "phase": "input_validation",
+            "issues": self.issues,
+            "shift_outcomes": shift_outcomes,
+        }
+
+
+def _daily_cycle_validation_issues(
+    boundaries: list[dict],
+    *,
+    depot_stop_ids: set[str],
+    selected_station_stop_ids: set[str],
+    stop_name_map: dict[str, str],
+) -> list[dict]:
+    """Return every per-shift daily-cycle issue without stopping at the first."""
+
+    issues = []
+    for boundary in boundaries:
+        shift_id = str(boundary["shift_id"])
+        shift_name = str(boundary["shift_name"])
+        start_stop_id = str(boundary["first_stop_id"])
+        end_stop_id = str(boundary["last_stop_id"])
+        details = {
+            "start_stop_id": start_stop_id,
+            "start_stop_name": stop_name_map.get(start_stop_id, start_stop_id),
+            "end_stop_id": end_stop_id,
+            "end_stop_name": stop_name_map.get(end_stop_id, end_stop_id),
+        }
+
+        if start_stop_id != end_stop_id:
+            issues.append({
+                "code": "daily_cycle_depot_mismatch",
+                "shift_id": shift_id,
+                "shift_name": shift_name,
+                "message": (
+                    f"{shift_name}: daily repetition requires the existing trips "
+                    "to start and end at the same depot; no transfers are added"
+                ),
+                "details": details,
+            })
+        elif start_stop_id not in depot_stop_ids:
+            issues.append({
+                "code": "daily_cycle_stop_not_depot",
+                "shift_id": shift_id,
+                "shift_name": shift_name,
+                "message": (
+                    f"{shift_name}: daily repetition requires the common start/end "
+                    "stop to be a registered depot"
+                ),
+                "details": details,
+            })
+        elif start_stop_id not in selected_station_stop_ids:
+            issues.append({
+                "code": "daily_cycle_depot_not_selected",
+                "shift_id": shift_id,
+                "shift_name": shift_name,
+                "message": f"{shift_name}: select the start/end depot in charging infrastructure",
+                "details": details,
+            })
+    return issues
+
+
+def _failed_run_results(
+    error: Exception,
+    *,
+    execution_metadata: dict | None,
+    finished_at: datetime,
+) -> dict:
+    """Serialize a failed run while retaining the legacy error string."""
+
+    results = {"error": str(error)}
+    if isinstance(error, OptimizationInputValidationError):
+        results["failure"] = error.failure_payload()
+    if execution_metadata:
+        results["execution"] = {
+            **execution_metadata,
+            "finished_at": finished_at.isoformat(),
+        }
+    return results
+
+
 _COMPONENT_BREAKDOWN_KEYS = (
     "mechanical_greybox_kwh",
     "qrf_residual_kwh",
@@ -433,6 +551,93 @@ async def prepare_optimization_input(
         trip_predictions[str(pred.id)] = predictions
     prediction_runs = list(selected.values())
 
+    # Build every physical trip sequence before validating the daily cycle.  A
+    # fleet evaluation is one solver problem, so one invalid vehicle block
+    # prevents the solver from starting; collecting all invalid blocks here
+    # lets the result identify the actual causes without labelling every block
+    # as failed.
+    prepared_trip_data: dict[str, dict] = {}
+    shift_contexts: list[dict] = []
+    daily_cycle_boundaries: list[dict] = []
+    for pred_run in prediction_runs:
+        shift = await db.get(Shifts, pred_run.shift_id)
+        shift_name = shift.name if shift else str(pred_run.shift_id)
+        shift_context = {
+            "shift_id": str(pred_run.shift_id),
+            "shift_name": shift_name,
+        }
+        shift_contexts.append(shift_context)
+
+        trip_data_list: list[TripData] = []
+        first_stop_id = last_stop_id = None
+        for tp in trip_predictions[str(pred_run.id)]:
+            stop_times_result = await db.execute(
+                select(GtfsStopsTimes)
+                .where(GtfsStopsTimes.trip_id == tp.trip_id)
+                .order_by(GtfsStopsTimes.stop_sequence)
+            )
+            stop_times = stop_times_result.scalars().all()
+            if not stop_times:
+                raise ValueError(f"Trip {tp.trip_id} has no stop times")
+
+            first_st = stop_times[0]
+            last_st = stop_times[-1]
+            dep_min = _time_str_to_minutes(first_st.departure_time)
+            arr_min = _time_str_to_minutes(last_st.arrival_time)
+            if dep_min is None or arr_min is None:
+                raise ValueError(f"Trip {tp.trip_id} has invalid stop times")
+
+            end_stop_id = str(last_st.stop_id)
+            if first_stop_id is None:
+                first_stop_id = str(first_st.stop_id)
+            last_stop_id = end_stop_id
+            trip_data_list.append(TripData(
+                trip_id=str(tp.trip_id),
+                departure_minute=dep_min,
+                arrival_minute=arr_min,
+                end_station_idx=station_stop_id_to_idx.get(end_stop_id, -1),
+                base_energy_kwh=_get_consumption_value(tp, quantile_consumption),
+                sensitivity=float(tp.mass_sensitivity_kwh_per_kwh_batt),
+            ))
+
+        prepared_trip_data[str(pred_run.id)] = {
+            **shift_context,
+            "trips": trip_data_list,
+            "first_stop_id": first_stop_id,
+            "last_stop_id": last_stop_id,
+        }
+        daily_cycle_boundaries.append({
+            **shift_context,
+            "first_stop_id": first_stop_id,
+            "last_stop_id": last_stop_id,
+        })
+
+    if params.get("daily_cycle"):
+        boundary_stop_ids = {
+            stop_id
+            for boundary in daily_cycle_boundaries
+            for stop_id in (boundary["first_stop_id"], boundary["last_stop_id"])
+            if stop_id is not None
+        }
+        if boundary_stop_ids:
+            result = await db.execute(
+                select(GtfsStops.id, GtfsStops.stop_name).where(
+                    GtfsStops.id.in_(boundary_stop_ids)
+                )
+            )
+            stop_name_map.update({
+                str(stop_id): stop_name or str(stop_id)
+                for stop_id, stop_name in result.all()
+            })
+        issues = _daily_cycle_validation_issues(
+            daily_cycle_boundaries,
+            depot_stop_ids=depot_stop_ids,
+            selected_station_stop_ids=set(station_stop_id_to_idx),
+            stop_name_map=stop_name_map,
+        )
+        if issues:
+            raise OptimizationInputValidationError(issues, shift_contexts)
+
     explicit_bus_model_id: UUID | None = optimization_run.bus_model_id
     if explicit_bus_model_id is not None:
         mismatched_prediction_ids = [
@@ -468,8 +673,8 @@ async def prepare_optimization_input(
         return await _get_specs_for_bus_model(bus.bus_model_id)
 
     for pred_run in prediction_runs:
-        shift = await db.get(Shifts, pred_run.shift_id)
-        shift_name = shift.name if shift else str(pred_run.shift_id)
+        prepared = prepared_trip_data[str(pred_run.id)]
+        shift_name = prepared["shift_name"]
 
         # Per-bus specs
         specs = (
@@ -507,51 +712,8 @@ async def prepare_optimization_input(
         configured_capacity = max_packs_spec * pack_size
         battery_offset = configured_capacity - ref_capacity
 
-        # Load trip predictions
-        trip_preds = trip_predictions[str(pred_run.id)]
-
-        trip_data_list: list[TripData] = []
-        first_stop_id = last_stop_id = None
-        for tp in trip_preds:
-            stop_times_result = await db.execute(
-                select(GtfsStopsTimes)
-                .where(GtfsStopsTimes.trip_id == tp.trip_id)
-                .order_by(GtfsStopsTimes.stop_sequence)
-            )
-            stop_times = stop_times_result.scalars().all()
-            if not stop_times:
-                raise ValueError(f"Trip {tp.trip_id} has no stop times")
-
-            first_st = stop_times[0]
-            last_st = stop_times[-1]
-            dep_min = _time_str_to_minutes(first_st.departure_time)
-            arr_min = _time_str_to_minutes(last_st.arrival_time)
-            if dep_min is None or arr_min is None:
-                raise ValueError(f"Trip {tp.trip_id} has invalid stop times")
-
-            end_stop_id = str(last_st.stop_id)
-            if first_stop_id is None:
-                first_stop_id = str(first_st.stop_id)
-            last_stop_id = end_stop_id
-            end_station_idx = station_stop_id_to_idx.get(end_stop_id, -1)
-
-            consumption = _get_consumption_value(tp, quantile_consumption)
-            sensitivity = float(tp.mass_sensitivity_kwh_per_kwh_batt)
-
-            trip_data_list.append(TripData(
-                trip_id=str(tp.trip_id),
-                departure_minute=dep_min,
-                arrival_minute=arr_min,
-                end_station_idx=end_station_idx,
-                base_energy_kwh=consumption,
-                sensitivity=sensitivity,
-            ))
-
-        if params.get("daily_cycle"):
-            if first_stop_id != last_stop_id or first_stop_id not in depot_stop_ids:
-                raise ValueError(f"{shift_name}: daily repetition requires the existing trips to start and end at the same depot; no transfers are added")
-            if first_stop_id not in station_stop_id_to_idx:
-                raise ValueError(f"{shift_name}: select the start/end depot in charging infrastructure")
+        trip_data_list = prepared["trips"]
+        last_stop_id = prepared["last_stop_id"]
         buses.append(BusData(
             shift_id=str(pred_run.shift_id),
             shift_name=shift_name,
@@ -845,8 +1007,11 @@ async def run_optimization(
             if run is not None:
                 run.status = "failed"
                 run.completed_at = datetime.now(timezone.utc)
-                run.results = {"error": str(e), **({"execution": {**execution_metadata,
-                    "finished_at": run.completed_at.isoformat()}} if execution_metadata else {})}
+                run.results = _failed_run_results(
+                    e,
+                    execution_metadata=execution_metadata,
+                    finished_at=run.completed_at,
+                )
                 await db.commit()
         except Exception:
             logger.exception("Failed to update optimization run %s status to 'failed'", optimization_run_id)

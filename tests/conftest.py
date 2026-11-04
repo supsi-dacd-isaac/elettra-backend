@@ -83,8 +83,36 @@ import main as main_module  # noqa: E402
 from main import app  # noqa: E402
 from app.core.config import get_cached_settings  # noqa: E402
 from app.database import get_async_session  # noqa: E402
+from test_support.staging_targets import (  # noqa: E402
+    StagingTargetError,
+    preflight_local_staging,
+    validate_test_targets,
+)
 
 settings = get_cached_settings()
+
+
+def _database_target_is_safe_for_tests() -> bool:
+    """Accept only local staging, or the workflow's ephemeral CI database."""
+
+    try:
+        validate_test_targets(settings.database_url)
+    except StagingTargetError:
+        return False
+    return True
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _reject_unsafe_database_target():
+    try:
+        targets = validate_test_targets(settings.database_url)
+        preflight_local_staging(targets, settings.database_url)
+    except StagingTargetError as exc:
+        pytest.exit(
+            f"Refusing to run tests outside the required ELETTRA test stack: {exc}",
+            returncode=2,
+        )
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -150,6 +178,9 @@ def _dsn_for_asyncpg() -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def _cleanup_ephemeral_users_after_session():
+    if not _database_target_is_safe_for_tests():
+        yield
+        return
     # run tests
     yield
     # cleanup step
