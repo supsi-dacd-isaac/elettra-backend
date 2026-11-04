@@ -59,7 +59,9 @@ To modify test settings, edit `tests/test.env`:
 ```bash
 # Database configuration for tests
 export ELETTRA_CONFIG_FILE=config/elettra-config.docker.yaml
-export DATABASE_URL=postgresql+asyncpg://admin:admin@localhost:5440/elettra
+export DATABASE_URL=postgresql+asyncpg://STAGING_USER:URL_ENCODED_STAGING_PASSWORD@localhost:9004/elettra
+export ELETTRA_TEST_BACKEND_URL=http://127.0.0.1:9005
+export ELETTRA_TEST_FRONTEND_URL=http://127.0.0.1:55558
 
 # Test credentials
 export TEST_LOGIN_EMAIL=test01.elettra@fart.ch
@@ -71,10 +73,26 @@ export TEST_ROUTE_ID=5494f67e-7121-4628-b5b0-0c4fb21a236a
 
 ## Docker Compose Testing
 
+Local tests are allowed to use only the dedicated staging stack:
+
+- frontend: `http://127.0.0.1:55558`;
+- backend: `http://127.0.0.1:9005`;
+- PostgreSQL: `localhost:9004/elettra`.
+
+`run_tests.sh` and `tests/conftest.py` both fail closed when another target is
+configured. In particular, the production ports `8002` and `5440` are never
+valid test targets. The GitHub Actions workflow is the only exception: it uses
+the ephemeral PostgreSQL service created inside the workflow.
+
 ### Start required services
 ```bash
-docker-compose up -d db
+curl --fail http://127.0.0.1:9005/health
+curl --fail http://127.0.0.1:55558/health
 ```
+
+The test runner deliberately does not start Docker services. The separately
+managed staging stack must already be running; do not start the production
+Compose database for tests.
 
 ### Run tests against docker services
 ```bash
@@ -104,7 +122,9 @@ Test reports are automatically generated in `tests/reports/` with timestamps:
 ### Database connection issues
 - Ensure `docker-compose up -d db` is running
 - Check DATABASE_URL in test.env matches your setup
-- Verify database is accessible on localhost:5440
+- Verify the staging database is accessible on localhost:9004
+- Verify the staging backend is healthy on http://127.0.0.1:9005/health
+- Verify the staging frontend is healthy on http://127.0.0.1:55558/health
 
 ### Import errors
 - Ensure you're in the project root directory
