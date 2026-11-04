@@ -87,6 +87,29 @@ from app.database import get_async_session  # noqa: E402
 settings = get_cached_settings()
 
 
+def _database_target_is_safe_for_tests() -> bool:
+    """Never let a local pytest session target the production database."""
+
+    from sqlalchemy.engine import make_url
+
+    url = make_url(settings.database_url)
+    isolated_database = (url.database or "").startswith("elettra_test_")
+    staging_database = url.host in {"127.0.0.1", "localhost"} and url.port == 9004
+    return isolated_database or staging_database or os.getenv("GITHUB_ACTIONS") == "true"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _reject_unsafe_database_target():
+    if not _database_target_is_safe_for_tests():
+        pytest.exit(
+            "Refusing to run tests against a non-test database. "
+            "Use the ELETTRA staging database on localhost:9004 or an "
+            "isolated database named elettra_test_*.",
+            returncode=2,
+        )
+    yield
+
+
 @pytest.fixture(autouse=True)
 def isolate_image_provenance_for_unit_tests(monkeypatch, tmp_path):
     """Unit fixtures own their synthetic release identities, including in Docker.
@@ -150,6 +173,9 @@ def _dsn_for_asyncpg() -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def _cleanup_ephemeral_users_after_session():
+    if not _database_target_is_safe_for_tests():
+        yield
+        return
     # run tests
     yield
     # cleanup step
