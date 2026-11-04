@@ -215,6 +215,42 @@ class PredictionRequest(BaseModel):
         return _resolve_prediction_stack_fields(self)
 
 
+class YearlyPredictionScenario(BaseModel):
+    scenario_id: str = Field(min_length=1, max_length=100)
+    external_temp_celsius: float = Field(allow_inf_nan=False)
+
+
+class YearlyPredictionAssignment(BaseModel):
+    shift_id: UUID
+    num_battery_packs: StrictInt = Field(gt=0)
+
+
+class YearlyPredictionRequest(BaseModel):
+    """All weather scenarios and the fixed battery assignment in one request."""
+    yearly_analysis_id: UUID
+    bus_model_id: UUID
+    model_name: str = Field(default_factory=default_prediction_model_name)
+    prediction_stack: PredictionStackType = Field(default_factory=default_prediction_stack_name)
+    occupancy_percent: float = Field(default=50, ge=0, le=100, allow_inf_nan=False)
+    auxiliary_heating_type: AuxiliaryHeatingType = "default"
+    quantiles: list[float] = Field(default_factory=lambda: [0.05, 0.5, 0.95])
+    scenarios: list[YearlyPredictionScenario] = Field(min_length=1)
+    assignments: list[YearlyPredictionAssignment] = Field(min_length=1)
+
+    @field_validator("quantiles")
+    @classmethod
+    def validate_quantiles(cls, values):
+        return _validated_quantiles(values)
+
+    @model_validator(mode="after")
+    def validate_contract(self):
+        if len({item.scenario_id for item in self.scenarios}) != len(self.scenarios):
+            raise ValueError("Weather scenario IDs must be unique")
+        if len({item.shift_id for item in self.assignments}) != len(self.assignments):
+            raise ValueError("Each vehicle block must have exactly one battery assignment")
+        return _resolve_prediction_stack_fields(self)
+
+
 # ---------------------------------------------------------------------------
 # Optimization request schemas
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ from app.database import get_async_session
 from app.schemas.database import PredictionRunsRead, TripPredictionsRead, OptimizationRunsRead
 from app.schemas.responses import (
     PredictionSubmitResponse,
+    YearlyPredictionSubmitResponse,
     OptimizationSubmitResponse,
     OptimizationDeleteResponse,
     CombinedTripStatisticsResponse,
@@ -26,6 +27,7 @@ from app.schemas.requests import (
     ChargingStopCandidatesRequest,
     TripStatisticsRequest,
     PredictionRequest,
+    YearlyPredictionRequest,
     OptimizationRequest,
     _OPTIMIZATION_EXAMPLES,
 )
@@ -449,16 +451,86 @@ async def create_prediction_runs(
 
     await db.commit()
 
-    from app.services.prediction import run_prediction_background
-    for run_id in run_ids:
-        background_tasks.add_task(
-            run_prediction_background,
-            prediction_run_id=run_id,
-            quantiles=request.quantiles,
-            num_battery_packs=request.num_battery_packs,
-        )
+    from app.services.prediction import run_prediction_jobs_background
+    background_tasks.add_task(
+        run_prediction_jobs_background,
+        [(run_id, request.num_battery_packs) for run_id in run_ids],
+        request.quantiles,
+    )
 
     return PredictionSubmitResponse(prediction_run_ids=run_ids)
+
+
+@router.post("/yearly-prediction-runs/", response_model=YearlyPredictionSubmitResponse)
+async def create_yearly_prediction_runs(
+    request: YearlyPredictionRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    from app.services.prediction import physical_bus_mass, run_yearly_prediction_background
+
+    # Validate every resource and scenario before creating any run.
+    await get_owned_yearly_analysis(db, request.yearly_analysis_id, current_user.id)
+    bus_model = await get_owned_bus_model(db, request.bus_model_id, current_user.id)
+    shift_ids = [item.shift_id for item in request.assignments]
+    for shift_id in shift_ids:
+        await get_owned_shift(db, shift_id, current_user.id, current_user.company_id)
+    try:
+        selected_stack = resolve_prediction_selection(
+            prediction_stack=request.prediction_stack, model_name=request.model_name,
+        )
+    except RuntimeReleaseConfigurationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        for item in request.assignments:
+            physical_bus_mass(bus_model.specs or {}, occupancy_percent=request.occupancy_percent,
+                              num_battery_packs=item.num_battery_packs)
+        for scenario in request.scenarios:
+            _validate_vecto_prediction_request(
+                selected_stack=selected_stack, bus_model_specs=bus_model.specs or {},
+                occupancy_percent=request.occupancy_percent,
+                external_temp_celsius=scenario.external_temp_celsius,
+                auxiliary_heating_type=request.auxiliary_heating_type,
+            )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        await ensure_shift_profiles_ready(db, shift_ids)
+    except ElevationProfileNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+
+    await db.execute(select(YearlyAnalysis).where(
+        YearlyAnalysis.id == request.yearly_analysis_id,
+    ).with_for_update())
+    existing = await db.scalar(select(PredictionRuns.id).where(
+        PredictionRuns.yearly_analysis_id == request.yearly_analysis_id,
+    ).limit(1))
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Predictions already exist for this yearly analysis")
+
+    jobs = []
+    scenarios = []
+    for scenario in request.scenarios:
+        ids = []
+        for assignment in request.assignments:
+            run = PredictionRuns(
+                user_id=current_user.id, shift_id=assignment.shift_id,
+                bus_model_id=request.bus_model_id, yearly_analysis_id=request.yearly_analysis_id,
+                model_name=selected_stack.model_release, prediction_stack=selected_stack.stack.value,
+                auxiliary_estimator_release=selected_stack.auxiliary_estimator,
+                external_temp_celsius=scenario.external_temp_celsius,
+                occupancy_percent=request.occupancy_percent,
+                auxiliary_heating_type=request.auxiliary_heating_type, status="pending",
+            )
+            db.add(run)
+            await db.flush()
+            ids.append(run.id)
+            jobs.append((run.id, assignment.num_battery_packs))
+        scenarios.append({"scenario_id": scenario.scenario_id, "prediction_run_ids": ids})
+    await db.commit()
+    background_tasks.add_task(run_yearly_prediction_background, jobs, request.quantiles)
+    return {"prediction_run_ids": [run_id for run_id, _ in jobs], "scenarios": scenarios}
 
 
 @router.get("/prediction-runs/", response_model=List[PredictionRunsRead])

@@ -43,7 +43,7 @@ from simulation.optimization_verification import optimize_and_verify
 from simulation.infeasibility_diagnostics import diagnose_infeasible_cycle
 from simulation.aggregate_consumption import AggregateOptions, PredictiveDistributionUnavailable
 from simulation.energy_analysis import build_energy_analysis
-from app.services.aggregate_consumption import load_aggregate_profile
+from app.services.aggregate_consumption import load_aggregate_profiles
 from app.services.runtime_release import PredictionStack, resolve_prediction_selection
 from app.services.optimization_process import run_workers, threads_per_worker
 
@@ -134,12 +134,15 @@ async def ensure_predictions(
     shift_ids: list[UUID],
     bus_model_id: UUID | None,
     prediction_params: dict,
+    *, pending_jobs=None, statistics_cache=None, trip_cache=None,
 ) -> list[UUID]:
     """
     For each shift, find a completed prediction run matching the given parameters.
     If not found, create and execute one. Returns the list of prediction_run_ids.
     """
-    from app.services.prediction import predict_shift_consumption
+    from app.services.prediction import predict_consumption_jobs
+
+    jobs = pending_jobs if pending_jobs is not None else []
 
     selected_stack = resolve_prediction_selection(
         prediction_stack=prediction_params.get("prediction_stack"),
@@ -263,18 +266,13 @@ async def ensure_predictions(
         )
         db.add(run)
         await db.flush()
-        await db.commit()
-
-        await predict_shift_consumption(
-            db=db,
-            prediction_run_id=run.id,
-            quantiles=prediction_params.get("quantiles", [0.05, 0.5, 0.95]),
-            num_battery_packs=effective_packs,
-        )
-        await db.refresh(run)
-        if run.status != "completed":
-            raise RuntimeError(f"Prediction for shift {shift_id} failed: {run.summary}")
+        jobs.append((run.id, effective_packs))
         run_ids.append(run.id)
+
+    if pending_jobs is None and jobs:
+        await db.commit()
+        await predict_consumption_jobs(db, jobs, requested_quantiles,
+                                       statistics_cache=statistics_cache, trip_cache=trip_cache)
 
     return run_ids
 
@@ -630,26 +628,30 @@ async def run_optimization(
         statistics_cache = {} if statistics_cache is None else statistics_cache
         budget = params.get("optimization_time_budget_seconds", 900)
 
+        forecast_trip_cache = {}
+
         async def profiles_for(references):
-            profiles = {}
-            for sid, pid in references.items():
-                if pid not in profile_cache:
-                    prediction = await db.get(PredictionRuns, UUID(pid))
-                    remaining = budget - (time.monotonic()-pipeline_started)
-                    if remaining <= 0:
-                        raise TimeoutError("Aggregate forecast time budget exhausted")
-                    async with asyncio.timeout(remaining):
-                        sampling_options = aggregate_options
-                        if not params.get("charging_stations"):
-                            model = await db.get(BusesModels, prediction.bus_model_id)
-                            pack_kwh = (model.specs or {}).get("battery_pack_size_kwh") if model else None
-                            if pack_kwh:
-                                sampling_options = replace(aggregate_options, capacity_step_kwh=float(pack_kwh) *
-                                    params.get("state_of_health", 1) * (params.get("max_soc", .9)-params.get("min_soc", .4)))
-                        profile_cache[pid] = await load_aggregate_profile(
-                            db, prediction, options=sampling_options, statistics_cache=statistics_cache)
-                profiles[sid] = profile_cache[pid]
-            return profiles
+            requests = []
+            for pid in dict.fromkeys(references.values()):
+                if pid in profile_cache:
+                    continue
+                prediction = await db.get(PredictionRuns, UUID(pid))
+                sampling_options = aggregate_options
+                if not params.get("charging_stations"):
+                    model = await db.get(BusesModels, prediction.bus_model_id)
+                    pack_kwh = (model.specs or {}).get("battery_pack_size_kwh") if model else None
+                    if pack_kwh:
+                        sampling_options = replace(aggregate_options, capacity_step_kwh=float(pack_kwh) *
+                            params.get("state_of_health", 1) * (params.get("max_soc", .9)-params.get("min_soc", .4)))
+                requests.append((prediction, sampling_options))
+            if requests:
+                remaining = budget - (time.monotonic() - pipeline_started)
+                if remaining <= 0:
+                    raise TimeoutError("Aggregate forecast time budget exhausted")
+                async with asyncio.timeout(remaining):
+                    profile_cache.update(await load_aggregate_profiles(db, requests,
+                        statistics_cache=statistics_cache, trip_cache=forecast_trip_cache))
+            return {sid: profile_cache[pid] for sid, pid in references.items()}
 
         async def apply_basis(prepared, references):
             if basis != "aggregate_q95":
@@ -672,6 +674,7 @@ async def run_optimization(
                 shift_ids=[UUID(sid) for sid in params["shift_ids"]],
                 bus_model_id=run.bus_model_id,
                 prediction_params=pred_params,
+                statistics_cache=statistics_cache, trip_cache=forecast_trip_cache,
             )
             run.prediction_run_ids = [str(rid) for rid in prediction_run_ids]
             await db.commit()
@@ -714,7 +717,10 @@ async def run_optimization(
         exact_bus_cache = {}
 
         async def load_exact(packs):
+            from app.services.prediction import predict_consumption_jobs
+
             exact_ids = {}
+            pending = {}
             for sid, count in packs.items():
                 candidates = [pred for pred in provenance_runs
                               if str(pred.shift_id) == sid and pack_count(pred) == count]
@@ -722,6 +728,9 @@ async def run_optimization(
                     pred = max(candidates, key=lambda item: str(item.id))
                 else:
                     ref = initial[sid]
+                    quantiles = (ref.contextual_parameters or {}).get("quantiles", [0.05, 0.5, 0.95])
+                    contract = (ref.model_name, ref.prediction_stack, ref.auxiliary_estimator_release, tuple(quantiles))
+                    jobs = pending.setdefault(contract, [])
                     created = await ensure_predictions(
                         db, run.user_id, [ref.shift_id], ref.bus_model_id,
                         {"model_name": ref.model_name, "prediction_stack": ref.prediction_stack,
@@ -730,13 +739,20 @@ async def run_optimization(
                          "auxiliary_heating_type": ref.auxiliary_heating_type,
                          "quantiles": (ref.contextual_parameters or {}).get("quantiles", [0.05, 0.5, 0.95]),
                          "num_battery_packs": count},
+                        pending_jobs=jobs,
                     )
                     pred = await db.get(PredictionRuns, created[0])
                     provenance_runs.append(pred)
                     prediction_run_ids.append(pred.id)
-                    run.prediction_run_ids = [str(pid) for pid in prediction_run_ids]
-                    await db.commit()
                 exact_ids[sid] = str(pred.id)
+            if any(pending.values()):
+                await db.commit()
+                for contract, jobs in pending.items():
+                    if jobs:
+                        await predict_consumption_jobs(db, jobs, list(contract[-1]),
+                            statistics_cache=statistics_cache, trip_cache=forecast_trip_cache)
+            run.prediction_run_ids = [str(pid) for pid in prediction_run_ids]
+            await db.commit()
             exact_buses, _, _ = await prepare_optimization_input(
                 db, run, [UUID(pid) for pid in exact_ids.values()], reference_ids=exact_ids,
             )
@@ -775,11 +791,10 @@ async def run_optimization(
         if params.get("consumption_basis"):
             profiles = {}
             if verification["status"] == "verified":
-                for sid, pid in selected_ids.items():
-                    try:
-                        profiles.update(await profiles_for({sid: pid}))
-                    except (PredictiveDistributionUnavailable, TimeoutError) as exc:
-                        profiles[sid] = {"error": str(exc)}
+                try:
+                    profiles.update(await profiles_for(selected_ids))
+                except (PredictiveDistributionUnavailable, TimeoutError) as exc:
+                    profiles = {sid: {"error": str(exc)} for sid in selected_ids}
             analysis = await asyncio.to_thread(build_energy_analysis,
                 [exact_bus_cache.get(bus.shift_id, bus) for bus in buses], result, profiles,
                 opt_config, basis=basis, verified=verification["status"] == "verified")

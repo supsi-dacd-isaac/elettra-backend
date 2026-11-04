@@ -14,6 +14,7 @@ from app.services.prediction import (
     PredictionStack, _model_passenger_mass_kg, build_aux_energy_fn,
     build_vecto_auxiliary_binding, get_predictor, load_shift_trip_statistics,
     physical_bus_mass, resolve_prediction_selection, validate_model_stack_contract,
+    PreparedPrediction, combined_prediction_inputs,
 )
 from simulation.aggregate_consumption import (
     AggregateOptions, PredictiveDistributionUnavailable, aggregate_profile,
@@ -22,7 +23,7 @@ from simulation.aggregate_consumption import (
 from simulation.optimization_contract import pack_count
 
 
-async def load_aggregate_profile(db, prediction, *, options=AggregateOptions(), statistics_cache=None):
+async def _prepare_aggregate_profile(db, prediction, *, options=AggregateOptions(), statistics_cache=None, trip_cache=None):
     """Use the same features, physical mass and auxiliary estimator as prediction.
 
     The cache is scoped to one optimization request; no user/model/context can
@@ -47,7 +48,7 @@ async def load_aggregate_profile(db, prediction, *, options=AggregateOptions(), 
     sid = str(prediction.shift_id)
     cache = statistics_cache if statistics_cache is not None else {}
     if sid not in cache:
-        cache[sid] = await load_shift_trip_statistics(db, prediction.shift_id)
+        cache[sid] = await load_shift_trip_statistics(db, prediction.shift_id, trip_cache=trip_cache)
     trip_statistics = cache[sid]
     query = await db.execute(select(TripPredictions).where(
         TripPredictions.prediction_run_id == prediction.id
@@ -74,12 +75,11 @@ async def load_aggregate_profile(db, prediction, *, options=AggregateOptions(), 
             passenger_mass_kg=_model_passenger_mass_kg(stack, predictor))
         reference_mass = np.full(len(stored), reference.total_weight_kg)
 
-    def calculate():
-        frame = predictor.prepare_features(trip_statistics, mass.bus_length_m,
-            mass.battery_capacity_kwh, float(prediction.external_temp_celsius))
-        support, mean, distribution = empirical_qrf_support(predictor, frame,
-            override_mass=np.full(len(stored), mass.total_weight_kg),
-            qrf_reference_mass=reference_mass, aux_energy_fn=aux)
+    prepared = PreparedPrediction(prediction, specs, stack, predictor, mass,
+        _model_passenger_mass_kg(stack, predictor), trip_statistics, aux, None,
+        np.full(len(stored), mass.total_weight_kg), reference_mass, reference_occupancy)
+
+    def finish(frame, support, mean, distribution):
         if not np.allclose(mean, np.asarray([row.prediction_kwh for row in stored], dtype=float), atol=1e-6, rtol=1e-7):
             raise PredictiveDistributionUnavailable(
                 "Current model/features do not reproduce the reference forecast; recalculate predictions"
@@ -103,4 +103,36 @@ async def load_aggregate_profile(db, prediction, *, options=AggregateOptions(), 
                                  for sequence, trip in occurrences]
         return result
 
+    return prepared, finish
+
+
+async def load_aggregate_profiles(db, requests, *, statistics_cache=None, trip_cache=None):
+    """Recover QRF support for all known references in one call per model contract."""
+    cache = statistics_cache if statistics_cache is not None else {}
+    trips = trip_cache if trip_cache is not None else {}
+    groups = {}
+    for prediction, options in requests:
+        prepared, finish = await _prepare_aggregate_profile(db, prediction, options=options,
+            statistics_cache=cache, trip_cache=trips)
+        key = (prediction.model_name, prediction.prediction_stack, prepared.aux_fn is not None)
+        groups.setdefault(key, []).append((prepared, finish))
+
+    def calculate():
+        results = {}
+        for items in groups.values():
+            prepared = [item for item, _ in items]
+            frames, features, arguments = combined_prediction_inputs(prepared)
+            support, mean, distribution = empirical_qrf_support(prepared[0].predictor, features, **arguments)
+            offset = 0
+            for (item, finish), frame in zip(items, frames, strict=True):
+                end = offset + len(frame)
+                results[str(item.run.id)] = finish(frame, support[offset:end], mean[offset:end], distribution)
+                offset = end
+        return results
+
     return await asyncio.to_thread(calculate)
+
+
+async def load_aggregate_profile(db, prediction, *, options=AggregateOptions(), statistics_cache=None):
+    results = await load_aggregate_profiles(db, [(prediction, options)], statistics_cache=statistics_cache)
+    return results[str(prediction.id)]

@@ -30,7 +30,7 @@ from app.models import (
     YearlyAnalysis,
     YearlyAnalysisWeatherRevisions,
 )
-from app.services.prediction import predict_shift_consumption
+from app.services.prediction import predict_consumption_jobs
 from app.services.diesel_heating import (
     diesel_heating_fuel_profile,
     resolve_diesel_heating_quantity,
@@ -818,14 +818,14 @@ async def recalculate_yearly_analysis(
         revision_id = revision.id
 
     try:
+        groups = {}
         for run_id, quantiles, packs in run_arguments:
-            async with AsyncSessionLocal() as prediction_db:
-                await predict_shift_consumption(
-                    prediction_db,
-                    run_id,
-                    quantiles=quantiles,
-                    num_battery_packs=packs,
-                )
+            groups.setdefault(tuple(quantiles), []).append((run_id, packs))
+        async with AsyncSessionLocal() as prediction_db:
+            statistics_cache, trip_cache = {}, {}
+            for quantiles, jobs in groups.items():
+                await predict_consumption_jobs(prediction_db, jobs, list(quantiles),
+                    statistics_cache=statistics_cache, trip_cache=trip_cache)
     except BaseException as exc:
         async with AsyncSessionLocal() as db:
             revision = await db.get(YearlyAnalysisWeatherRevisions, revision_id)

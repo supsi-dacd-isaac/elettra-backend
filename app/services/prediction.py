@@ -2,11 +2,13 @@
 Prediction service: runs ConsumptionPredictor for shifts stored in the DB.
 """
 
+import asyncio
 import logging
+import time
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 from uuid import UUID
 
 import numpy as np
@@ -40,7 +42,7 @@ from app.services.runtime_release import (
 )
 from app.services.model_release import get_validated_model_artifact
 from app.services.vecto_auxiliary import build_vecto_auxiliary_binding
-from elettra_core import PASSENGER_MASS_KG, RAW_TRIP_FEATURE_COLUMNS
+from elettra_core import AuxiliaryEnergyComponents, PASSENGER_MASS_KG, RAW_TRIP_FEATURE_COLUMNS
 from simulation.consumption_prediction import ConsumptionPredictor
 
 logger = logging.getLogger(__name__)
@@ -437,6 +439,8 @@ def compute_diesel_heating_summary(
 async def load_shift_trip_statistics(
     db: AsyncSession,
     shift_id: UUID,
+    *,
+    trip_cache: Optional[dict[UUID, dict]] = None,
 ) -> list[dict]:
     """
     Load all trips for a shift, compute per-trip statistics, and return them
@@ -455,6 +459,13 @@ async def load_shift_trip_statistics(
     for ss in structures:
         trip_id = ss.trip_id
         seq = ss.sequence_number
+
+        if trip_cache is not None and trip_id in trip_cache:
+            trip_statistics.append({
+                "trip_id": str(trip_id), "sequence_number": seq,
+                "statistics": {"statistics": trip_cache[trip_id]},
+            })
+            continue
 
         # Load schedule
         sched_result = await db.execute(
@@ -514,6 +525,8 @@ async def load_shift_trip_statistics(
                 f"trip {trip_id} at sequence {seq}: {exc}"
             ) from exc
 
+        if trip_cache is not None:
+            trip_cache[trip_id] = stats
         trip_statistics.append({
             "trip_id": str(trip_id),
             "sequence_number": seq,
@@ -539,6 +552,285 @@ async def _load_trip_elevation(db: AsyncSession, trip_id: UUID) -> pd.DataFrame:
 # Core prediction logic
 # ---------------------------------------------------------------------------
 
+@dataclass
+class PreparedPrediction:
+    run: PredictionRuns
+    specs: dict
+    stack_release: PredictionStackRelease
+    predictor: ConsumptionPredictor
+    mass: PhysicalBusMass
+    passenger_mass_kg: float
+    trip_stats: list[dict]
+    aux_fn: Optional[Callable]
+    auxiliary_context: Optional[dict]
+    override_mass: np.ndarray
+    qrf_reference_mass: Optional[np.ndarray]
+    qrf_reference_occupancy_percent: Optional[float]
+
+    def prediction_arguments(self) -> dict:
+        return {
+            "json_data": {"shift_id": str(self.run.shift_id), "trip_statistics": self.trip_stats},
+            "bus_length_m": self.mass.bus_length_m,
+            "battery_capacity_kwh": self.mass.battery_capacity_kwh,
+            "external_temp_celsius": float(self.run.external_temp_celsius),
+            "override_mass": self.override_mass,
+            "battery_pack_density_override": self.mass.battery_density_kg_per_kwh,
+        }
+
+
+async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None) -> PreparedPrediction:
+    # Load bus model specs
+    bus_model = await db.get(BusesModels, run.bus_model_id)
+    if bus_model is None:
+        raise ValueError(f"BusModel {run.bus_model_id} not found")
+    specs = bus_model.specs or {}
+
+    stack_release = resolve_prediction_selection(
+        prediction_stack=getattr(run, "prediction_stack", None) or None,
+        model_name=run.model_name,
+    )
+    _bind_prediction_run_stack(run, stack_release)
+    predictor = get_predictor(run.model_name)
+    validate_model_stack_contract(stack_release, predictor.metadata)
+    passenger_mass_kg = _model_passenger_mass_kg(stack_release, predictor)
+
+    mass = physical_bus_mass(
+        specs,
+        occupancy_percent=float(run.occupancy_percent),
+        num_battery_packs=num_battery_packs,
+        passenger_mass_kg=passenger_mass_kg,
+    )
+    packs = mass.battery_packs
+    total_weight_kg = mass.total_weight_kg
+
+    # Load trip statistics from DB
+    if trip_stats is None:
+        trip_stats = await load_shift_trip_statistics(db, run.shift_id)
+    if not trip_stats:
+        raise ValueError(f"No valid trip statistics for shift {run.shift_id}")
+
+    auxiliary_context: dict[str, object] | None = None
+    if stack_release.stack is PredictionStack.LEGACY:
+        aux_fn = build_aux_energy_fn(specs, run.auxiliary_heating_type)
+    else:
+        vecto_binding = build_vecto_auxiliary_binding(
+            stack_release=stack_release,
+            bus_model_specs=specs,
+            occupancy_percent=float(run.occupancy_percent),
+            external_temp_celsius=float(run.external_temp_celsius),
+            auxiliary_heating_type=run.auxiliary_heating_type,
+        )
+        aux_fn = vecto_binding.energy_fn
+        auxiliary_context = vecto_binding.metadata()
+
+    # Get predictor (cached) and bind it to the same stack contract.
+    # Build override_mass array (same mass for all trips)
+    n_trips = len(trip_stats)
+    override_mass = np.full(n_trips, total_weight_kg)
+    qrf_reference_occupancy_percent = getattr(
+        predictor.model,
+        "qrf_reference_occupancy_percent",
+        None,
+    )
+    qrf_reference_mass = None
+    if qrf_reference_occupancy_percent is not None:
+        reference_mass = physical_bus_mass(
+            specs,
+            occupancy_percent=float(qrf_reference_occupancy_percent),
+            num_battery_packs=packs,
+            passenger_mass_kg=passenger_mass_kg,
+        )
+        qrf_reference_mass = np.full(
+            n_trips,
+            reference_mass.total_weight_kg,
+        )
+
+    return PreparedPrediction(
+        run, specs, stack_release, predictor, mass, passenger_mass_kg, trip_stats,
+        aux_fn, auxiliary_context, override_mass, qrf_reference_mass,
+        qrf_reference_occupancy_percent,
+    )
+
+
+async def _store_prediction(db, prepared, results, quantiles, *, commit=True) -> None:
+    run = prepared.run
+    specs = prepared.specs
+    stack_release = prepared.stack_release
+    mass = prepared.mass
+    trip_stats = prepared.trip_stats
+    auxiliary_context = prepared.auxiliary_context
+    passenger_mass_kg = prepared.passenger_mass_kg
+    qrf_reference_mass = prepared.qrf_reference_mass
+    qrf_reference_occupancy_percent = prepared.qrf_reference_occupancy_percent
+    battery_capacity_kwh = mass.battery_capacity_kwh
+    bus_length_m = mass.bus_length_m
+    packs = mass.battery_packs
+    total_weight_kg = mass.total_weight_kg
+    if len(results.get("predictions", [])) != len(trip_stats):
+        raise ValueError("Prediction cardinality does not match trip occurrences")
+    def _sanitize_json(obj):
+        """Recursively replace NaN/Inf floats with None for JSONB storage."""
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        if isinstance(obj, dict):
+            return {k: _sanitize_json(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize_json(v) for v in obj]
+        return obj
+
+    # Enrich summary with auxiliary_heating_type + diesel breakdown
+    summary = results.get("summary") or {}
+    summary["auxiliary_heating_type"] = run.auxiliary_heating_type
+    summary["prediction_stack"] = stack_release.stack.value
+    summary["auxiliary_estimator_release"] = stack_release.auxiliary_estimator
+    if auxiliary_context is not None:
+        summary["vecto_auxiliary"] = auxiliary_context
+        diesel_fuel_kwh = float(summary.get("total_diesel_fuel_kwh", 0.0))
+        diesel_liters = float(summary.get("total_diesel_liters", 0.0))
+        if diesel_fuel_kwh or diesel_liters:
+            summary["diesel_heating"] = {
+                "diesel_fuel_kwh": round(diesel_fuel_kwh, 4),
+                "diesel_liters": round(diesel_liters, 4),
+                "diesel_liters_per_km": round(
+                    diesel_liters / float(summary.get("total_distance_km", 0.0)), 6
+                )
+                if float(summary.get("total_distance_km", 0.0)) > 0
+                else 0.0,
+                "diesel_heater_efficiency": auxiliary_context[
+                    "diesel_heater_efficiency"
+                ],
+            }
+            summary["mixed_energy_totals"] = {
+                "battery_total_kwh": round(
+                    float(summary.get("total_consumption_kwh", 0.0)), 4
+                ),
+                "diesel_fuel_kwh": round(diesel_fuel_kwh, 4),
+                "combined_final_energy_kwh": round(
+                    float(summary.get("total_consumption_kwh", 0.0))
+                    + diesel_fuel_kwh,
+                    4,
+                ),
+            }
+
+    diesel_params_entry = (
+        specs.get("auxiliary_consumption_kw", {})
+        .get(run.auxiliary_heating_type)
+    )
+    if (
+        stack_release.stack is PredictionStack.LEGACY
+        and diesel_params_entry
+        and _is_diesel_heating_params(diesel_params_entry)
+    ):
+        try:
+            diesel_info = compute_diesel_heating_summary(
+                bus_model_specs=specs,
+                auxiliary_heating_type=run.auxiliary_heating_type,
+                external_temp_celsius=float(run.external_temp_celsius),
+                total_auxiliary_kwh=summary.get("total_auxiliary_kwh", 0),
+                total_consumption_kwh=summary.get("total_consumption_kwh", 0),
+                total_distance_km=summary.get("total_distance_km", 0),
+            )
+            summary.update(diesel_info)
+        except Exception:
+            logger.exception("Failed to compute diesel heating summary")
+
+    results["summary"] = summary
+
+    # Store contextual parameters
+    run.contextual_parameters = _sanitize_json({
+        "battery_capacity_kwh": battery_capacity_kwh,
+        "bus_length_m": bus_length_m,
+        "num_battery_packs": packs,
+        # Assessment-only metadata: never used by the predictor or solver.
+        "assessment_metadata": {
+            key: specs[key] for key in (
+                "battery_chemistry", "batteryChemistry", "bus_lifetime",
+                "bus_lifetime_years", "battery_pack_lifetime",
+                "battery_pack_lifetime_years", "lifetime_diesel_bus",
+            ) if specs.get(key) is not None
+        },
+        "total_weight_kg": total_weight_kg,
+        "physical_mass": {
+            "empty_weight_kg": mass.empty_weight_kg,
+            "battery_weight_kg": mass.battery_weight_kg,
+            "passenger_count": mass.passenger_count,
+            "passenger_weight_kg": mass.passenger_weight_kg,
+            "passenger_mass_kg": passenger_mass_kg,
+            "occupancy_percent": mass.occupancy_percent,
+            "qrf_reference_occupancy_percent": (
+                qrf_reference_occupancy_percent
+            ),
+            "qrf_reference_total_weight_kg": (
+                float(qrf_reference_mass[0])
+                if qrf_reference_mass is not None
+                else None
+            ),
+            "total_weight_kg": mass.total_weight_kg,
+        },
+        "quantiles": quantiles,
+        "greybox_params": results.get("greybox_params"),
+        "prediction_stack": stack_release.stack.value,
+        "auxiliary_estimator_release": stack_release.auxiliary_estimator,
+        "auxiliary_estimator": auxiliary_context,
+    })
+    run.summary = _sanitize_json(results.get("summary"))
+
+    # Store per-trip predictions
+    predictions_list = results.get("predictions", [])
+    for i, pred in enumerate(predictions_list):
+        seq = trip_stats[i].get("sequence_number", i)
+        trip_id_str = trip_stats[i].get("trip_id")
+
+        q_dict = {}
+        for q in quantiles:
+            key = f"quantile_{q:.2f}"
+            if key in pred:
+                val = pred[key]
+                q_dict[f"{q:.2f}"] = None if (isinstance(val, float) and math.isnan(val)) else val
+
+        def _clean(v):
+            """Replace NaN/Inf floats with None for DB storage."""
+            if v is None:
+                return None
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return None
+            return v
+
+        tp = TripPredictions(
+            prediction_run_id=run.id,
+            trip_id=UUID(trip_id_str),
+            sequence_number=seq,
+            prediction_kwh=_clean(pred.get("prediction_kwh", 0)) or 0,
+            prediction_median_kwh=_clean(pred.get("prediction_median_kwh")),
+            drivetrain_kwh=_clean(pred.get("drivetrain_kwh")),
+            auxiliary_kwh=_clean(pred.get("auxiliary_kwh")),
+            mass_sensitivity_kwh_per_kwh_batt=_clean(pred.get("mass_sensitivity_kwh_per_kwh_batt")),
+            quantiles=q_dict if q_dict else None,
+            component_breakdown=_sanitize_json(
+                {
+                    key: _clean(pred.get(key))
+                    for key in (
+                        "mechanical_greybox_kwh",
+                        "qrf_residual_kwh",
+                        "fixed_auxiliary_kwh",
+                        "hvac_electrical_kwh",
+                        "diesel_fuel_kwh",
+                        "diesel_liters",
+                        "uncovered_thermal_kwh",
+                    )
+                    if pred.get(key) is not None
+                }
+            )
+            or None,
+        )
+        db.add(tp)
+
+    run.status = "completed"
+    run.completed_at = datetime.now(timezone.utc)
+    if commit:
+        await db.commit()
+
+
 async def predict_shift_consumption(
     db: AsyncSession,
     prediction_run_id: UUID,
@@ -556,252 +848,13 @@ async def predict_shift_consumption(
     await db.commit()
 
     try:
-        # Load bus model specs
-        bus_model = await db.get(BusesModels, run.bus_model_id)
-        if bus_model is None:
-            raise ValueError(f"BusModel {run.bus_model_id} not found")
-        specs = bus_model.specs or {}
-
-        stack_release = resolve_prediction_selection(
-            prediction_stack=getattr(run, "prediction_stack", None) or None,
-            model_name=run.model_name,
+        prepared = await _prepare_prediction(db, run, num_battery_packs)
+        results = prepared.predictor.predict_from_json(
+            **prepared.prediction_arguments(), quantiles=quantiles,
+            aux_energy_fn=prepared.aux_fn,
+            qrf_reference_mass=prepared.qrf_reference_mass,
         )
-        _bind_prediction_run_stack(run, stack_release)
-        predictor = get_predictor(run.model_name)
-        validate_model_stack_contract(stack_release, predictor.metadata)
-        passenger_mass_kg = _model_passenger_mass_kg(stack_release, predictor)
-
-        mass = physical_bus_mass(
-            specs,
-            occupancy_percent=float(run.occupancy_percent),
-            num_battery_packs=num_battery_packs,
-            passenger_mass_kg=passenger_mass_kg,
-        )
-        bus_length_m = mass.bus_length_m
-        packs = mass.battery_packs
-        battery_capacity_kwh = mass.battery_capacity_kwh
-        total_weight_kg = mass.total_weight_kg
-        actual_pack_density = mass.battery_density_kg_per_kwh
-
-        # Load trip statistics from DB
-        trip_stats = await load_shift_trip_statistics(db, run.shift_id)
-        if not trip_stats:
-            raise ValueError(f"No valid trip statistics for shift {run.shift_id}")
-
-        json_data = {
-            "shift_id": str(run.shift_id),
-            "trip_statistics": trip_stats,
-        }
-
-        auxiliary_context: dict[str, object] | None = None
-        if stack_release.stack is PredictionStack.LEGACY:
-            aux_fn = build_aux_energy_fn(specs, run.auxiliary_heating_type)
-        else:
-            vecto_binding = build_vecto_auxiliary_binding(
-                stack_release=stack_release,
-                bus_model_specs=specs,
-                occupancy_percent=float(run.occupancy_percent),
-                external_temp_celsius=float(run.external_temp_celsius),
-                auxiliary_heating_type=run.auxiliary_heating_type,
-            )
-            aux_fn = vecto_binding.energy_fn
-            auxiliary_context = vecto_binding.metadata()
-
-        # Get predictor (cached) and bind it to the same stack contract.
-        # Build override_mass array (same mass for all trips)
-        n_trips = len(trip_stats)
-        override_mass = np.full(n_trips, total_weight_kg)
-        qrf_reference_occupancy_percent = getattr(
-            predictor.model,
-            "qrf_reference_occupancy_percent",
-            None,
-        )
-        qrf_reference_mass = None
-        if qrf_reference_occupancy_percent is not None:
-            reference_mass = physical_bus_mass(
-                specs,
-                occupancy_percent=float(qrf_reference_occupancy_percent),
-                num_battery_packs=packs,
-                passenger_mass_kg=passenger_mass_kg,
-            )
-            qrf_reference_mass = np.full(
-                n_trips,
-                reference_mass.total_weight_kg,
-            )
-
-        # Run prediction
-        results = predictor.predict_from_json(
-            json_data=json_data,
-            bus_length_m=bus_length_m,
-            battery_capacity_kwh=battery_capacity_kwh,
-            external_temp_celsius=float(run.external_temp_celsius),
-            quantiles=quantiles,
-            aux_energy_fn=aux_fn,
-            override_mass=override_mass,
-            qrf_reference_mass=qrf_reference_mass,
-            battery_pack_density_override=actual_pack_density,
-        )
-
-        def _sanitize_json(obj):
-            """Recursively replace NaN/Inf floats with None for JSONB storage."""
-            if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
-                return None
-            if isinstance(obj, dict):
-                return {k: _sanitize_json(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [_sanitize_json(v) for v in obj]
-            return obj
-
-        # Enrich summary with auxiliary_heating_type + diesel breakdown
-        summary = results.get("summary") or {}
-        summary["auxiliary_heating_type"] = run.auxiliary_heating_type
-        summary["prediction_stack"] = stack_release.stack.value
-        summary["auxiliary_estimator_release"] = stack_release.auxiliary_estimator
-        if auxiliary_context is not None:
-            summary["vecto_auxiliary"] = auxiliary_context
-            diesel_fuel_kwh = float(summary.get("total_diesel_fuel_kwh", 0.0))
-            diesel_liters = float(summary.get("total_diesel_liters", 0.0))
-            if diesel_fuel_kwh or diesel_liters:
-                summary["diesel_heating"] = {
-                    "diesel_fuel_kwh": round(diesel_fuel_kwh, 4),
-                    "diesel_liters": round(diesel_liters, 4),
-                    "diesel_liters_per_km": round(
-                        diesel_liters / float(summary.get("total_distance_km", 0.0)), 6
-                    )
-                    if float(summary.get("total_distance_km", 0.0)) > 0
-                    else 0.0,
-                    "diesel_heater_efficiency": auxiliary_context[
-                        "diesel_heater_efficiency"
-                    ],
-                }
-                summary["mixed_energy_totals"] = {
-                    "battery_total_kwh": round(
-                        float(summary.get("total_consumption_kwh", 0.0)), 4
-                    ),
-                    "diesel_fuel_kwh": round(diesel_fuel_kwh, 4),
-                    "combined_final_energy_kwh": round(
-                        float(summary.get("total_consumption_kwh", 0.0))
-                        + diesel_fuel_kwh,
-                        4,
-                    ),
-                }
-
-        diesel_params_entry = (
-            specs.get("auxiliary_consumption_kw", {})
-            .get(run.auxiliary_heating_type)
-        )
-        if (
-            stack_release.stack is PredictionStack.LEGACY
-            and diesel_params_entry
-            and _is_diesel_heating_params(diesel_params_entry)
-        ):
-            try:
-                diesel_info = compute_diesel_heating_summary(
-                    bus_model_specs=specs,
-                    auxiliary_heating_type=run.auxiliary_heating_type,
-                    external_temp_celsius=float(run.external_temp_celsius),
-                    total_auxiliary_kwh=summary.get("total_auxiliary_kwh", 0),
-                    total_consumption_kwh=summary.get("total_consumption_kwh", 0),
-                    total_distance_km=summary.get("total_distance_km", 0),
-                )
-                summary.update(diesel_info)
-            except Exception:
-                logger.exception("Failed to compute diesel heating summary")
-
-        results["summary"] = summary
-
-        # Store contextual parameters
-        run.contextual_parameters = _sanitize_json({
-            "battery_capacity_kwh": battery_capacity_kwh,
-            "bus_length_m": bus_length_m,
-            "num_battery_packs": packs,
-            # Assessment-only metadata: never used by the predictor or solver.
-            "assessment_metadata": {
-                key: specs[key] for key in (
-                    "battery_chemistry", "batteryChemistry", "bus_lifetime",
-                    "bus_lifetime_years", "battery_pack_lifetime",
-                    "battery_pack_lifetime_years", "lifetime_diesel_bus",
-                ) if specs.get(key) is not None
-            },
-            "total_weight_kg": total_weight_kg,
-            "physical_mass": {
-                "empty_weight_kg": mass.empty_weight_kg,
-                "battery_weight_kg": mass.battery_weight_kg,
-                "passenger_count": mass.passenger_count,
-                "passenger_weight_kg": mass.passenger_weight_kg,
-                "passenger_mass_kg": passenger_mass_kg,
-                "occupancy_percent": mass.occupancy_percent,
-                "qrf_reference_occupancy_percent": (
-                    qrf_reference_occupancy_percent
-                ),
-                "qrf_reference_total_weight_kg": (
-                    float(qrf_reference_mass[0])
-                    if qrf_reference_mass is not None
-                    else None
-                ),
-                "total_weight_kg": mass.total_weight_kg,
-            },
-            "quantiles": quantiles,
-            "greybox_params": results.get("greybox_params"),
-            "prediction_stack": stack_release.stack.value,
-            "auxiliary_estimator_release": stack_release.auxiliary_estimator,
-            "auxiliary_estimator": auxiliary_context,
-        })
-        run.summary = _sanitize_json(results.get("summary"))
-
-        # Store per-trip predictions
-        predictions_list = results.get("predictions", [])
-        for i, pred in enumerate(predictions_list):
-            seq = trip_stats[i].get("sequence_number", i)
-            trip_id_str = trip_stats[i].get("trip_id")
-
-            q_dict = {}
-            for q in quantiles:
-                key = f"quantile_{q:.2f}"
-                if key in pred:
-                    val = pred[key]
-                    q_dict[f"{q:.2f}"] = None if (isinstance(val, float) and math.isnan(val)) else val
-
-            def _clean(v):
-                """Replace NaN/Inf floats with None for DB storage."""
-                if v is None:
-                    return None
-                if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
-                    return None
-                return v
-
-            tp = TripPredictions(
-                prediction_run_id=prediction_run_id,
-                trip_id=UUID(trip_id_str),
-                sequence_number=seq,
-                prediction_kwh=_clean(pred.get("prediction_kwh", 0)) or 0,
-                prediction_median_kwh=_clean(pred.get("prediction_median_kwh")),
-                drivetrain_kwh=_clean(pred.get("drivetrain_kwh")),
-                auxiliary_kwh=_clean(pred.get("auxiliary_kwh")),
-                mass_sensitivity_kwh_per_kwh_batt=_clean(pred.get("mass_sensitivity_kwh_per_kwh_batt")),
-                quantiles=q_dict if q_dict else None,
-                component_breakdown=_sanitize_json(
-                    {
-                        key: _clean(pred.get(key))
-                        for key in (
-                            "mechanical_greybox_kwh",
-                            "qrf_residual_kwh",
-                            "fixed_auxiliary_kwh",
-                            "hvac_electrical_kwh",
-                            "diesel_fuel_kwh",
-                            "diesel_liters",
-                            "uncovered_thermal_kwh",
-                        )
-                        if pred.get(key) is not None
-                    }
-                )
-                or None,
-            )
-            db.add(tp)
-
-        run.status = "completed"
-        run.completed_at = datetime.now(timezone.utc)
-        await db.commit()
+        await _store_prediction(db, prepared, results, quantiles)
 
     except Exception as e:
         logger.exception(f"Prediction failed for run {prediction_run_id}: {e}")
@@ -815,6 +868,160 @@ async def predict_shift_consumption(
         except Exception:
             logger.exception(f"Failed to update prediction run {prediction_run_id} status to 'failed'")
         raise
+
+
+def combined_prediction_inputs(prepared):
+    """Concatenate compatible features and row-specific physical/auxiliary inputs."""
+    predictor = prepared[0].predictor
+    frames = [item.predictor.prepare_features(
+        trip_statistics=item.trip_stats,
+        bus_length_m=item.mass.bus_length_m,
+        battery_capacity_kwh=item.mass.battery_capacity_kwh,
+        external_temp_celsius=float(item.run.external_temp_celsius),
+    ) for item in prepared]
+    features = pd.concat(frames, ignore_index=True)
+    has_aux = [item.aux_fn is not None for item in prepared]
+    if any(has_aux) and not all(has_aux):
+        raise ValueError("Cannot combine explicit and implicit auxiliary estimators")
+    aux_fn = None
+    if all(has_aux):
+        auxiliary = [item.aux_fn(frame.drop(columns=['trip_id'], errors='ignore'))
+                     for item, frame in zip(prepared, frames, strict=True)]
+        if predictor.is_hybrid_greybox:
+            components = [AuxiliaryEnergyComponents.coerce(value, rows=len(frame))
+                          for value, frame in zip(auxiliary, frames, strict=True)]
+            combined_auxiliary = AuxiliaryEnergyComponents(**{
+                field.name: np.concatenate([getattr(value, field.name) for value in components])
+                for field in fields(AuxiliaryEnergyComponents)
+            })
+        else:
+            combined_auxiliary = np.concatenate([np.asarray(value, dtype=float).reshape(-1)
+                                                for value in auxiliary])
+
+        def aux_fn(frame):
+            if len(frame) != len(features):
+                raise ValueError("Auxiliary rows do not match combined prediction rows")
+            return combined_auxiliary
+
+    reference_masses = [item.qrf_reference_mass for item in prepared]
+    if any(value is None for value in reference_masses) and not all(value is None for value in reference_masses):
+        raise ValueError("Cannot combine different QRF reference mass contracts")
+    arguments = dict(
+        aux_energy_fn=aux_fn,
+        override_mass=np.concatenate([item.override_mass for item in prepared]),
+        qrf_reference_mass=(np.concatenate(reference_masses) if reference_masses[0] is not None else None),
+    )
+    return frames, features, arguments
+
+
+def _predict_combined(prepared: list[PreparedPrediction], quantiles: list[float]) -> list[dict]:
+    """One model invocation for all compatible rows; retain each occurrence's context."""
+    predictor = prepared[0].predictor
+    frames, features, arguments = combined_prediction_inputs(prepared)
+    predictions = predictor.predict(features, quantiles=quantiles, **arguments)
+    if len(predictions) != len(features):
+        raise ValueError("Combined prediction cardinality changed unexpectedly")
+    results = []
+    offset = 0
+    for item, frame in zip(prepared, frames, strict=True):
+        end = offset + len(frame)
+        results.append(predictor.summarize_predictions(
+            **item.prediction_arguments(), features=frame,
+            predictions=predictions.iloc[offset:end].reset_index(drop=True), quantiles=quantiles,
+        ))
+        offset = end
+    return results
+
+
+async def predict_consumption_jobs(
+    db: AsyncSession, jobs: list[tuple[UUID, Optional[int]]], quantiles: list[float],
+    *, statistics_cache=None, trip_cache=None,
+) -> None:
+    """Share statistics and infer all known forecasts together, across duties and masses.
+
+    Caches are request-local: edits to schedules or elevation profiles take effect
+    on the next analysis. The existing per-run/trip persistence contract is kept.
+    """
+    if not jobs or len({run_id for run_id, _ in jobs}) != len(jobs):
+        raise ValueError("Prediction jobs must be nonempty and unique")
+    run_ids = [run_id for run_id, _ in jobs]
+    started = time.perf_counter()
+    try:
+        runs = []
+        for run_id, _ in jobs:
+            run = await db.get(PredictionRuns, run_id)
+            if run is None or run.status != 'pending':
+                raise ValueError(f"Prediction run {run_id} is not pending")
+            runs.append(run)
+        contracts = {(run.model_name, run.prediction_stack, run.auxiliary_estimator_release,
+                      run.user_id, run.yearly_analysis_id) for run in runs}
+        if len(contracts) != 1:
+            raise ValueError("Predictions must share owner, analysis and model contract")
+        for run in runs:
+            run.status = 'running'
+        await db.commit()
+        shift_cache = statistics_cache if statistics_cache is not None else {}
+        trip_cache = trip_cache if trip_cache is not None else {}
+        prepared = []
+        for run, (_, packs) in zip(runs, jobs, strict=True):
+            if str(run.shift_id) not in shift_cache:
+                shift_cache[str(run.shift_id)] = await load_shift_trip_statistics(
+                    db, run.shift_id, trip_cache=trip_cache,
+                )
+            prepared.append(await _prepare_prediction(db, run, packs, shift_cache[str(run.shift_id)]))
+        prepared_at = time.perf_counter()
+        logger.info("Combined forecast prepared: runs=%d shifts=%d unique_trips=%d seconds=%.3f",
+                    len(jobs), len(shift_cache), len(trip_cache), prepared_at - started)
+        # CPU-bound inference must not block progress/status requests to the API.
+        # Legacy models may use implicit auxiliaries for some bus specifications.
+        # Group only incompatible contracts, never by an arbitrary row limit.
+        groups = {}
+        for index, item in enumerate(prepared):
+            key = (item.aux_fn is not None, item.qrf_reference_mass is not None)
+            groups.setdefault(key, []).append((index, item))
+        results = [None] * len(prepared)
+        for group in groups.values():
+            outputs = await asyncio.to_thread(_predict_combined, [item for _, item in group], quantiles)
+            for (index, _), result in zip(group, outputs, strict=True):
+                results[index] = result
+        predicted_at = time.perf_counter()
+        for item, result in zip(prepared, results, strict=True):
+            await _store_prediction(db, item, result, quantiles, commit=False)
+        await db.commit()
+        logger.info("Combined forecast completed: runs=%d rows=%d inference_seconds=%.3f total_seconds=%.3f",
+                    len(jobs), sum(len(item.trip_stats) for item in prepared),
+                    predicted_at - prepared_at, time.perf_counter() - started)
+    except Exception as exc:
+        await db.rollback()
+        for run_id in run_ids:
+            run = await db.get(PredictionRuns, run_id)
+            if run is not None and run.status in {'pending', 'running'}:
+                run.status = 'failed'
+                run.completed_at = datetime.now(timezone.utc)
+                run.summary = {"error": str(exc)}
+        await db.commit()
+        raise
+
+
+async def predict_yearly_consumption(db, jobs, quantiles):
+    """Annual matrix entry point, sharing the common inference pipeline."""
+    await predict_consumption_jobs(db, jobs, quantiles)
+
+
+async def run_prediction_jobs_background(jobs, quantiles):
+    async with AsyncSessionLocal() as db:
+        try:
+            await predict_consumption_jobs(db, jobs, quantiles)
+        except Exception:
+            logger.exception("Combined forecast failed for %d runs", len(jobs))
+
+
+async def run_yearly_prediction_background(jobs: list[tuple[UUID, int]], quantiles: list[float]) -> None:
+    async with AsyncSessionLocal() as db:
+        try:
+            await predict_yearly_consumption(db, jobs, quantiles)
+        except Exception:
+            logger.exception("Annual forecast failed for %d runs", len(jobs))
 
 
 # ---------------------------------------------------------------------------

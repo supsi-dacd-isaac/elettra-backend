@@ -520,6 +520,24 @@ class ConsumptionPredictor:
             qrf_reference_mass=qrf_reference_mass,
         )
 
+        return self.summarize_predictions(
+            json_data=json_data, features=features, predictions=predictions,
+            bus_length_m=bus_length_m, battery_capacity_kwh=battery_capacity_kwh,
+            external_temp_celsius=external_temp_celsius, quantiles=quantiles,
+            override_mass=override_mass,
+            battery_pack_density_override=battery_pack_density_override,
+        )
+
+    def summarize_predictions(
+        self, *, json_data, features, predictions, bus_length_m,
+        battery_capacity_kwh, external_temp_celsius, quantiles,
+        override_mass=None, battery_pack_density_override=None,
+    ) -> Dict[str, Any]:
+        """Format one run, including sensitivities, after single or combined inference."""
+        trip_statistics = json_data.get('trip_statistics', [])
+        if len(predictions) != len(features) or len(predictions) != len(trip_statistics):
+            raise ValueError("Prediction rows do not match the input trip occurrences")
+        predictions = predictions.copy()
         # If this is a greybox model and we have parameters, compute and attach
         # battery-size sensitivities per trip. The sensitivity expresses how
         # much the mechanical energy changes (kWh) per 1 kWh change in
