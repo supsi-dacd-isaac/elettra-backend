@@ -253,6 +253,47 @@ test environment without publishing an image or release. Tests requiring the
 deployment GTFS dataset, OSRM, MinIO or private model artifacts remain explicit
 opt-in integration tests and are reported as skipped on the hosted runner.
 
+Release images are built in parallel on native `ubuntu-24.04` (AMD64) and
+`ubuntu-24.04-arm` (ARM64) runners, without QEMU emulation. Each job publishes
+by immutable digest and checks its application version, architecture and frozen
+core identity. Only after all requested architectures pass does the publishing
+job assemble the multi-platform index and assign the release tags. The assembly
+checks require all requested platforms and their SBOM/provenance attestations;
+GitHub provenance is then attached to the final index digest.
+
+BuildKit caches live in GHCR under `buildcache-amd64` and `buildcache-arm64`,
+separate from release aliases. These caches can be reused across branches and
+release tags, and parallel architecture jobs do not overwrite each other's
+cache. Dependency layers remain reusable while `requirements.lock`, the base
+image and the relevant build inputs are unchanged. `fix/**` branch builds retain
+the existing AMD64-only candidate publication; semantic-version tags build both
+architectures. RC tags remain GitHub Pre-releases and do not move `latest` or
+stable version aliases.
+
+#### Promoting a release candidate
+
+The application version is baked into the image. Retagging an RC image, or
+removing the GitHub Pre-release flag, does not change the version reported by
+`/api/v1/version`. For an official release, update
+`config/elettra-config.image.yaml` to the stable version, include the validated
+candidate changes and workflow changes in `main`, and push the matching stable
+tag. The workflow rebuilds the image with the official version and reruns its
+checks, reusing cached dependency layers where possible. Keep existing RC tags
+and digests intact. The frontend has its own embedded version and release gate.
+
+Offline checks for native runner selection, complete image assembly and
+publication ordering can be run with:
+
+```bash
+python -m unittest discover -s tests -p test_container_release.py -v
+actionlint .github/workflows/container-release.yml
+```
+
+The offline Python checks require PyYAML, already included in `requirements.lock`,
+and do not start the application or connect to a database. The first native
+multi-platform release exercises the new runners and populates the registry
+caches; compare it with a later build to measure the benefit of cache reuse.
+
 ---
 ## 12. Development Tips
 - Configuration: ensure `ELETTRA_CONFIG_FILE` is set *before* starting `main.py`.

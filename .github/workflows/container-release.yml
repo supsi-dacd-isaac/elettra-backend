@@ -13,6 +13,8 @@ env:
 
 jobs:
   verify:
+    outputs:
+      app_version: ${{ steps.version.outputs.app_version }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -73,8 +75,8 @@ jobs:
       - name: Audit locked runtime dependencies
         run: python -m pip_audit -r requirements.lock
 
-      - name: Verify application version matches tag
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Resolve application version and verify release tag
+        id: version
         run: |
           python - <<'PY'
           import os
@@ -84,10 +86,12 @@ jobs:
           tag_version = os.environ["GITHUB_REF_NAME"].removeprefix("v")
           config = yaml.safe_load(Path("config/elettra-config.image.yaml").read_text())
           app_version = str(config["app"]["version"])
-          if app_version != tag_version:
+          if os.environ["GITHUB_REF"].startswith("refs/tags/") and app_version != tag_version:
               raise SystemExit(
                   f"release tag {tag_version!r} does not match app version {app_version!r}"
               )
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"app_version={app_version}\n")
           PY
 
       - name: Initialize test database
@@ -112,17 +116,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  publish-image:
+  prepare-image:
     if: startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/fix/')
     needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-      attestations: write
-      id-token: write
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      matrix: ${{ steps.target.outputs.matrix }}
+      architectures: ${{ steps.target.outputs.architectures }}
+      metadata: ${{ steps.metadata.outputs.json }}
+      labels: ${{ steps.metadata.outputs.labels }}
+      app_version: ${{ needs.verify.outputs.app_version }}
       core_tag: ${{ steps.core.outputs.tag }}
       core_commit: ${{ steps.core.outputs.commit }}
     steps:
@@ -150,30 +155,22 @@ jobs:
           echo "tag=$core_tag" >> "$GITHUB_OUTPUT"
           echo "commit=$core_commit" >> "$GITHUB_OUTPUT"
 
-      - name: Select target platforms
+      - name: Select native runners
         id: target
         env:
           IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: |
-          if [ "$IS_RELEASE" = "true" ]; then
-            echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
-          else
-            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
-          fi
+          python - <<'PYTHON'
+          import json
+          import os
 
-      - name: Set up QEMU
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          targets = [{"arch": "amd64", "runner": "ubuntu-24.04"}]
+          if os.environ["IS_RELEASE"] == "true":
+              targets.append({"arch": "arm64", "runner": "ubuntu-24.04-arm"})
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"matrix={json.dumps({'include': targets})}\n")
+              output.write(f"architectures={json.dumps([item['arch'] for item in targets])}\n")
+          PYTHON
 
       - name: Select publication channel
         id: channel
@@ -196,28 +193,149 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Elettra backend
 
-      - name: Build and push image
+  build-image:
+    name: Build and verify ${{ matrix.arch }}
+    needs: prepare-image
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-image.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check native runner architecture
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          case "$TARGET_ARCH:$(uname -m)" in
+            amd64:x86_64|arm64:aarch64) ;;
+            *) echo "::error::A native runner is required for $TARGET_ARCH"; exit 1 ;;
+          esac
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publish only by digest here. Version/stable tags are assigned once,
+      # after every requested architecture has built and passed its smoke test.
+      - name: Build and push platform image
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          platforms: ${{ steps.target.outputs.platforms }}
-          push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ needs.prepare-image.outputs.labels }}
           build-args: |
-            ELETTRA_CORE_SOURCE_COMMIT=${{ steps.core.outputs.commit }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ELETTRA_CORE_SOURCE_COMMIT=${{ needs.prepare-image.outputs.core_commit }}
+          # Registry caches survive release-tag boundaries. Each architecture
+          # has its own cache so parallel jobs never overwrite each other.
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache-${{ matrix.arch }},mode=max
           sbom: true
           provenance: mode=max
+
+      - name: Verify native image identity
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          EXPECTED_APP_VERSION: ${{ needs.prepare-image.outputs.app_version }}
+          EXPECTED_CORE_COMMIT: ${{ needs.prepare-image.outputs.core_commit }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          image_ref="${IMAGE_NAME}@${IMAGE_DIGEST}"
+          docker pull "$image_ref"
+          docker run --rm --entrypoint python \
+            -e EXPECTED_APP_VERSION -e EXPECTED_CORE_COMMIT -e EXPECTED_ARCH \
+            "$image_ref" -c '
+          from pathlib import Path
+          import os
+          import platform
+          from app.core.config import get_cached_settings
+          assert get_cached_settings().app_version == os.environ["EXPECTED_APP_VERSION"]
+          assert Path("/etc/elettra-core-image-commit").read_text().strip() == os.environ["EXPECTED_CORE_COMMIT"]
+          assert platform.machine() == {"amd64": "x86_64", "arm64": "aarch64"}[os.environ["EXPECTED_ARCH"]]
+          print("Verified native image version, architecture and frozen core")
+          '
+
+      - name: Export verified image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-digests"
+          printf '%s\n' "$IMAGE_DIGEST" > "$RUNNER_TEMP/image-digests/$TARGET_ARCH.digest"
+
+      - name: Upload verified image digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/image-digests/*.digest
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-image:
+    needs:
+      - prepare-image
+      - build-image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.merge.outputs.digest }}
+      core_tag: ${{ needs.prepare-image.outputs.core_tag }}
+      core_commit: ${{ needs.prepare-image.outputs.core_commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download verified image digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-digest-*
+          path: ${{ runner.temp }}/image-digests
+          merge-multiple: true
+
+      - name: Assemble and verify multi-platform image
+        id: merge
+        env:
+          IMAGE_ARCHITECTURES: ${{ needs.prepare-image.outputs.architectures }}
+          IMAGE_METADATA: ${{ needs.prepare-image.outputs.metadata }}
+        run: python .github/scripts/merge-image.py
 
       - name: Attest image provenance
         uses: actions/attest-build-provenance@v3
         with:
           subject-name: ${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
   release:
