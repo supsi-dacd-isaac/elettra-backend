@@ -181,12 +181,14 @@
   desc: Detect config file reads from containers other than the API
   condition: >
     open_read and
+    container and
     fd.name contains "elettra-config" and
     container.name != "elettra-api"
   output: >
     Elettra config read from non-API container
-    (user=%user.name container=%container.name image=%container.image.repository
-     file=%fd.name)
+    (user=%user.name user.uid=%user.uid container=%container.name
+     image=%container.image.repository file=%fd.name
+     proc=%proc.name pid=%proc.pid cmdline=%proc.cmdline pname=%proc.pname)
   priority: WARNING
   tags: [configuration, security, elettra]
 

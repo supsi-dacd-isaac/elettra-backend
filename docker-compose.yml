@@ -77,6 +77,9 @@ services:
     # command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
   elettra-frontend-staging:
+    # Superseded by docker-compose.user-staging.yml. Keep this definition only
+    # as an explicit rollback path; normal production starts must ignore it.
+    profiles: ["legacy-staging"]
     image: ${ELETTRA_FRONTEND_IMAGE:-ghcr.io/supsi-ide/elettra@sha256:8868bc89a95f835f7a89399cefff25527af14e005245ed237bb790c8b9089933}
     container_name: elettra-frontend-staging
     restart: unless-stopped
