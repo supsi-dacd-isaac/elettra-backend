@@ -247,6 +247,30 @@ def get_cached_settings() -> Settings:
         _settings = get_settings()
     return _settings
 
+
+def validate_runtime_secrets(
+    runtime_settings: Settings,
+    *,
+    testing: bool | None = None,
+) -> None:
+    """Reject placeholder or weak signing secrets outside debug/test runs."""
+
+    if testing is None:
+        testing = os.getenv("ELETTRA_TESTING") == "1"
+    if testing or runtime_settings.debug:
+        return
+
+    secret = runtime_settings.secret_key.strip()
+    if (
+        len(secret) < 32
+        or secret.upper().startswith("CHANGE_ME")
+        or secret.casefold() in {"secret", "changeme", "change-me"}
+    ):
+        raise RuntimeError(
+            "APP_SECRET_KEY must be overridden with a non-placeholder secret "
+            "of at least 32 characters"
+        )
+
 def reload_settings():
     global _settings
     _settings = None

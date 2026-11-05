@@ -12,9 +12,9 @@ RUN apt-get update && apt-get install -y \
 # Set work directory for builder
 WORKDIR /build
 
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Copy the reviewed transitive lock and install reproducible dependencies.
+COPY requirements.lock .
+RUN pip install --no-cache-dir --user -r requirements.lock
 
 # Production stage
 FROM python:3.12-slim

@@ -1,62 +1,64 @@
+# Direct runtime dependencies. Keep exact versions here and compile the full
+# transitive dependency graph into requirements.lock.
+
 # FastAPI and web framework dependencies
-fastapi[standard]>=0.104.1
-uvicorn[standard]>=0.24.0
-python-multipart>=0.0.6
+fastapi[standard]==0.135.4
+starlette==1.3.1
+uvicorn[standard]==0.35.0
+python-multipart==0.0.33
 
 # Database dependencies
-sqlalchemy[asyncio]>=2.0.23
-asyncpg>=0.29.0
-alembic>=1.13.0
-psycopg2-binary
-fastapi-crudrouter>=0.8.6
-sqlacodegen>=3.0.0
+sqlalchemy[asyncio]==2.0.41
+asyncpg==0.30.0
+alembic==1.16.5
+psycopg2-binary==2.9.10
+fastapi-crudrouter==0.8.6
+sqlacodegen==3.1.1
 
 # Authentication and security
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
+PyJWT[crypto]==2.15.1
+passlib[bcrypt]==1.7.4
 bcrypt==4.0.0
-python-multipart
-password-strength>=0.0.3
+password-strength==0.0.3.post2
 
 # Configuration and validation
-pydantic>=2.5.0
-pydantic[email]>=2.5.0
-pydantic-settings>=2.1.0
-PyYAML>=6.0.1
+pydantic[email]==2.11.9
+pydantic-settings==2.10.1
+PyYAML==6.0.2
 
 # HTTP client and file handling
-httpx>=0.25.2
-aiofiles>=23.2.1
-requests>=2.31.0
-beautifulsoup4>=4.12.3
+httpx==0.28.1
+aiofiles==24.1.0
+requests==2.34.2
+beautifulsoup4==4.13.5
 
 # GTFS and geospatial processing
-gtfs-kit>=5.2.0
-pandas>=2.1.4,<3
-geopandas>=0.14.1
-shapely>=2.0.2
-matplotlib>=3.10.6
-
+gtfs-kit==10.3.1
+pandas==2.3.2
+geopandas==1.1.4
+shapely==2.1.1
+matplotlib==3.10.6
 
 # Scientific computing (for PVGIS integration)
-pvlib>=0.10.3
-numpy>=1.24.0,<2.0.0
+pvlib==0.13.0
+numpy==1.26.4
 
 # Utilities
-python-dateutil>=2.8.2
-pytz>=2023.3
-python-dotenv>=1.0.1
-tqdm>=4.67.1
-pyarrow>=21.0.0,<26
-minio>=7.2.7
-polyline>=2.0.0
-map-services @ https://github.com/supsi-dacd-isaac/map-services/archive/refs/heads/main.zip
+python-dateutil==2.9.0.post0
+pytz==2025.2
+python-dotenv==1.2.4
+tqdm==4.67.1
+pyarrow==23.0.1
+minio==7.2.16
+polyline==2.0.3
+# An immutable source revision prevents unreviewed upstream changes at build time.
+map-services @ https://github.com/supsi-dacd-isaac/map-services/archive/7289dcf30a21cda32c2f079e5c03a7fdeb24d0e9.zip
 
 # Machine Learning (for consumption prediction)
-quantile-forest>=1.3.3
-joblib>=1.3.2
-scikit-learn>=1.3.2,<1.8.0
+quantile-forest==1.4.1
+joblib==1.5.2
+scikit-learn==1.7.2
 
 # Optimization
-pyomo>=6.9.4
-highspy>=1.11.0
+pyomo==6.9.4
+highspy==1.11.0

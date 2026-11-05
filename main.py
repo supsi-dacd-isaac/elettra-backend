@@ -8,13 +8,14 @@ import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, UTC
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import textwrap
 from app.routers import agency, auth, economic, environmental, gtfs, simulation, user as user_router, yearly_analysis
-from app.core.config import get_cached_settings
+from app.core.auth import require_admin
+from app.core.config import get_cached_settings, validate_runtime_secrets
 from app.core.request_limits import MaxRequestSizeMiddleware
 from app.schemas.health import HealthCheckResponse, ServiceStatus
 from app.database import AsyncSessionLocal, get_async_session
@@ -38,7 +39,6 @@ from app.services.model_release import (
 )
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-import re
 
 # Configure logging early
 logging.basicConfig(level=logging.INFO)
@@ -409,6 +409,7 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     """Application lifespan management"""
     # Startup
+    validate_runtime_secrets(settings)
     logger.info(f"🚌 {settings.app_name} v{settings.app_version} starting...")
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"Database URL: {settings.database_url.split('@')[1] if '@' in settings.database_url else 'localhost'}")
@@ -584,53 +585,23 @@ def _extract_constraint(exc: IntegrityError) -> str | None:
     return getattr(orig, "constraint_name", None) or None
 
 
-def _extract_detail_and_fields(exc: IntegrityError) -> tuple[str | None, list[str] | None]:
-    orig = getattr(exc, "orig", None)
-    detail = None
-    fields: list[str] | None = None
-    if orig is not None:
-        # asyncpg/psycopg typically provide a detail attribute with
-        # messages like: "Key (name)=(AA_NF) already exists."
-        detail = getattr(orig, "detail", None)
-    if not detail:
-        # Fallback to stringified original exception
-        detail = str(orig or exc)
-
-    # Try to parse affected columns from the detail
-    # Pattern: Key (col1, col2)=(..., ...) already exists
-    try:
-        m = re.search(r"Key \((?P<cols>[^\)]+)\)=\(", detail or "")
-        if m:
-            cols = [c.strip() for c in m.group("cols").split(",")]
-            fields = cols if cols else None
-    except Exception:
-        fields = None
-    return detail, fields
-
-
 @app.exception_handler(IntegrityError)
 async def handle_integrity_error(request: Request, exc: IntegrityError):
     sqlstate = _extract_sqlstate(exc)
     code, status_code, message = _SQLSTATE_MAP.get(sqlstate, ("integrity_error", 400, "Database integrity error"))
 
     constraint = _extract_constraint(exc)
-    detail, fields = _extract_detail_and_fields(exc)
 
     logger.warning(
-        "IntegrityError: path=%s sqlstate=%s constraint=%s detail=%s",
+        "IntegrityError: path=%s sqlstate=%s constraint=%s",
         request.url.path,
         sqlstate,
         constraint,
-        detail,
     )
 
-    payload = {
-        "code": code,
-        "message": message,
-        "constraint": constraint,
-        "fields": fields,
-        "detail": detail,
-    }
+    # Database details can contain submitted values, internal column names and
+    # constraint names. Keep them in structured server logs, never in the API.
+    payload = {"code": code, "message": message}
     return JSONResponse(status_code=status_code, content=payload)
 
 # Fallback CORS headers for tools/tests that don't send Origin (debug only)
@@ -664,13 +635,24 @@ async def deployment_version(response: Response):
 
 @app.get(
     "/health",
+    tags=["Health"],
+)
+async def health_check(response: Response):
+    """Lightweight public liveness endpoint for containers and proxies."""
+    response.headers["Cache-Control"] = "no-store"
+    return {"status": "healthy", "version": settings.app_version}
+
+
+@app.get(
+    "/api/v1/readiness",
     response_model=HealthCheckResponse,
     tags=["Health"],
     responses={503: {"model": HealthCheckResponse}},
+    dependencies=[Depends(require_admin)],
 )
-async def health_check(response: Response):
+async def readiness_check(response: Response):
     """
-    Health check endpoint for monitoring and load balancers.
+    Detailed, administrator-only dependency readiness endpoint.
     
     Returns the overall health status of the application and its dependencies.
     """

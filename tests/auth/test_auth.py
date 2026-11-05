@@ -8,7 +8,7 @@ import uuid
 import time
 import asyncio
 import pytest
-from jose import jwt
+import jwt
 from datetime import datetime, timedelta, UTC
 from fastapi.testclient import TestClient
 
@@ -106,9 +106,8 @@ def test_health_check_endpoint(client, record):
     if r.status_code == 200:
         data = r.json()
         record("health_check_status", data.get("status") == "healthy", f"status={data.get('status')}")
-        record("health_check_services", "services" in data, "services field missing")
-        record("health_check_database", "database" in data.get("services", {}), "database service missing")
-        record("health_check_uptime", "uptime_seconds" in data, "uptime_seconds missing")
+        record("health_check_version", bool(data.get("version")), "version field missing")
+        record("health_check_private_data", set(data) == {"status", "version"}, f"unexpected fields={set(data)}")
 
 def test_login_missing_body(client, record):
     r = client.post(f"{AUTH_BASE}/login", json={})

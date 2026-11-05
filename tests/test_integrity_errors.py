@@ -52,8 +52,8 @@ def test_unique_violation_returns_409(client: TestClient):
     body = r2.json()
     assert body.get("code") in ("unique_violation", "integrity_error")
     assert body.get("message")
-    # fields may include ["user_id", "name"] depending on backend detail parsing
-    assert "detail" in body
+    assert set(body) == {"code", "message"}
+    assert "IntegrityTestBus" not in r2.text
     # Cleanup after
     _cleanup_buses_by_name(client, token, ["IntegrityTestBus"]) 
 
