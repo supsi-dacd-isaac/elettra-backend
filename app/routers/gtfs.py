@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List, Optional
@@ -75,8 +75,8 @@ logger = logging.getLogger(__name__)
 # GTFS Routes endpoints (authenticated users only)
 @router.get("/gtfs-routes/", response_model=List[GtfsRoutesRead])
 async def read_routes(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
     gtfs_year: Optional[int] = None,
     gtfs_file_date: Optional[date] = None,
     db: AsyncSession = Depends(get_async_session),
@@ -323,7 +323,6 @@ async def read_routes_by_agency_with_largest_variant(
     from app.core.config import get_cached_settings
     import os
     import csv
-    import subprocess
 
     # Get settings for elevation profiles path
     settings = get_cached_settings()
@@ -405,21 +404,19 @@ async def read_routes_by_agency_with_largest_variant(
                 "elevation_data.csv"
             )
 
-            # Check file size using ls -l command
             try:
-                if os.path.exists(elevation_file_path):
-                    # Use ls -l to get file size
-                    result = subprocess.run(['ls', '-l', elevation_file_path],
-                                          capture_output=True, text=True, check=True)
-                    # Parse the output to get file size (5th column in ls -l output)
-                    file_size = int(result.stdout.split()[4])
-
-                    if file_size > largest_file_size:
-                        largest_file_size = file_size
-                        largest_variant = variant
-            except (subprocess.CalledProcessError, IndexError, ValueError) as e:
-                # If there's an error getting file size, skip this variant
-                print(f"Error getting file size for {elevation_file_path}: {str(e)}")
+                file_size = await asyncio.to_thread(
+                    os.path.getsize, elevation_file_path
+                )
+                if file_size > largest_file_size:
+                    largest_file_size = file_size
+                    largest_variant = variant
+            except OSError as exc:
+                logger.debug(
+                    "Unable to inspect elevation file %s: %s",
+                    elevation_file_path,
+                    exc,
+                )
                 continue
 
         # If no variant was found with elevation data, use the first available variant

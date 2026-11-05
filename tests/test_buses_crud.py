@@ -88,8 +88,22 @@ def test_create_read_update_delete_bus(client: TestClient, record):
         record("bus_create", r.status_code == 200, f"status={r.status_code}")
 
         # List
-        r = client.get(f"{API_BASE}/buses/?skip=0&limit=1000", headers=hdrs)
-        record("bus_list", r.status_code == 200 and any(b["id"] == bus_id for b in r.json()), f"status={r.status_code}")
+        listed = False
+        list_status = 200
+        for skip in range(0, 10_000, 100):
+            r = client.get(
+                f"{API_BASE}/buses/?skip={skip}&limit=100", headers=hdrs
+            )
+            list_status = r.status_code
+            if r.status_code != 200:
+                break
+            page = r.json()
+            if any(b["id"] == bus_id for b in page):
+                listed = True
+                break
+            if len(page) < 100:
+                break
+        record("bus_list", list_status == 200 and listed, f"status={list_status}")
 
         # Get
         r = client.get(f"{API_BASE}/buses/{bus_id}", headers=hdrs)

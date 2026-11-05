@@ -6,8 +6,13 @@ Uses report_collector via the shared record fixture.
 
 import os
 import uuid
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
+
+from app.core.auth import verify_jwt_token
+from main import app
 
 __report_module__ = "gtfs_trips_crud"
 
@@ -18,6 +23,23 @@ TEST_ROUTE_ID = os.getenv("TEST_ROUTE_ID")
 TEST_AGENCY_ID = os.getenv("TEST_AGENCY_ID")
 TEST_LOGIN_EMAIL = os.getenv("TEST_LOGIN_EMAIL")
 TEST_LOGIN_PASSWORD = os.getenv("TEST_LOGIN_PASSWORD")
+
+
+@pytest.fixture
+def admin_identity_override():
+    """Exercise GTFS mutations as an admin without changing a stored user."""
+    if not TEST_AGENCY_ID:
+        pytest.skip("Requires TEST_AGENCY_ID")
+    identity = SimpleNamespace(
+        id=uuid.uuid4(),
+        company_id=uuid.UUID(TEST_AGENCY_ID),
+        role="admin",
+    )
+    app.dependency_overrides[verify_jwt_token] = lambda: identity
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(verify_jwt_token, None)
 
 
 def _get_token(client: TestClient) -> str | None:
@@ -60,7 +82,9 @@ def _make_trip_payload(client: TestClient, headers: dict, status: str = "gtfs") 
     not (TEST_ROUTE_ID and (os.getenv("TEST_API_TOKEN") or (TEST_LOGIN_EMAIL and TEST_LOGIN_PASSWORD))),
     reason="Requires TEST_ROUTE_ID and auth env vars",
 )
-def test_trip_crud_and_status_filter(client: TestClient, record):
+def test_trip_crud_and_status_filter(
+    client: TestClient, record, admin_identity_override
+):
     headers = _auth_headers(client)
     if not headers:
         record("auth_missing", False, "No auth token available")
@@ -115,7 +139,7 @@ def test_trip_crud_and_status_filter(client: TestClient, record):
     not (TEST_ROUTE_ID and (os.getenv("TEST_API_TOKEN") or (TEST_LOGIN_EMAIL and TEST_LOGIN_PASSWORD))),
     reason="Requires TEST_ROUTE_ID and auth env vars",
 )
-def test_trip_delete_cleanup(client: TestClient, record):
+def test_trip_delete_cleanup(client: TestClient, record, admin_identity_override):
     headers = _auth_headers(client)
     if not headers:
         record("auth_missing2", False, "No auth token available")
@@ -137,4 +161,3 @@ def test_trip_delete_cleanup(client: TestClient, record):
         # Verify deletion by attempting to delete again
         r_del_again = client.delete(f"{API_BASE}/gtfs-trips/{created_id}", headers=headers)
         record("delete_trip2_404", r_del_again.status_code == 404, f"status={r_del_again.status_code}")
-

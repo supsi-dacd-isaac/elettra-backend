@@ -15,11 +15,15 @@ async def test_annual_prediction_list_filters_the_owned_analysis(monkeypatch):
     monkeypatch.setattr(simulation, 'get_owned_yearly_analysis', authorize)
     result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ['owned annual runs']))
     db = SimpleNamespace(execute=AsyncMock(return_value=result))
-    rows = await simulation.list_prediction_runs(db, SimpleNamespace(id=owner), annual)
+    rows = await simulation.list_prediction_runs(
+        db, SimpleNamespace(id=owner), annual, skip=0, limit=1000
+    )
     authorize.assert_awaited_once_with(db, annual, owner)
     query = db.execute.call_args.args[0].compile()
     assert 'prediction_runs.yearly_analysis_id =' in str(query)
     assert annual in query.params.values()
+    assert query.params["param_1"] == 1000
+    assert query.params["param_2"] == 0
     assert rows == ['owned annual runs']
 
 
@@ -28,6 +32,8 @@ async def test_foreign_annual_analysis_does_not_return_predictions(monkeypatch):
     monkeypatch.setattr(simulation, 'get_owned_yearly_analysis', AsyncMock(side_effect=HTTPException(404)))
     db = SimpleNamespace(execute=AsyncMock())
     with pytest.raises(HTTPException) as error:
-        await simulation.list_prediction_runs(db, SimpleNamespace(id=uuid4()), uuid4())
+        await simulation.list_prediction_runs(
+            db, SimpleNamespace(id=uuid4()), uuid4(), skip=0, limit=1000
+        )
     assert error.value.status_code == 404
     db.execute.assert_not_awaited()

@@ -57,7 +57,7 @@ map-services @ https://github.com/supsi-dacd-isaac/map-services/archive/7289dcf3
 # Machine Learning (for consumption prediction)
 quantile-forest==1.4.1
 joblib==1.5.2
-scikit-learn==1.7.2
+scikit-learn==1.7.1
 
 # Optimization
 pyomo==6.9.4

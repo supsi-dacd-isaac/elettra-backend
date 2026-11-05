@@ -44,7 +44,6 @@ def _register_temp_user(client: TestClient, *, prefix: str) -> dict:
             "email": email,
             "full_name": "Yearly Analysis Scope Test User",
             "password": TMP_PASSWORD,
-            "role": "viewer",
         },
     )
     assert response.status_code == 200, (

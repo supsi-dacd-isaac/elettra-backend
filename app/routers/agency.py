@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, or_
 from typing import List
@@ -31,14 +31,15 @@ async def _email_exists(db: AsyncSession, email: str, *, exclude_user_id=None) -
 # Users endpoints (admin only)
 @router.get("/users/", response_model=List[UsersRead])
 async def read_users(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(require_admin),
 ):
     result = await db.execute(
         select(Users)
         .where(Users.company_id == current_user.company_id)
+        .order_by(Users.email.asc(), Users.id.asc())
         .offset(skip)
         .limit(limit)
     )
@@ -137,7 +138,12 @@ async def update_user(
 
 # GTFS Agencies endpoints (authenticated users only)
 @router.get("/agencies/", response_model=List[GtfsAgenciesRead])
-async def read_agencies(skip: int = 0, limit: int = 100, search: str = "", db: AsyncSession = Depends(get_async_session)):
+async def read_agencies(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    search: str = Query("", max_length=100),
+    db: AsyncSession = Depends(get_async_session),
+):
     """List all agencies - public endpoint for registration"""
     query = select(GtfsAgencies).order_by(GtfsAgencies.agency_name)
     
@@ -151,7 +157,7 @@ async def read_agencies(skip: int = 0, limit: int = 100, search: str = "", db: A
             )
         )
     
-    query = query.offset(skip).limit(limit)
+    query = query.order_by(GtfsAgencies.id.asc()).offset(skip).limit(limit)
     result = await db.execute(query)
     agencies = result.scalars().all()
     return agencies

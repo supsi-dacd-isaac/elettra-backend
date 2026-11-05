@@ -11,5 +11,6 @@ def test_pandas_runtime_version_is_bounded_for_feature_contract_v2():
         if line.strip() and not line.lstrip().startswith("#")
     }
 
-    assert "pandas>=2.1.4,<3" in requirements
+    assert "pandas==2.3.2" in requirements
+    assert "numpy==1.26.4" in requirements
     assert sum(requirement.lower().startswith("pandas") for requirement in requirements) == 1

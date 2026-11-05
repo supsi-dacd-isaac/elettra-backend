@@ -273,7 +273,7 @@ rignore==0.8.1
     # via fastapi-cloud-cli
 rtree==1.4.1
     # via gtfs-kit
-scikit-learn==1.7.2
+scikit-learn==1.7.1
     # via
     #   -r requirements.txt
     #   quantile-forest

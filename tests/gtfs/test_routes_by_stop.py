@@ -192,10 +192,5 @@ def test_routes_by_stop_invalid_stop_404(client, record):
     url = f"{API_BASE}/gtfs-routes/by-stop/{invalid_stop_id}"
     r = client.get(url, headers=_auth_headers(client))
     
-    # Should return 200 with empty list, not 404, since the query will just return no results
-    record("routes_by_stop_invalid_stop", r.status_code == 200, f"status={r.status_code} body={r.text}")
-    
-    if r.status_code == 200:
-        data = r.json()
-        assert isinstance(data, list), "Response should be a list"
-        record("routes_by_stop_invalid_stop_empty", len(data) == 0, f"Got {len(data)} routes for invalid stop")
+    # Missing and inaccessible stops deliberately share the same response.
+    record("routes_by_stop_invalid_stop", r.status_code == 404, f"status={r.status_code} body={r.text}")

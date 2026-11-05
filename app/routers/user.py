@@ -192,10 +192,16 @@ async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_
 
 
 @router.get("/buses/", response_model=List[BusesRead])
-async def read_buses(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def read_buses(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
     result = await db.execute(
         select(Buses)
         .where(Buses.user_id == current_user.id)
+        .order_by(Buses.name.asc(), Buses.id.asc())
         .offset(skip)
         .limit(limit)
     )
@@ -307,11 +313,17 @@ async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get
 
 
 @router.get("/depots/", response_model=List[DepotReadWithLocation])
-async def read_depots(skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def read_depots(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
     result = await db.execute(
         select(Depots, GtfsStops.stop_lat, GtfsStops.stop_lon)
         .join(GtfsStops, Depots.stop_id == GtfsStops.id, isouter=True)
         .where(Depots.user_id == current_user.id)
+        .order_by(Depots.name.asc(), Depots.id.asc())
         .offset(skip).limit(limit)
     )
     rows = result.all()

@@ -540,12 +540,19 @@ async def list_prediction_runs(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
     yearly_analysis_id: UUID | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(1000, ge=1, le=1000),
 ):
     query = select(PredictionRuns).where(prediction_run_owned_filter(current_user.id))
     if yearly_analysis_id is not None:
         await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
         query = query.where(PredictionRuns.yearly_analysis_id == yearly_analysis_id)
-    result = await db.execute(query.order_by(PredictionRuns.created_at.desc()))
+    result = await db.execute(
+        query
+        .order_by(PredictionRuns.created_at.desc(), PredictionRuns.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )
     return result.scalars().all()
 
 
