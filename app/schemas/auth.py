@@ -6,6 +6,7 @@ from uuid import UUID
 import string
 import re
 import hashlib
+import asyncio
 from functools import lru_cache
 import logging
 
@@ -141,13 +142,10 @@ def validate_password_strength(password: str) -> str:
     if password.lower() in COMMON_PASSWORDS:
         errors.append("Password is too common")
 
-    if _is_compromised(password):
-        errors.append("Password has appeared in known breaches")
-
     if _has_sequential_patterns(password):
         errors.append("Password cannot contain sequential characters like 'abc' or '123'")
 
-    if re.search(r"(.)\\1\\1", password):
+    if re.search(r"(.)\1\1", password):
         errors.append("Password cannot contain three or more repeated characters in a row")
 
     if errors:
@@ -156,10 +154,18 @@ def validate_password_strength(password: str) -> str:
     return password
 
 
+async def validate_password_breach(password: str) -> None:
+    """Run the network-backed breach check without blocking the event loop."""
+    if password and await asyncio.to_thread(_is_compromised, password):
+        raise ValueError("Password has appeared in known breaches")
+
+
 class UserRegister(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     company_id: UUID
     email: EmailStr
-    full_name: str
+    full_name: str = Field(min_length=1, max_length=200)
     password: str = Field(..., min_length=1, description="Password must meet security requirements")
     
     @field_validator('password')
@@ -178,6 +184,8 @@ class UserUpdate(BaseModel):
 
 class UserPasswordUpdate(BaseModel):
     """Schema for updating user password"""
+    model_config = ConfigDict(extra="forbid")
+
     current_password: str
     new_password: str = Field(..., min_length=1, description="Password must meet security requirements")
     

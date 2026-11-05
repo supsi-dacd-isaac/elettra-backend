@@ -96,7 +96,6 @@ def _register_and_login(
             "email": email,
             "full_name": f"Isolation {label}",
             "password": PASSWORD,
-            "role": role,
         },
     )
     assert response.status_code == 200, response.text
@@ -918,9 +917,8 @@ def test_agency_admin_can_manage_accounts_only_inside_own_agency(
             "company_id": ctx["foreign"]["agency"],
             "email": f"forbidden_{uuid.uuid4().hex}@example.com",
             "full_name": "Forbidden foreign user",
-            "password_hash": "not-used",
+            "password": "Foreign!Passw0rdXy",
             "role": "analyst",
-            "created_at": datetime.now(UTC).isoformat(),
         },
     )
     assert response.status_code == 403, response.text

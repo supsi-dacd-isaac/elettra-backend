@@ -4,7 +4,9 @@ from typing import Optional, Any
 from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
+
+from app.schemas.auth import RoleEnum, validate_password_strength
 
 class DepotsCreate(BaseModel):
     user_id: UUID
@@ -426,21 +428,31 @@ class WeatherMeasurementsRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class UsersCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     company_id: UUID
-    email: str
-    full_name: str
-    password_hash: str
-    role: str
-    created_at: datetime
+    email: EmailStr
+    full_name: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=1)
+    role: RoleEnum = RoleEnum.analyst
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return validate_password_strength(value)
 
 class UsersUpdate(BaseModel):
-    id: Optional[UUID] = None
-    company_id: Optional[UUID] = None
-    email: Optional[str] = None
-    full_name: Optional[str] = None
-    password_hash: Optional[str] = None
-    role: Optional[str] = None
-    created_at: Optional[datetime] = None
+    model_config = ConfigDict(extra="forbid")
+
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    password: Optional[str] = Field(default=None, min_length=1)
+    role: Optional[RoleEnum] = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: Optional[str]) -> Optional[str]:
+        return validate_password_strength(value) if value is not None else None
 
 class UsersRead(BaseModel):
     id: UUID

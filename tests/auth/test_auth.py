@@ -65,7 +65,6 @@ def _register_temp_user(client: TestClient, *, password: str = "Tmp!Passw0rdXy")
         "email": email,
         "full_name": "Temp User",
         "password": password,
-        "role": "viewer",
     })
     # 200 = created, 400 = already exists (shouldn't happen with random email)
     assert r.status_code == 200, f"temp user register failed: status={r.status_code} body={r.text}"
@@ -145,10 +144,10 @@ def test_malformed_auth_headers(client, record, auth_header):
 def test_register_invalid_payloads(client, record):
     cid = "00000000-0000-0000-0000-000000000001"
     cases = [
-        ("missing_email", {"company_id": cid, "full_name": "X", "password": "p", "role": "viewer"}),
-        ("invalid_email", {"company_id": cid, "email": "bad", "full_name": "X", "password": "p", "role": "viewer"}),
-        ("missing_password", {"company_id": cid, "email": "x@example.com", "full_name": "X", "role": "viewer"}),
-        ("invalid_company", {"company_id": "not-a-uuid", "email": "x@example.com", "full_name": "X", "password": "p", "role": "viewer"}),
+        ("missing_email", {"company_id": cid, "full_name": "X", "password": "p"}),
+        ("invalid_email", {"company_id": cid, "email": "bad", "full_name": "X", "password": "p"}),
+        ("missing_password", {"company_id": cid, "email": "x@example.com", "full_name": "X"}),
+        ("invalid_company", {"company_id": "not-a-uuid", "email": "x@example.com", "full_name": "X", "password": "p"}),
     ]
     for name, payload in cases:
         r = client.post(f"{AUTH_BASE}/register", json=payload)
@@ -248,7 +247,6 @@ def test_register_weak_password(client, record):
             "email": f"test{weak_password}@example.com",
             "full_name": "Test User",
             "password": weak_password,
-            "role": "viewer"
         })
         record(f"register_weak_password_{weak_password[:10]}", r.status_code == 422, f"status={r.status_code}")
 
@@ -265,7 +263,6 @@ def test_register_strong_password(client, record):
             "email": temp_email,
             "full_name": "Test User",
             "password": "Str0ng!Passw@rdX",
-            "role": "viewer"
         })
         record("register_strong_password", r.status_code == 200, f"status={r.status_code}")
     finally:
@@ -321,20 +318,24 @@ def test_update_profile(client, record):
     """Test user profile update using a temporary user (no mutation of seeded users)."""
     # Create temp user
     email, password = _register_temp_user(client, password=STRONG_PASSWORD)
+    updated_email = email
+    update_succeeded = False
     try:
         # Login as temp user
         login = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
         assert login.status_code == 200, f"temp login failed: {login.text}"
         token = login.json().get("access_token")
 
+        updated_email = f"updated_{uuid.uuid4().hex[:6]}@example.com"
         r = client.put(
             f"{AUTH_BASE}/me",
-            json={"full_name": "Updated Name", "email": f"updated_{uuid.uuid4().hex[:6]}@example.com"},
+            json={"full_name": "Updated Name", "email": updated_email},
             headers=auth_headers(token),
         )
+        update_succeeded = r.status_code == 200
         record("update_profile", r.status_code in [200, 400], f"status={r.status_code}")
     finally:
-        _delete_user(email)
+        _delete_user(updated_email if update_succeeded else email)
 
 
 def test_update_profile_cannot_escalate_role(client, record):
@@ -386,13 +387,13 @@ def test_delete_me_ephemeral_user(client, record):
     record("delete_me_login_blocked", relog.status_code == 401, f"status={relog.status_code}")
 
 def test_check_email_availability(client, record):
-    """Test email availability check endpoint"""
+    """The public probe must not disclose whether an account exists."""
     # Test with non-existent email
     r = client.get(f"{AUTH_BASE}/check-email/nonexistent@example.com")
     record("check_email_nonexistent", r.status_code == 200, f"status={r.status_code}")
     if r.status_code == 200:
         data = r.json()
-        record("check_email_nonexistent_available", data.get("available") == True, f"data={data}")
+        record("check_email_nonexistent_generic", data == {"status": "accepted"}, f"data={data}")
     
     # Test with existing email (use test user email)
     existing_email = os.getenv("TEST_LOGIN_EMAIL")
@@ -401,10 +402,10 @@ def test_check_email_availability(client, record):
         record("check_email_existing", r.status_code == 200, f"status={r.status_code}")
         if r.status_code == 200:
             data = r.json()
-            record("check_email_existing_not_available", data.get("available") == False, f"data={data}")
+            record("check_email_existing_generic", data == {"status": "accepted"}, f"data={data}")
 
 def test_check_email_availability_with_temp_user(client, record):
-    """Test email availability check with temporary user"""
+    """A newly registered address receives the same generic probe response."""
     # Create temp user
     email, password = _register_temp_user(client, password=STRONG_PASSWORD)
     try:
@@ -413,6 +414,6 @@ def test_check_email_availability_with_temp_user(client, record):
         record("check_email_temp_user", r.status_code == 200, f"status={r.status_code}")
         if r.status_code == 200:
             data = r.json()
-            record("check_email_temp_user_not_available", data.get("available") == False, f"data={data}")
+            record("check_email_temp_user_generic", data == {"status": "accepted"}, f"data={data}")
     finally:
         _delete_user(email)

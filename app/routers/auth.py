@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Response
 from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from datetime import timedelta
 
@@ -14,6 +14,7 @@ from app.schemas.auth import (
     UserUpdate,
     UserPasswordUpdate,
     UserProfileRead,
+    validate_password_breach,
 )
 from app.schemas.database import UsersRead
 from app.models import Users
@@ -25,36 +26,57 @@ from app.core.auth import (
     verify_password
 )
 from app.core.config import get_settings
+from app.core.rate_limit import SlidingWindowRateLimiter
 
 router = APIRouter()
 settings = get_settings()
 
+_login_limiter = SlidingWindowRateLimiter(max_requests=10, window_seconds=60)
+_register_limiter = SlidingWindowRateLimiter(max_requests=5, window_seconds=3600)
+_email_check_limiter = SlidingWindowRateLimiter(max_requests=20, window_seconds=60)
+
+
+def _normalized_email(value: str) -> str:
+    return value.strip().casefold()
+
+
+async def _email_exists(db: AsyncSession, email: str, *, exclude_user_id=None) -> bool:
+    query = select(Users.id).where(func.lower(Users.email) == _normalized_email(email))
+    if exclude_user_id is not None:
+        query = query.where(Users.id != exclude_user_id)
+    return await db.scalar(query.limit(1)) is not None
+
 @router.get("/check-email/{email}")
-async def check_email_availability(email: str, db: AsyncSession = Depends(get_async_session)):
-    """Check if an email is available for registration"""
-    result = await db.execute(select(Users).where(Users.email == email))
-    existing_user = result.scalar_one_or_none()
-    
-    return {"available": existing_user is None}
+async def check_email_availability(email: str, request: Request):
+    """Accept an availability probe without disclosing account existence."""
+    _email_check_limiter.enforce(request, subject=email)
+    return {"status": "accepted"}
 
 @router.post("/register", response_model=UsersRead)
-async def register(user_data: UserRegister, db: AsyncSession = Depends(get_async_session)):
+async def register(
+    user_data: UserRegister,
+    request: Request,
+    db: AsyncSession = Depends(get_async_session),
+):
     """Register a new user"""
-    # Check if user already exists
-    result = await db.execute(select(Users).where(Users.email == user_data.email))
-    existing_user = result.scalar_one_or_none()
+    normalized_email = _normalized_email(str(user_data.email))
+    _register_limiter.enforce(request, subject=normalized_email)
+    try:
+        await validate_password_breach(user_data.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    if existing_user:
+    if await _email_exists(db, normalized_email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+            detail="Registration could not be completed",
         )
 
     # Create new user
     hashed_password = get_password_hash(user_data.password)
     db_user = Users(
         company_id=user_data.company_id,
-        email=user_data.email,
+        email=normalized_email,
         full_name=user_data.full_name,
         password_hash=hashed_password,
         role="analyst"  # Automatically set all new users to analyst
@@ -66,8 +88,13 @@ async def register(user_data: UserRegister, db: AsyncSession = Depends(get_async
     return db_user
 
 @router.post("/login", response_model=Token)
-async def login(user_credentials: UserLogin, db: AsyncSession = Depends(get_async_session)):
+async def login(
+    user_credentials: UserLogin,
+    request: Request,
+    db: AsyncSession = Depends(get_async_session),
+):
     """Authenticate user and return access token"""
+    _login_limiter.enforce(request, subject=user_credentials.email)
     user = await authenticate_user(user_credentials.email, user_credentials.password, db)
     if not user:
         raise HTTPException(
@@ -96,13 +123,13 @@ async def update_user_profile(
     update_data = user_update.model_dump(exclude_unset=True)
     
     # Check if email is being changed and if it already exists
+    if "email" in update_data:
+        update_data["email"] = _normalized_email(str(update_data["email"]))
     if 'email' in update_data and update_data['email'] != current_user.email:
-        result = await db.execute(select(Users).where(Users.email == update_data['email']))
-        existing_user = result.scalar_one_or_none()
-        if existing_user:
+        if await _email_exists(db, update_data['email'], exclude_user_id=current_user.id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+                detail="Profile update could not be completed",
             )
     
     # Keep the self-service profile boundary explicit. Authorization fields are
@@ -141,7 +168,12 @@ async def update_user_password(
             detail="Current password is incorrect"
         )
     
-    # Update password (validation is handled by Pydantic)
+    try:
+        await validate_password_breach(password_update.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Local validation is handled by Pydantic; breach validation is async.
     current_user.password_hash = get_password_hash(password_update.new_password)
     await db.commit()
     
