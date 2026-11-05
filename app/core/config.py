@@ -75,8 +75,12 @@ class Settings(BaseSettings):
     default_charging_power_kw: float = Field(..., validation_alias=AliasPath("elettra", "default_charging_power_kw"))
 
     # ---- Simulation ----
-    max_concurrent_simulations: int = Field(..., validation_alias=AliasPath("simulation", "max_concurrent_simulations"))
-    simulation_timeout_minutes: int = Field(..., validation_alias=AliasPath("simulation", "simulation_timeout_minutes"))
+    max_concurrent_simulations: int = Field(
+        ..., gt=0, validation_alias=AliasPath("simulation", "max_concurrent_simulations")
+    )
+    simulation_timeout_minutes: int = Field(
+        ..., gt=0, validation_alias=AliasPath("simulation", "simulation_timeout_minutes")
+    )
 
     # ---- File system ----
     temp_dir: str = Field(..., validation_alias=AliasPath("paths", "temp_dir"))
@@ -84,8 +88,12 @@ class Settings(BaseSettings):
     elevation_profiles_path: str = Field(..., validation_alias=AliasPath("paths", "elevation_profiles_path"))
 
     # ---- Performance ----
-    request_timeout_seconds: int = Field(..., validation_alias=AliasPath("performance", "request_timeout_seconds"))
-    max_request_size_mb: int = Field(..., validation_alias=AliasPath("performance", "max_request_size_mb"))
+    request_timeout_seconds: int = Field(
+        ..., gt=0, validation_alias=AliasPath("performance", "request_timeout_seconds")
+    )
+    max_request_size_mb: int = Field(
+        ..., gt=0, validation_alias=AliasPath("performance", "max_request_size_mb")
+    )
 
     # ---- LCA (Life Cycle Analysis) API ----
     lca_api_base_url: str = Field(

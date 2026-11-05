@@ -4,6 +4,7 @@ Elettra Backend - Main FastAPI Application
 
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, UTC
@@ -14,6 +15,7 @@ import uvicorn
 import textwrap
 from app.routers import agency, auth, economic, environmental, gtfs, simulation, user as user_router, yearly_analysis
 from app.core.config import get_cached_settings
+from app.core.request_limits import MaxRequestSizeMiddleware
 from app.schemas.health import HealthCheckResponse, ServiceStatus
 from app.database import AsyncSessionLocal, get_async_session
 from app.services.elevation_profiles import (
@@ -28,6 +30,7 @@ from app.services.elevation_profiles import (
     validate_release_covers_database,
 )
 from app.services.runtime_release import runtime_release_configuration
+from app.services.simulation_recovery import reconcile_interrupted_simulation_jobs
 from app.services.model_release import (
     model_release_runtime_metadata,
     probe_configured_model_immutable,
@@ -415,6 +418,16 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as release_session:
         await release_session.execute(text("SELECT 1"))
         await validate_elevation_jobs_schema(release_session)
+        if os.getenv("ELETTRA_TESTING") != "1":
+            prediction_count, optimization_count = (
+                await reconcile_interrupted_simulation_jobs(release_session)
+            )
+            if prediction_count or optimization_count:
+                logger.warning(
+                    "Closed interrupted simulations at startup: predictions=%d optimizations=%d",
+                    prediction_count,
+                    optimization_count,
+                )
         if release_id is not None:
             release_manifest = validate_configured_release()
             validate_production_profile_contract(release_manifest)
@@ -527,6 +540,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+)
+app.add_middleware(
+    MaxRequestSizeMiddleware,
+    max_bytes=settings.max_request_size_mb * 1024 * 1024,
 )
 
 # Include authentication and API routers

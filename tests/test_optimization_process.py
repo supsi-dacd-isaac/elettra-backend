@@ -9,6 +9,14 @@ import pytest
 from app.services import optimization_process as service
 
 
+@pytest.fixture(autouse=True)
+def _bounded_worker_timeout(monkeypatch):
+    async def timeout(_run_id):
+        return 30.0
+
+    monkeypatch.setattr(service, "worker_timeout_seconds", timeout)
+
+
 @pytest.mark.asyncio
 async def test_independent_processes_overlap_and_respect_capacity(monkeypatch, tmp_path):
     real_spawn = asyncio.create_subprocess_exec

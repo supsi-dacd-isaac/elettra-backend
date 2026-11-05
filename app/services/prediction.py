@@ -8,6 +8,7 @@ import time
 import math
 from dataclasses import dataclass, fields
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Callable, Optional
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
+from app.core.config import get_cached_settings
 from app.models import (
     BusesModels,
     GtfsStops,
@@ -46,6 +48,15 @@ from elettra_core import AuxiliaryEnergyComponents, PASSENGER_MASS_KG, RAW_TRIP_
 from simulation.consumption_prediction import ConsumptionPredictor
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def prediction_slots() -> asyncio.Semaphore:
+    return asyncio.Semaphore(get_cached_settings().max_concurrent_simulations)
+
+
+def prediction_timeout_seconds() -> float:
+    return float(get_cached_settings().simulation_timeout_minutes * 60)
 
 # ---------------------------------------------------------------------------
 # Model cache (singleton per model_name)
@@ -1009,19 +1020,47 @@ async def predict_yearly_consumption(db, jobs, quantiles):
 
 
 async def run_prediction_jobs_background(jobs, quantiles):
-    async with AsyncSessionLocal() as db:
-        try:
-            await predict_consumption_jobs(db, jobs, quantiles)
-        except Exception:
-            logger.exception("Combined forecast failed for %d runs", len(jobs))
+    await _run_prediction_batch_background(
+        jobs, quantiles, predict_consumption_jobs, label="Combined forecast"
+    )
 
 
 async def run_yearly_prediction_background(jobs: list[tuple[UUID, int]], quantiles: list[float]) -> None:
+    await _run_prediction_batch_background(
+        jobs, quantiles, predict_yearly_consumption, label="Annual forecast"
+    )
+
+
+async def mark_prediction_jobs_failed(jobs, message: str) -> None:
+    """Close every still-live row after supervisor timeout/cancellation."""
     async with AsyncSessionLocal() as db:
-        try:
-            await predict_yearly_consumption(db, jobs, quantiles)
-        except Exception:
-            logger.exception("Annual forecast failed for %d runs", len(jobs))
+        for run_id, _packs in jobs:
+            run = await db.get(PredictionRuns, run_id)
+            if run is not None and run.status in {"pending", "running"}:
+                run.status = "failed"
+                run.completed_at = datetime.now(timezone.utc)
+                run.summary = {**(run.summary or {}), "error": message}
+        await db.commit()
+
+
+async def _run_prediction_batch_background(jobs, quantiles, runner, *, label: str) -> None:
+    try:
+        async with prediction_slots():
+            async with asyncio.timeout(prediction_timeout_seconds()):
+                async with AsyncSessionLocal() as db:
+                    await runner(db, jobs, quantiles)
+    except TimeoutError:
+        message = (
+            f"Prediction exceeded the configured {prediction_timeout_seconds():.0f} second timeout"
+        )
+        logger.error("%s timed out for %d runs", label, len(jobs))
+        await mark_prediction_jobs_failed(jobs, message)
+    except asyncio.CancelledError:
+        await mark_prediction_jobs_failed(jobs, "Prediction interrupted before completion")
+        raise
+    except Exception:
+        # The runner normally marks its rows failed in the same transaction.
+        logger.exception("%s failed for %d runs", label, len(jobs))
 
 
 # ---------------------------------------------------------------------------
@@ -1036,13 +1075,16 @@ async def run_prediction_background(
     """
     Wrapper called from BackgroundTasks. Opens its own DB session.
     """
-    async with AsyncSessionLocal() as db:
-        try:
-            await predict_shift_consumption(
-                db=db,
-                prediction_run_id=prediction_run_id,
-                quantiles=quantiles,
-                num_battery_packs=num_battery_packs,
-            )
-        except Exception:
-            logger.exception(f"Background prediction failed for {prediction_run_id}")
+    jobs = [(prediction_run_id, num_battery_packs)]
+
+    async def _run_single(db, _jobs, selected_quantiles):
+        await predict_shift_consumption(
+            db=db,
+            prediction_run_id=prediction_run_id,
+            quantiles=selected_quantiles,
+            num_battery_packs=num_battery_packs,
+        )
+
+    await _run_prediction_batch_background(
+        jobs, quantiles, _run_single, label="Background prediction"
+    )
