@@ -5,6 +5,7 @@
 
 !Dockerfile
 !requirements.txt
+!requirements.lock
 !main.py
 !LICENSE
 !THIRD_PARTY_NOTICES.md

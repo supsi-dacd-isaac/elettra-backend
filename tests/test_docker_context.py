@@ -3,6 +3,20 @@ from pathlib import Path
 from elettra_core.vecto_templates import VECTO_TEMPLATE_RELEASE
 
 
+def test_docker_context_includes_locked_runtime_dependencies() -> None:
+    """The image build must receive the dependency file copied by Dockerfile."""
+
+    repository = Path(__file__).resolve().parents[1]
+    rules = {
+        line.strip()
+        for line in (repository / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    }
+    dockerfile = (repository / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "COPY requirements.lock" in dockerfile
+    assert "!requirements.lock" in rules
+
+
 def test_docker_context_includes_active_vecto_template() -> None:
     """Keep the runtime data asset in the API image allow-list."""
 
