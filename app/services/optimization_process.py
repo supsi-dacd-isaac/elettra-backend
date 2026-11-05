@@ -10,6 +10,8 @@ from functools import lru_cache
 from pathlib import Path
 from uuid import UUID
 
+from app.core.config import get_cached_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +29,26 @@ def threads_per_worker() -> int:
 @lru_cache(maxsize=1)
 def worker_slots() -> asyncio.Semaphore:
     # Shared across evaluations in this API process, not across API replicas.
-    return asyncio.Semaphore(positive_env("ELETTRA_OPTIMIZATION_WORKERS", 2))
+    return asyncio.Semaphore(
+        positive_env(
+            "ELETTRA_OPTIMIZATION_WORKERS",
+            get_cached_settings().max_concurrent_simulations,
+        )
+    )
+
+
+async def worker_timeout_seconds(run_id: UUID) -> float:
+    """Use the request budget with small cleanup overhead, capped by config."""
+    from app.database import AsyncSessionLocal
+    from app.models import OptimizationRuns
+
+    configured = float(get_cached_settings().simulation_timeout_minutes * 60)
+    async with AsyncSessionLocal() as db:
+        run = await db.get(OptimizationRuns, run_id)
+        requested = float(
+            (run.input_params or {}).get("optimization_time_budget_seconds", configured)
+        ) if run is not None else configured
+    return max(1.0, min(configured, requested + 60.0))
 
 
 def worker_environment() -> dict[str, str]:
@@ -63,7 +84,21 @@ async def run_worker(run_id: UUID) -> None:
                 cwd=str(Path(__file__).resolve().parents[2]), env=worker_environment(),
             )
             logger.info("Optimization %s started in process %s", run_id, process.pid)
-            code = await process.wait()
+            timeout = await worker_timeout_seconds(run_id)
+            try:
+                code = await asyncio.wait_for(process.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                await mark_worker_failed(
+                    run_id,
+                    f"Optimization exceeded the configured {timeout:.0f} second timeout",
+                )
+                return
             if code != 0:
                 await mark_worker_failed(run_id, f"Optimization worker exited with code {code}")
     except asyncio.CancelledError:

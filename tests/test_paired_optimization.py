@@ -134,7 +134,7 @@ async def test_deleting_a_pair_deletes_both_but_refuses_running_work(monkeypatch
         async def execute(self,statement):
             if statement.is_select and 'optimization_runs' in str(statement):
                 return NS(scalar_one_or_none=lambda:rows[0])
-            return NS(scalars=lambda:NS(all=lambda:[]))
+            return NS(scalars=lambda:NS(all=lambda:[]), all=lambda:[])
         async def delete(self,row):self.deleted.append(row.id)
         async def commit(self):pass
     async def owned(db,key,user):

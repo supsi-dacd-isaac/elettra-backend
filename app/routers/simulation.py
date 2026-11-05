@@ -1,3 +1,5 @@
+import math
+
 from typing import List, Union, Literal
 from uuid import UUID
 from pydantic import ValidationError
@@ -6,7 +8,7 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import exists, select, func, true, update
+from sqlalchemy import exists, select, func, true
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import get_async_session
@@ -45,7 +47,7 @@ from app.models import (
     Depots,
     OptimizationRuns, YearlyAnalysis,
 )
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_analyst
 from app.core.ownership import (
     gtfs_stop_accessible_filter,
     get_accessible_gtfs_trip,
@@ -56,7 +58,6 @@ from app.core.ownership import (
     get_owned_yearly_analysis,
     prediction_run_owned_filter,
     shift_trips_accessible_filter,
-    stamp_yearly_analysis_owner,
 )
 from app.services.weather import (
     count_weather_records,
@@ -68,6 +69,7 @@ from app.services.weather import (
     get_active_temperature_series,
     apply_hybrid_temperature_series,
 )
+from app.services.deletion_integrity import blocker, reject_blocked_deletion
 from app.services.hybrid_temperature import (
     HYBRID_PROVIDER,
     OPENMETEO_MODEL,
@@ -362,7 +364,7 @@ async def create_prediction_runs(
     request: PredictionRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     try:
         selected_stack = resolve_prediction_selection(
@@ -466,7 +468,7 @@ async def create_yearly_prediction_runs(
     request: YearlyPredictionRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     from app.services.prediction import physical_bus_mass, run_yearly_prediction_background
 
@@ -538,12 +540,19 @@ async def list_prediction_runs(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
     yearly_analysis_id: UUID | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(1000, ge=1, le=1000),
 ):
     query = select(PredictionRuns).where(prediction_run_owned_filter(current_user.id))
     if yearly_analysis_id is not None:
         await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
         query = query.where(PredictionRuns.yearly_analysis_id == yearly_analysis_id)
-    result = await db.execute(query.order_by(PredictionRuns.created_at.desc()))
+    result = await db.execute(
+        query
+        .order_by(PredictionRuns.created_at.desc(), PredictionRuns.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )
     return result.scalars().all()
 
 
@@ -581,15 +590,21 @@ async def create_optimization_run(
     background_tasks: BackgroundTasks,
     request: OptimizationRequest = Body(openapi_examples=_OPTIMIZATION_EXAMPLES),
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     """Create and start an optimization run (background task)."""
+    explicit_bus_model = None
     if request.bus_model_id is not None:
-        await get_owned_bus_model(db, request.bus_model_id, current_user.id)
+        explicit_bus_model = await get_owned_bus_model(
+            db, request.bus_model_id, current_user.id
+        )
 
+    owned_shifts = []
     for shift_id in request.shift_ids:
-        await get_owned_shift(
-            db, shift_id, current_user.id, current_user.company_id
+        owned_shifts.append(
+            await get_owned_shift(
+                db, shift_id, current_user.id, current_user.company_id
+            )
         )
 
     prediction_bus_model_ids: set[UUID] = set()
@@ -655,6 +670,51 @@ async def create_optimization_run(
                     "model release and auxiliary estimator"
                 ),
             )
+
+    if request.mode == "joint" and request.battery_cost_per_kwh is None:
+        # Joint optimization needs a price for every physical pack before a
+        # pending run is persisted. Resolve the same model precedence used by
+        # the worker and retain the explicit legacy CHF/kWh fallback.
+        model_ids: set[UUID] = set()
+        if explicit_bus_model is not None:
+            model_ids.add(explicit_bus_model.id)
+        elif prediction_bus_model_ids:
+            model_ids.update(prediction_bus_model_ids)
+        else:
+            bus_ids = {shift.bus_id for shift in owned_shifts if shift.bus_id is not None}
+            if bus_ids:
+                result = await db.execute(
+                    select(Buses.bus_model_id).where(Buses.id.in_(bus_ids))
+                )
+                model_ids.update(
+                    model_id for model_id in result.scalars().all() if model_id is not None
+                )
+
+        if not model_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="Joint optimization requires a resolvable bus model",
+            )
+
+        for model_id in model_ids:
+            model = (
+                explicit_bus_model
+                if explicit_bus_model is not None and explicit_bus_model.id == model_id
+                else await get_owned_bus_model(db, model_id, current_user.id)
+            )
+            pack_cost = (model.specs or {}).get("battery_pack_cost_chf")
+            try:
+                numeric_pack_cost = float(pack_cost)
+            except (TypeError, ValueError):
+                numeric_pack_cost = math.nan
+            if not math.isfinite(numeric_pack_cost) or numeric_pack_cost < 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Set a finite nonnegative battery_pack_cost_chf in every "
+                        "bus model used by joint optimization"
+                    ),
+                )
 
     # Validate every private UUID before reading elevation/profile data. This
     # keeps foreign and missing references indistinguishable even when an
@@ -853,7 +913,7 @@ async def find_basis_comparison(
 @router.post("/optimization-runs/{run_id}/basis/{basis}")
 async def create_basis_comparison(
     run_id: UUID, basis: Literal["mean", "aggregate_q95"], background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst),
 ):
     """Explicitly optimize one basis; reuse a compatible owned result if present."""
     from simulation.aggregate_consumption import METHOD_VERSION
@@ -881,7 +941,7 @@ async def create_basis_comparison(
 async def delete_optimization_run(
     run_id: UUID,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     """Delete an optimization run owned by the current user."""
     result = await db.execute(
@@ -901,24 +961,21 @@ async def delete_optimization_run(
     if paired and any(candidate.status in {"pending", "running"} for candidate in runs):
         raise HTTPException(status_code=409, detail="Wait for both evaluations to finish before deleting them")
     try:
+        linked_analyses = []
         for candidate in runs:
-            linked_analyses = (
-                await db.execute(
-                    select(YearlyAnalysis).where(
+            linked_analyses.extend(
+                (
+                    await db.execute(
+                    select(YearlyAnalysis.id, YearlyAnalysis.name).where(
                         YearlyAnalysis.optimization_run_id == candidate.id
                     )
-                )
-            ).scalars().all()
-            for analysis in linked_analyses:
-                await get_owned_yearly_analysis(db, analysis.id, current_user.id)
-                analysis.features = stamp_yearly_analysis_owner(
-                    analysis.features, current_user.id
-                )
-            await db.execute(
-                update(YearlyAnalysis)
-                .where(YearlyAnalysis.optimization_run_id == candidate.id)
-                .values(optimization_run_id=None)
+                    )
+                ).all()
             )
+        reject_blocked_deletion(
+            [blocker("yearly_analysis", row.id, row.name) for row in linked_analyses]
+        )
+        for candidate in runs:
             await db.delete(candidate)
         await db.commit()
     except SQLAlchemyError as exc:
@@ -959,7 +1016,7 @@ async def generate_pvgis_tmy(
                     "In both cases, missing or legacy data is generated and stored.",
     ),
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     import datetime as dt_mod
     from app.core.config import get_cached_settings
@@ -1118,7 +1175,7 @@ async def generate_pvgis_tmy(
 async def create_weather_temperature_clusters(
     request: WeatherClusteringRequest,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     from app.services.weather import _parse_time_str
 

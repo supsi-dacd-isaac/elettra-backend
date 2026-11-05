@@ -40,12 +40,32 @@ def _created_trip_and_job(response):
     return payload["trip"], payload["elevation_job"]
 
 
+@pytest.fixture(scope="module")
+def route_stop_pair(client):
+    """Resolve current, accessible endpoints instead of stale database IDs."""
+    route_id = os.getenv("TEST_ROUTE_ID")
+    headers = _auth_headers(client)
+    trips_response = client.get(
+        f"{API_BASE}/gtfs-trips/by-route/{route_id}", headers=headers
+    )
+    if trips_response.status_code != 200:
+        pytest.skip(f"Unable to resolve GTFS trips: {trips_response.text}")
+    for trip in trips_response.json():
+        stops_response = client.get(
+            f"{API_BASE}/gtfs-stops/by-trip/{trip['id']}", headers=headers
+        )
+        if stops_response.status_code != 200:
+            continue
+        stops = stops_response.json()
+        if len(stops) >= 2:
+            return stops[0]["id"], stops[-1]["id"]
+    pytest.skip("No accessible route trip with at least two stops is available")
+
+
 @pytest.mark.skipif(
     not (
         os.getenv("OSRM_BASE_URL")
         and os.getenv("TEST_ROUTE_ID")
-        and os.getenv("TEST_DEPOT_DEPARTURE_STOP_ID")
-        and os.getenv("TEST_DEPOT_ARRIVAL_STOP_ID")
         and (
             os.getenv("TEST_API_TOKEN")
             or (
@@ -53,14 +73,13 @@ def _created_trip_and_job(response):
             )
         )
     ),
-    reason="Requires OSRM_BASE_URL, auth, TEST_ROUTE_ID and depot stop ids",
+    reason="Requires OSRM_BASE_URL, auth and TEST_ROUTE_ID",
 )
-def test_create_depot_trip(client, record, monkeypatch):
+def test_create_depot_trip(client, record, monkeypatch, route_stop_pair):
     # Ensure MINIO endpoint points to host-exposed port when running tests locally
     monkeypatch.setenv("MINIO_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9002"))
 
-    dep_stop_id = os.getenv("TEST_DEPOT_DEPARTURE_STOP_ID")
-    arr_stop_id = os.getenv("TEST_DEPOT_ARRIVAL_STOP_ID")
+    dep_stop_id, arr_stop_id = route_stop_pair
     route_id = os.getenv("TEST_ROUTE_ID")
 
     payload = {
@@ -122,8 +141,6 @@ def test_create_depot_trip(client, record, monkeypatch):
     not (
         os.getenv("OSRM_BASE_URL")
         and os.getenv("TEST_ROUTE_ID")
-        and os.getenv("TEST_TRANSFER_DEPARTURE_STOP_ID")
-        and os.getenv("TEST_TRANSFER_ARRIVAL_STOP_ID")
         and (
             os.getenv("TEST_API_TOKEN")
             or (
@@ -131,13 +148,12 @@ def test_create_depot_trip(client, record, monkeypatch):
             )
         )
     ),
-    reason="Requires OSRM_BASE_URL, auth, TEST_ROUTE_ID and transfer stop ids",
+    reason="Requires OSRM_BASE_URL, auth and TEST_ROUTE_ID",
 )
-def test_create_transfer_trip(client, record, monkeypatch):
+def test_create_transfer_trip(client, record, monkeypatch, route_stop_pair):
     monkeypatch.setenv("MINIO_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9002"))
 
-    dep_stop_id = os.getenv("TEST_TRANSFER_DEPARTURE_STOP_ID")
-    arr_stop_id = os.getenv("TEST_TRANSFER_ARRIVAL_STOP_ID")
+    dep_stop_id, arr_stop_id = route_stop_pair
     route_id = os.getenv("TEST_ROUTE_ID")
 
     payload = {
@@ -198,8 +214,6 @@ def test_create_transfer_trip(client, record, monkeypatch):
     not (
         os.getenv("OSRM_BASE_URL")
         and os.getenv("TEST_ROUTE_ID")
-        and os.getenv("TEST_DEPOT_DEPARTURE_STOP_ID")
-        and os.getenv("TEST_DEPOT_ARRIVAL_STOP_ID")
         and (
             os.getenv("TEST_API_TOKEN")
             or (
@@ -207,13 +221,12 @@ def test_create_transfer_trip(client, record, monkeypatch):
             )
         )
     ),
-    reason="Requires OSRM_BASE_URL, auth, TEST_ROUTE_ID and depot stop ids",
+    reason="Requires OSRM_BASE_URL, auth and TEST_ROUTE_ID",
 )
-def test_create_depot_trip_with_day_of_week(client, record, monkeypatch):
+def test_create_depot_trip_with_day_of_week(client, record, monkeypatch, route_stop_pair):
     monkeypatch.setenv("MINIO_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9002"))
 
-    dep_stop_id = os.getenv("TEST_DEPOT_DEPARTURE_STOP_ID")
-    arr_stop_id = os.getenv("TEST_DEPOT_ARRIVAL_STOP_ID")
+    dep_stop_id, arr_stop_id = route_stop_pair
     route_id = os.getenv("TEST_ROUTE_ID")
 
     headers = _auth_headers(client)

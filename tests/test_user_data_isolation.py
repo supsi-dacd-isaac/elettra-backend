@@ -96,7 +96,6 @@ def _register_and_login(
             "email": email,
             "full_name": f"Isolation {label}",
             "password": PASSWORD,
-            "role": role,
         },
     )
     assert response.status_code == 200, response.text
@@ -283,6 +282,19 @@ async def _yearly_features(analysis_id: str) -> dict:
         if isinstance(features, str):
             features = json.loads(features)
         return dict(features or {})
+    finally:
+        await conn.close()
+
+
+async def _stop_exists(stop_id: str) -> bool:
+    conn = await asyncpg.connect(_dsn())
+    try:
+        return bool(
+            await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM gtfs_stops WHERE id = $1::uuid)",
+                uuid.UUID(str(stop_id)),
+            )
+        )
     finally:
         await conn.close()
 
@@ -918,9 +930,8 @@ def test_agency_admin_can_manage_accounts_only_inside_own_agency(
             "company_id": ctx["foreign"]["agency"],
             "email": f"forbidden_{uuid.uuid4().hex}@example.com",
             "full_name": "Forbidden foreign user",
-            "password_hash": "not-used",
+            "password": "Foreign!Passw0rdXy",
             "role": "analyst",
-            "created_at": datetime.now(UTC).isoformat(),
         },
     )
     assert response.status_code == 403, response.text
@@ -1362,12 +1373,17 @@ def test_own_crud_still_works_and_server_stamps_yearly_owner(
         if created.get("shift"):
             client.delete(f"{USER}/shifts/{created['shift']}", headers=headers)
         if created.get("depot"):
-            client.delete(f"{USER}/depots/{created['depot']}", headers=headers)
+            response = client.delete(
+                f"{USER}/depots/{created['depot']}", headers=headers
+            )
+            assert response.status_code == 200, response.text
         if created.get("bus"):
             client.delete(f"{USER}/buses/{created['bus']}", headers=headers)
         if created.get("model"):
             client.delete(f"{USER}/bus-models/{created['model']}", headers=headers)
         if orphan_stop:
+            stop_was_left_behind = _run(_stop_exists(orphan_stop))
+
             async def remove_orphan() -> None:
                 conn = await asyncpg.connect(_dsn())
                 try:
@@ -1377,4 +1393,6 @@ def test_own_crud_still_works_and_server_stamps_yearly_owner(
                 finally:
                     await conn.close()
 
-            _run(remove_orphan())
+            if stop_was_left_behind:
+                _run(remove_orphan())
+            assert not stop_was_left_behind, "depot deletion left its generated GTFS stop behind"

@@ -4,12 +4,13 @@ Authentication and authorization utilities
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 from passlib.context import CryptContext
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
 from app.database import get_async_session
@@ -41,8 +42,14 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 async def authenticate_user(email: str, password: str, db: AsyncSession) -> Optional[Users]:
     """Authenticate user with email and password"""
-    result = await db.execute(select(Users).where(Users.email == email))
-    user = result.scalar_one_or_none()
+    normalized_email = email.strip().casefold()
+    result = await db.execute(
+        select(Users).where(func.lower(Users.email) == normalized_email).limit(2)
+    )
+    matches = list(result.scalars().all())
+    # Refuse ambiguous legacy case variants instead of authenticating an
+    # arbitrary row. New writes are normalized by the routers.
+    user = matches[0] if len(matches) == 1 else None
     
     if not user:
         return None
@@ -66,7 +73,7 @@ async def verify_jwt_token(
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
-    except JWTError:
+    except InvalidTokenError:
         raise credentials_exception
     
     # Get user from database

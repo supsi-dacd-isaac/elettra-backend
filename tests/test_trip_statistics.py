@@ -203,7 +203,7 @@ def test_trip_statistics_unauthorized(client, record):
 
 
 def test_trip_statistics_empty_list(client, record):
-    """Test computing combined statistics for an empty list of trips"""
+    """An empty request is rejected before any statistics query is run."""
     
     # Get authentication token
     token = get_auth_token(client)
@@ -218,11 +218,13 @@ def test_trip_statistics_empty_list(client, record):
         headers=headers
     )
     
-    try:
-        assert response.status_code == 200
-        result = response.json()
-        assert result["trip_ids"] == []
-        assert result["statistics"] == {}
-        record("trip_statistics_empty_list", True, "Empty trip list handled correctly")
-    except AssertionError as e:
-        record("trip_statistics_empty_list", False, str(e))
+    body = response.json()
+    valid = response.status_code == 422 and any(
+        error.get("loc", [])[-1:] == ["trip_ids"]
+        for error in body.get("detail", [])
+    )
+    record(
+        "trip_statistics_empty_list",
+        valid,
+        f"status={response.status_code} body={body}",
+    )

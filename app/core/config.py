@@ -75,8 +75,12 @@ class Settings(BaseSettings):
     default_charging_power_kw: float = Field(..., validation_alias=AliasPath("elettra", "default_charging_power_kw"))
 
     # ---- Simulation ----
-    max_concurrent_simulations: int = Field(..., validation_alias=AliasPath("simulation", "max_concurrent_simulations"))
-    simulation_timeout_minutes: int = Field(..., validation_alias=AliasPath("simulation", "simulation_timeout_minutes"))
+    max_concurrent_simulations: int = Field(
+        ..., gt=0, validation_alias=AliasPath("simulation", "max_concurrent_simulations")
+    )
+    simulation_timeout_minutes: int = Field(
+        ..., gt=0, validation_alias=AliasPath("simulation", "simulation_timeout_minutes")
+    )
 
     # ---- File system ----
     temp_dir: str = Field(..., validation_alias=AliasPath("paths", "temp_dir"))
@@ -84,8 +88,12 @@ class Settings(BaseSettings):
     elevation_profiles_path: str = Field(..., validation_alias=AliasPath("paths", "elevation_profiles_path"))
 
     # ---- Performance ----
-    request_timeout_seconds: int = Field(..., validation_alias=AliasPath("performance", "request_timeout_seconds"))
-    max_request_size_mb: int = Field(..., validation_alias=AliasPath("performance", "max_request_size_mb"))
+    request_timeout_seconds: int = Field(
+        ..., gt=0, validation_alias=AliasPath("performance", "request_timeout_seconds")
+    )
+    max_request_size_mb: int = Field(
+        ..., gt=0, validation_alias=AliasPath("performance", "max_request_size_mb")
+    )
 
     # ---- LCA (Life Cycle Analysis) API ----
     lca_api_base_url: str = Field(
@@ -238,6 +246,30 @@ def get_cached_settings() -> Settings:
     if _settings is None:
         _settings = get_settings()
     return _settings
+
+
+def validate_runtime_secrets(
+    runtime_settings: Settings,
+    *,
+    testing: bool | None = None,
+) -> None:
+    """Reject placeholder or weak signing secrets outside debug/test runs."""
+
+    if testing is None:
+        testing = os.getenv("ELETTRA_TESTING") == "1"
+    if testing or runtime_settings.debug:
+        return
+
+    secret = runtime_settings.secret_key.strip()
+    if (
+        len(secret) < 32
+        or secret.upper().startswith("CHANGE_ME")
+        or secret.casefold() in {"secret", "changeme", "change-me"}
+    ):
+        raise RuntimeError(
+            "APP_SECRET_KEY must be overridden with a non-placeholder secret "
+            "of at least 32 characters"
+        )
 
 def reload_settings():
     global _settings

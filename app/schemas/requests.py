@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import math
-
 from typing import Annotated, Any, Literal, Optional
 from uuid import UUID
 from pydantic import (
@@ -33,6 +31,13 @@ PositiveFiniteFloat = Annotated[
     Field(gt=0, allow_inf_nan=False),
 ]
 PositiveStrictInt = Annotated[StrictInt, Field(ge=1)]
+NonNegativeFiniteFloat = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+MAX_SHIFT_IDS = 100
+MAX_PREDICTION_IDS = 500
+MAX_WEATHER_SCENARIOS = 100
+MAX_CHARGING_STATIONS = 100
+MAX_TRIP_IDS = 500
 
 
 def _trim_non_empty_bus_model_name(value: Any) -> str:
@@ -167,7 +172,7 @@ def _validated_quantiles(values: list[float]) -> list[float]:
 
 
 class PredictionRequest(BaseModel):
-    shift_ids: list[UUID]
+    shift_ids: list[UUID] = Field(min_length=1, max_length=MAX_SHIFT_IDS)
     bus_model_id: UUID
     yearly_analysis_id: Optional[UUID] = Field(
         default=None,
@@ -185,7 +190,7 @@ class PredictionRequest(BaseModel):
             "the same configured release."
         ),
     )
-    external_temp_celsius: float = Field(examples=[15.0])
+    external_temp_celsius: float = Field(allow_inf_nan=False, examples=[15.0])
     occupancy_percent: float = Field(
         default=50.0,
         ge=0.0,
@@ -202,8 +207,19 @@ class PredictionRequest(BaseModel):
         ),
         examples=["default", "diesel"],
     )
-    quantiles: list[float] = Field(default_factory=lambda: [0.05, 0.25, 0.5, 0.75, 0.95])
-    num_battery_packs: Optional[int] = Field(default=None, examples=[12])
+    quantiles: list[float] = Field(
+        default_factory=lambda: [0.05, 0.25, 0.5, 0.75, 0.95],
+        min_length=1,
+        max_length=20,
+    )
+    num_battery_packs: Optional[StrictInt] = Field(default=None, gt=0, examples=[12])
+
+    @field_validator("shift_ids")
+    @classmethod
+    def validate_shift_ids(cls, values: list[UUID]) -> list[UUID]:
+        if len(values) != len(set(values)):
+            raise ValueError("shift_ids must be unique")
+        return values
 
     @field_validator("quantiles")
     @classmethod
@@ -233,9 +249,15 @@ class YearlyPredictionRequest(BaseModel):
     prediction_stack: PredictionStackType = Field(default_factory=default_prediction_stack_name)
     occupancy_percent: float = Field(default=50, ge=0, le=100, allow_inf_nan=False)
     auxiliary_heating_type: AuxiliaryHeatingType = "default"
-    quantiles: list[float] = Field(default_factory=lambda: [0.05, 0.5, 0.95])
-    scenarios: list[YearlyPredictionScenario] = Field(min_length=1)
-    assignments: list[YearlyPredictionAssignment] = Field(min_length=1)
+    quantiles: list[float] = Field(
+        default_factory=lambda: [0.05, 0.5, 0.95], min_length=1, max_length=20
+    )
+    scenarios: list[YearlyPredictionScenario] = Field(
+        min_length=1, max_length=MAX_WEATHER_SCENARIOS
+    )
+    assignments: list[YearlyPredictionAssignment] = Field(
+        min_length=1, max_length=MAX_SHIFT_IDS
+    )
 
     @field_validator("quantiles")
     @classmethod
@@ -279,27 +301,32 @@ class ChargingStationConfig(BaseModel):
     """
     stop_id: UUID
     cost_model: Optional[InfrastructureCostConfig] = None
-    slot_costs_chf: Optional[list[float]] = Field(
+    slot_costs_chf: Optional[list[NonNegativeFiniteFloat]] = Field(
         default=None,
+        min_length=1,
+        max_length=100,
         examples=[[350000, 150000, 150000]],
         description=(
             "Marginal installation cost (CHF) per additional charger slot. "
             "Legacy alternative to cost_model for charging_only and joint. Ignored in battery_only."
         ),
     )
-    num_slots: Optional[int] = Field(
-        default=None, examples=[2],
+    num_slots: Optional[StrictInt] = Field(
+        default=None, ge=1, le=100, examples=[2],
         description=(
             "Fixed charger count in battery_only; maximum candidate count when "
             "using cost_model in charging_only or joint."
         ),
     )
     max_total_power_kw: float = Field(
+        gt=0,
+        le=100_000,
+        allow_inf_nan=False,
         examples=[450.0],
         description="Maximum aggregate DC output (kW) at this station across all active chargers; not an AC grid-connection limit. Required in all modes.",
     )
     max_power_per_slot_kw: Optional[float] = Field(
-        default=None, examples=[450.0],
+        default=None, gt=0, le=100_000, allow_inf_nan=False, examples=[450.0],
         description=(
             "Maximum DC power (kW) a single charger slot can deliver to the bus. "
             "When omitted, only the bus-level and station-total power limits apply. "
@@ -314,7 +341,7 @@ class PredictionParams(BaseModel):
     prediction_stack: PredictionStackType = Field(
         default_factory=default_prediction_stack_name
     )
-    external_temp_celsius: float = Field(examples=[15.0])
+    external_temp_celsius: float = Field(allow_inf_nan=False, examples=[15.0])
     occupancy_percent: float = Field(
         default=50.0,
         ge=0.0,
@@ -331,8 +358,10 @@ class PredictionParams(BaseModel):
         ),
         examples=["default", "diesel"],
     )
-    quantiles: list[float] = Field(default_factory=lambda: [0.05, 0.5, 0.95])
-    num_battery_packs: Optional[int] = Field(default=None, examples=[12])
+    quantiles: list[float] = Field(
+        default_factory=lambda: [0.05, 0.5, 0.95], min_length=1, max_length=20
+    )
+    num_battery_packs: Optional[StrictInt] = Field(default=None, gt=0, examples=[12])
 
     @field_validator("quantiles")
     @classmethod
@@ -448,6 +477,7 @@ class ChargingStopCandidatesRequest(BaseModel):
 
     shift_ids: list[UUID] = Field(
         min_length=1,
+        max_length=MAX_SHIFT_IDS,
         description=(
             "One or more user-owned shifts. Duplicate UUIDs are accepted and "
             "resolved once."
@@ -484,6 +514,7 @@ class OptimizationRequest(BaseModel):
     name: str = Field(
         ...,
         min_length=1,
+        max_length=200,
         examples=["My feasibility evaluation"],
         description=(
             "Human-readable display name for this optimization run. "
@@ -504,7 +535,7 @@ class OptimizationRequest(BaseModel):
         ),
         examples=["default", "diesel"],
     )
-    shift_ids: list[UUID]
+    shift_ids: list[UUID] = Field(min_length=1, max_length=MAX_SHIFT_IDS)
     bus_model_id: Optional[UUID] = Field(
         default=None,
         description=(
@@ -517,6 +548,8 @@ class OptimizationRequest(BaseModel):
 
     prediction_run_ids: Optional[list[UUID]] = Field(
         default=None,
+        min_length=1,
+        max_length=MAX_PREDICTION_IDS,
         description=(
             "Reuse existing prediction runs. Their bus_model_id values define "
             "simulation bus specs unless bus_model_id is provided, in which case "
@@ -525,6 +558,7 @@ class OptimizationRequest(BaseModel):
     )
     reference_prediction_run_ids: Optional[dict[UUID, UUID]] = Field(
         default=None,
+        max_length=MAX_SHIFT_IDS,
         description="One reference prediction per shift; prediction_run_ids remains the comparison catalogue.",
     )
     prediction_params: Optional[PredictionParams] = Field(
@@ -534,6 +568,7 @@ class OptimizationRequest(BaseModel):
 
     charging_stations: list[ChargingStationConfig] = Field(
         default_factory=list,
+        max_length=MAX_CHARGING_STATIONS,
         description=(
             "Charging station configurations. In battery_only mode these are fixed "
             "installations (num_slots required). In charging_only / joint mode these "
@@ -574,7 +609,7 @@ class OptimizationRequest(BaseModel):
         description="Legacy fallback only. Joint optimization uses battery_pack_cost_chf from each bus model.",
     )
     max_battery_penalty_per_kwh: float = Field(
-        default=1e6, examples=[1000000.0],
+        default=1e6, ge=0, allow_inf_nan=False, examples=[1000000.0],
         description=(
             "CHF/kWh penalty for exceeding max_battery_packs (soft infeasibility slack). "
             "Used in charging_only (excess-pack penalty) and joint modes."
@@ -596,17 +631,17 @@ class OptimizationRequest(BaseModel):
     cp_slack_minutes: int = Field(default=0, ge=0)
 
     # Penalty weights
-    session_penalty_weight: float = Field(default=0.01, ge=0.0)
-    early_charging_weight: float = Field(default=0.0, ge=0.0)
+    session_penalty_weight: float = Field(default=0.01, ge=0.0, allow_inf_nan=False)
+    early_charging_weight: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
 
     # Solver parameters
-    solver_name: str = Field(default="highs", examples=["highs"])
-    max_solver_time_seconds: Optional[int] = Field(default=None, examples=[300])
+    solver_name: str = Field(default="highs", min_length=1, max_length=50, examples=["highs"])
+    max_solver_time_seconds: Optional[StrictInt] = Field(default=None, ge=1, le=3600, examples=[300])
     optimization_time_budget_seconds: int = Field(default=900, ge=1, le=3600)
-    mip_rel_gap: Optional[float] = Field(default=None, examples=[0.01])
-    mip_abs_gap: Optional[float] = Field(default=None, examples=[0.0])
-    feasibility_tol: Optional[float] = Field(default=None, examples=[1e-6])
-    optimality_tol: Optional[float] = Field(default=None, examples=[1e-6])
+    mip_rel_gap: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False, examples=[0.01])
+    mip_abs_gap: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False, examples=[0.0])
+    feasibility_tol: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False, examples=[1e-6])
+    optimality_tol: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False, examples=[1e-6])
 
     @field_validator("name", mode="before")
     @classmethod
@@ -644,6 +679,8 @@ class OptimizationRequest(BaseModel):
                 raise ValueError("reference_prediction_run_ids must cover exactly the selected shifts")
             if not set(self.reference_prediction_run_ids.values()) <= set(self.prediction_run_ids or []):
                 raise ValueError("References must belong to prediction_run_ids")
+        if self.prediction_run_ids and len(set(self.prediction_run_ids)) != len(self.prediction_run_ids):
+            raise ValueError("prediction_run_ids must be unique")
         if self.mode == "charging_only" and not self.prediction_run_ids:
             if self.prediction_params is None or self.prediction_params.num_battery_packs is None:
                 raise ValueError("charging_only requires an explicit battery pack count")
@@ -655,12 +692,10 @@ class OptimizationRequest(BaseModel):
                     )
         for cs in self.charging_stations:
             if cs.cost_model is not None:
-                if cs.num_slots is None or cs.num_slots < 0:
-                    raise ValueError("Costed stations require a nonnegative num_slots")
+                if cs.num_slots is None:
+                    raise ValueError("Costed stations require a positive num_slots")
                 if cs.slot_costs_chf is not None:
                     raise ValueError("Use cost_model or legacy slot_costs_chf, not both")
-                if not math.isfinite(cs.max_total_power_kw) or cs.max_total_power_kw < 0:
-                    raise ValueError("Costed stations require finite nonnegative DC site power")
         if self.mode == "battery_only":
             for cs in self.charging_stations:
                 if cs.num_slots is None:
@@ -690,16 +725,49 @@ class AuxTripCreate(BaseModel):
 
 # Shift creation/update requests
 class ShiftCreateRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     bus_id: Optional[UUID] = None
-    trip_ids: list[UUID]
+    trip_ids: list[UUID] = Field(min_length=1, max_length=MAX_TRIP_IDS)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, value: Any) -> str:
+        return _trim_non_empty_bus_model_name(value)
+
+    @field_validator("trip_ids")
+    @classmethod
+    def validate_trip_ids(cls, values: list[UUID]) -> list[UUID]:
+        if len(values) != len(set(values)):
+            raise ValueError("trip_ids must be unique")
+        return values
 
 
 class ShiftUpdateRequest(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     bus_id: Optional[UUID] = None
-    trip_ids: Optional[list[UUID]] = None
+    trip_ids: Optional[list[UUID]] = Field(
+        default=None, min_length=1, max_length=MAX_TRIP_IDS
+    )
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, value: Any) -> Optional[str]:
+        return None if value is None else _trim_non_empty_bus_model_name(value)
+
+    @field_validator("trip_ids")
+    @classmethod
+    def validate_trip_ids(cls, values: Optional[list[UUID]]) -> Optional[list[UUID]]:
+        if values is not None and len(values) != len(set(values)):
+            raise ValueError("trip_ids must be unique")
+        return values
 
 
 class TripStatisticsRequest(BaseModel):
-    trip_ids: list[UUID]
+    trip_ids: list[UUID] = Field(min_length=1, max_length=MAX_TRIP_IDS)
+
+    @field_validator("trip_ids")
+    @classmethod
+    def validate_trip_ids(cls, values: list[UUID]) -> list[UUID]:
+        if len(values) != len(set(values)):
+            raise ValueError("trip_ids must be unique")
+        return values

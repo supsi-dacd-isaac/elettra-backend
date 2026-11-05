@@ -25,13 +25,20 @@ def _me(client: TestClient, token: str) -> str:
     return r.json()["id"]
 
 def _cleanup_buses_by_name(client: TestClient, token: str, names: list[str]):
-    r = client.get(f"{API_BASE}/buses/?skip=0&limit=1000", headers=_hdrs(token))
-    if r.status_code != 200:
-        return
-    items = r.json() or []
-    for b in items:
-        if b.get("name") in names:
-            client.delete(f"{API_BASE}/buses/{b['id']}", headers=_hdrs(token))
+    for skip in range(0, 10_000, 100):
+        r = client.get(
+            f"{API_BASE}/buses/?skip={skip}&limit=100", headers=_hdrs(token)
+        )
+        if r.status_code != 200:
+            return
+        items = r.json() or []
+        for bus in items:
+            if bus.get("name") in names:
+                client.delete(
+                    f"{API_BASE}/buses/{bus['id']}", headers=_hdrs(token)
+                )
+        if len(items) < 100:
+            return
 
 
 def test_unique_violation_returns_409(client: TestClient):
@@ -52,8 +59,8 @@ def test_unique_violation_returns_409(client: TestClient):
     body = r2.json()
     assert body.get("code") in ("unique_violation", "integrity_error")
     assert body.get("message")
-    # fields may include ["user_id", "name"] depending on backend detail parsing
-    assert "detail" in body
+    assert set(body) == {"code", "message"}
+    assert "IntegrityTestBus" not in r2.text
     # Cleanup after
     _cleanup_buses_by_name(client, token, ["IntegrityTestBus"]) 
 

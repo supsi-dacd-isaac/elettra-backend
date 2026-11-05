@@ -101,7 +101,28 @@ async def _ready_sessions():
 
 
 @pytest.mark.asyncio
-async def test_health_returns_503_when_database_or_migration_is_unavailable(monkeypatch):
+async def test_public_health_is_liveness_only(monkeypatch):
+    async def dependency_must_not_run():
+        raise AssertionError("public liveness must not probe the database")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(main, "get_async_session", dependency_must_not_run)
+    response = Response()
+
+    payload = await main.health_check(response)
+
+    assert payload == {"status": "healthy", "version": main.settings.app_version}
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_detailed_readiness_requires_authentication(client):
+    response = client.get("/api/v1/readiness")
+
+    assert response.status_code in {401, 403}
+
+
+@pytest.mark.asyncio
+async def test_readiness_returns_503_when_database_or_migration_is_unavailable(monkeypatch):
     async def broken_sessions():
         raise RuntimeError("migration unavailable")
         yield  # pragma: no cover
@@ -113,7 +134,7 @@ async def test_health_returns_503_when_database_or_migration_is_unavailable(monk
     monkeypatch.setattr(main, "probe_elevation_profiles_store", minio_ready)
     response = Response()
 
-    payload = await main.health_check(response)
+    payload = await main.readiness_check(response)
 
     assert response.status_code == 503
     assert payload.status == "unhealthy"
@@ -121,7 +142,7 @@ async def test_health_returns_503_when_database_or_migration_is_unavailable(monk
 
 
 @pytest.mark.asyncio
-async def test_health_returns_503_when_minio_is_unavailable(monkeypatch):
+async def test_readiness_returns_503_when_minio_is_unavailable(monkeypatch):
     async def minio_broken():
         raise RuntimeError("bucket unavailable")
 
@@ -129,7 +150,7 @@ async def test_health_returns_503_when_minio_is_unavailable(monkeypatch):
     monkeypatch.setattr(main, "probe_elevation_profiles_store", minio_broken)
     response = Response()
 
-    payload = await main.health_check(response)
+    payload = await main.readiness_check(response)
 
     assert response.status_code == 503
     assert payload.status == "unhealthy"
@@ -138,7 +159,7 @@ async def test_health_returns_503_when_minio_is_unavailable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_health_is_200_only_after_schema_and_minio_preflights(monkeypatch):
+async def test_readiness_is_200_only_after_schema_and_minio_preflights(monkeypatch):
     async def minio_ready():
         return "Legacy MinIO namespace is reachable"
 
@@ -146,7 +167,7 @@ async def test_health_is_200_only_after_schema_and_minio_preflights(monkeypatch)
     monkeypatch.setattr(main, "probe_elevation_profiles_store", minio_ready)
     response = Response()
 
-    payload = await main.health_check(response)
+    payload = await main.readiness_check(response)
 
     assert response.status_code == 200
     assert payload.status == "healthy"

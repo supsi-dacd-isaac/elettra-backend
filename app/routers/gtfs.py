@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List, Optional
@@ -28,7 +28,7 @@ from app.models import (
     GtfsStopsTimes, GtfsRoutes, ElevationProfileJobs,
     ElevationProfileCleanupJobs,
 )
-from app.core.auth import get_current_user, require_admin
+from app.core.auth import get_current_user, require_admin, require_analyst
 from app.core.ownership import (
     AUXILIARY_TRIP_OWNER_KEY,
     get_accessible_gtfs_stop,
@@ -75,8 +75,8 @@ logger = logging.getLogger(__name__)
 # GTFS Routes endpoints (authenticated users only)
 @router.get("/gtfs-routes/", response_model=List[GtfsRoutesRead])
 async def read_routes(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
     gtfs_year: Optional[int] = None,
     gtfs_file_date: Optional[date] = None,
     db: AsyncSession = Depends(get_async_session),
@@ -323,7 +323,6 @@ async def read_routes_by_agency_with_largest_variant(
     from app.core.config import get_cached_settings
     import os
     import csv
-    import subprocess
 
     # Get settings for elevation profiles path
     settings = get_cached_settings()
@@ -405,21 +404,19 @@ async def read_routes_by_agency_with_largest_variant(
                 "elevation_data.csv"
             )
 
-            # Check file size using ls -l command
             try:
-                if os.path.exists(elevation_file_path):
-                    # Use ls -l to get file size
-                    result = subprocess.run(['ls', '-l', elevation_file_path],
-                                          capture_output=True, text=True, check=True)
-                    # Parse the output to get file size (5th column in ls -l output)
-                    file_size = int(result.stdout.split()[4])
-
-                    if file_size > largest_file_size:
-                        largest_file_size = file_size
-                        largest_variant = variant
-            except (subprocess.CalledProcessError, IndexError, ValueError) as e:
-                # If there's an error getting file size, skip this variant
-                print(f"Error getting file size for {elevation_file_path}: {str(e)}")
+                file_size = await asyncio.to_thread(
+                    os.path.getsize, elevation_file_path
+                )
+                if file_size > largest_file_size:
+                    largest_file_size = file_size
+                    largest_variant = variant
+            except OSError as exc:
+                logger.debug(
+                    "Unable to inspect elevation file %s: %s",
+                    elevation_file_path,
+                    exc,
+                )
                 continue
 
         # If no variant was found with elevation data, use the first available variant
@@ -643,7 +640,7 @@ async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_asyn
 
 
 @router.put("/gtfs-trips/{trip_pk}", response_model=GtfsTripsRead)
-async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_trip = await get_accessible_gtfs_trip(
         db, trip_pk, current_user.id, current_user.company_id
     )
@@ -696,7 +693,7 @@ async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSess
 
 
 @router.delete("/gtfs-trips/{trip_pk}")
-async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_trip = await get_accessible_gtfs_trip(
         db, trip_pk, current_user.id, current_user.company_id
     )
@@ -1322,7 +1319,7 @@ async def get_aux_trip_elevation_status(
 async def create_aux_trip(
     req: AuxTripCreate,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     prefix = req.status.value if hasattr(req.status, "value") else str(req.status)
     if prefix == "gtfs":
