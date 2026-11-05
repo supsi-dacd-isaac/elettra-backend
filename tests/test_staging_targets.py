@@ -4,6 +4,7 @@ from test_support.staging_targets import (
     STAGING_BACKEND_URL,
     STAGING_FRONTEND_URL,
     StagingTargetError,
+    validate_backend_health_payload,
     validate_test_targets,
 )
 
@@ -70,3 +71,20 @@ def test_ci_accepts_only_the_workflow_ephemeral_database(monkeypatch):
     assert targets.ci is True
     with pytest.raises(StagingTargetError):
         validate_test_targets(STAGING_DATABASE_URL, ci=True)
+
+
+def test_stable_public_health_contract_is_accepted():
+    assert validate_backend_health_payload(
+        {"status": "healthy", "version": "1.4.0"}
+    ) is None
+
+
+def test_detailed_health_contract_still_validates_database_status():
+    assert validate_backend_health_payload(
+        {"status": "healthy", "services": {"database": {"status": "healthy"}}}
+    ) is None
+
+    with pytest.raises(StagingTargetError, match="database status"):
+        validate_backend_health_payload(
+            {"status": "healthy", "services": {"database": {"status": "down"}}}
+        )

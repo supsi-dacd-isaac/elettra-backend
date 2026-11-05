@@ -50,6 +50,7 @@ from app.schemas.lca import (
     ShiftYearlyDistanceResponse,
 )
 from app.services.deletion_integrity import (
+    auxiliary_stop_time_exists,
     blocker,
     load_owned_optimization_references,
     optimization_blockers_for_bus_model,
@@ -177,12 +178,34 @@ async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_
             )
         )
     ).all()
+    shifts = (
+        await db.execute(
+            select(Shifts.id, Shifts.name)
+            .join(Buses, Buses.id == Shifts.bus_id)
+            .where(
+                Buses.user_id == current_user.id,
+                Buses.bus_model_id == model_id,
+            )
+        )
+    ).all()
     optimizations = await load_owned_optimization_references(db, current_user.id)
     reject_blocked_deletion(
-        [blocker("bus", row.id, row.name) for row in buses]
+        [blocker("shift", row.id, row.name) for row in shifts]
         + [blocker("prediction_run", row.id) for row in predictions]
         + optimization_blockers_for_bus_model(optimizations, model_id)
     )
+    # Physical bus rows are created automatically with a bus model and have
+    # no standalone management screen.  Once all real dependants have been
+    # ruled out above, remove those contained rows in the same transaction so
+    # a newly-created model can be deleted again.
+    if buses:
+        await db.execute(
+            delete(Buses).where(
+                Buses.user_id == current_user.id,
+                Buses.bus_model_id == model_id,
+            )
+        )
+        await db.flush()
     await db.delete(db_bus_model)
     await db.commit()
     return {"message": "Bus model deleted successfully"}
@@ -447,11 +470,12 @@ async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_sess
         blockers.extend(blocker("shift", row.id, row.name) for row in shifts)
         optimization_runs = await load_owned_optimization_references(db, current_user.id)
         blockers.extend(optimization_blockers_for_stop(optimization_runs, stop.id))
-        stop_time_exists = await db.scalar(
-            select(func.count()).select_from(GtfsStopsTimes).where(
-                GtfsStopsTimes.stop_id == stop.id
-            )
-        )
+        # Custom stops can only enter stop-times through auxiliary trips.
+        # Drive this check from the small elevation-job table and probe each
+        # trip through the existing (trip_id, stop_sequence) index.  Filtering
+        # the 19M-row stop-times table directly by its unindexed stop_id made a
+        # simple depot deletion scan the entire table.
+        stop_time_exists = await auxiliary_stop_time_exists(db, stop.id)
         if stop_time_exists and not shifts:
             blockers.append(blocker("custom_stop", stop.id, stop.stop_name))
         other_depot_exists = await db.scalar(

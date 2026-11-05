@@ -343,6 +343,7 @@ class OptimizationRunListItemRead(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
     electrification_feasible: Optional[bool] = None
+    yearly_eligible: Optional[bool] = None
     solver_status: Optional[str] = None
     consumption_basis: Optional[str] = None
     basis_summaries: Optional[dict] = None

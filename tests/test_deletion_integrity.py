@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.services.deletion_integrity import (
+    auxiliary_stop_time_exists,
     blocker,
     optimization_blockers_for_bus_model,
     optimization_blockers_for_shift,
@@ -75,3 +76,21 @@ def test_blocked_response_is_deduplicated_and_structured() -> None:
 
 def test_empty_dependency_set_allows_deletion() -> None:
     assert reject_blocked_deletion([]) is None
+
+
+@pytest.mark.asyncio
+async def test_custom_stop_reference_query_is_driven_by_indexed_auxiliary_trips() -> None:
+    class Database:
+        statement = None
+
+        async def scalar(self, statement):
+            self.statement = statement
+            return None
+
+    database = Database()
+    assert await auxiliary_stop_time_exists(database, uuid4()) is False
+
+    sql = str(database.statement).lower()
+    assert "elevation_profile_jobs join lateral" in sql
+    assert "gtfs_stops_times.trip_id = elevation_profile_jobs.trip_id" in sql
+    assert "limit" in sql

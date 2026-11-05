@@ -206,6 +206,9 @@ def _serialize_optimization_run_list_item(
         created_at=run.created_at,
         completed_at=run.completed_at,
         electrification_feasible=results.get("electrification_feasible"),
+        yearly_eligible=(results.get("integrity_audit") or {}).get(
+            "yearly_eligible"
+        ),
         solver_status=results.get("solver_status"),
         consumption_basis=(run.input_params or {}).get("consumption_basis"),
         quantile_consumption=(run.input_params or {}).get("quantile_consumption"),

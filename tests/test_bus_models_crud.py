@@ -186,6 +186,57 @@ def test_bus_model_not_found(client: TestClient, record):
     record("bm_del_404", r.status_code == 404, f"status={r.status_code}")
 
 
+def test_delete_bus_model_removes_its_unused_auto_created_bus(
+    client: TestClient, record
+):
+    token = get_auth_token(client)
+    assert token, "login failed"
+    headers = auth_headers(token)
+    user_id = current_user_id(client, token)
+    suffix = uuid.uuid4().hex[:8]
+
+    model_response = client.post(
+        f"{API_BASE}/bus-models/",
+        json={
+            "name": f"Test Model Cascade {suffix}",
+            "manufacturer": "Maker",
+            "specs": VALID_BUS_MODEL_SPECS,
+            "user_id": user_id,
+        },
+        headers=headers,
+    )
+    assert model_response.status_code == 200, model_response.text
+    model_id = model_response.json()["id"]
+
+    bus_response = client.post(
+        f"{API_BASE}/buses/",
+        json={
+            "name": f"Test Model Cascade {suffix}_01",
+            "bus_model_id": model_id,
+            "user_id": user_id,
+            "specs": {},
+        },
+        headers=headers,
+    )
+    assert bus_response.status_code == 200, bus_response.text
+    bus_id = bus_response.json()["id"]
+
+    delete_response = client.delete(
+        f"{API_BASE}/bus-models/{model_id}", headers=headers
+    )
+    record(
+        "bm_delete_with_unused_bus",
+        delete_response.status_code == 200,
+        f"status={delete_response.status_code} body={delete_response.text[:200]}",
+    )
+    assert delete_response.status_code == 200, delete_response.text
+    assert client.get(f"{API_BASE}/buses/{bus_id}", headers=headers).status_code == 404
+    assert (
+        client.get(f"{API_BASE}/bus-models/{model_id}", headers=headers).status_code
+        == 404
+    )
+
+
 def test_bus_model_invalid_agency_fk(client: TestClient, record):
     token = get_auth_token(client)
     if not token:

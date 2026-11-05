@@ -6,9 +6,9 @@ from collections.abc import Iterable
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, true
 
-from app.models import OptimizationRuns
+from app.models import ElevationProfileJobs, GtfsStopsTimes, OptimizationRuns
 
 
 def blocker(resource_type: str, resource_id: Any = None, name: Any = None) -> dict:
@@ -88,3 +88,29 @@ def optimization_blockers_for_stop(runs: Iterable[Any], stop_id) -> list[dict]:
         ):
             blockers.append(blocker("optimization_run", run.id, run.name))
     return blockers
+
+
+async def auxiliary_stop_time_exists(db, stop_id) -> bool:
+    """Check custom-stop references without scanning stop-times by stop_id.
+
+    Custom stops can only be introduced into stop-times by the auxiliary-trip
+    endpoint.  Elevation-profile jobs are therefore the small authoritative
+    set of candidate trips.  The lateral lookup makes PostgreSQL use the
+    existing ``(trip_id, stop_sequence)`` index for each candidate.
+    """
+
+    matching_stop_time = (
+        select(GtfsStopsTimes.id)
+        .where(
+            GtfsStopsTimes.trip_id == ElevationProfileJobs.trip_id,
+            GtfsStopsTimes.stop_id == stop_id,
+        )
+        .limit(1)
+        .lateral("matching_stop_time")
+    )
+    match = await db.scalar(
+        select(ElevationProfileJobs.id)
+        .join(matching_stop_time, true())
+        .limit(1)
+    )
+    return match is not None

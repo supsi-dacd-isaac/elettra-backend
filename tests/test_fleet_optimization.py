@@ -17,6 +17,8 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from test_support.staging_cleanup import cleanup_staging_simulation_graph
+
 __report_module__ = "fleet_optimization"
 
 CAPTURED_BODIES_DIR = pathlib.Path(__file__).resolve().parent / "captured_bodies"
@@ -492,15 +494,11 @@ def fleet_env(client: TestClient):
 
     yield env
 
-    # Teardown
-    for run_id in env["optimization_run_ids"]:
-        client.delete(f"{SIM_BASE}/optimization-runs/{run_id}", headers=hdrs)
-    for sr in shift_records:
-        client.delete(f"{API_BASE}/shifts/{sr['shift_id']}", headers=hdrs)
-    for bus_id in bus_ids.values():
-        client.delete(f"{API_BASE}/buses/{bus_id}", headers=hdrs)
-    for model_id in model_ids.values():
-        client.delete(f"{API_BASE}/bus-models/{model_id}", headers=hdrs)
+    cleanup_staging_simulation_graph(
+        model_ids=list(model_ids.values()),
+        bus_ids=list(bus_ids.values()),
+        shift_ids=[record["shift_id"] for record in shift_records],
+    )
 
 
 # ---------------------------------------------------------------------------

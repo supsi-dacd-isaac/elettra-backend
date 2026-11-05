@@ -14,6 +14,8 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from test_support.staging_cleanup import cleanup_staging_simulation_graph
+
 __report_module__ = "optimization"
 
 API_BASE = "/api/v1/user"
@@ -410,11 +412,11 @@ def opt_env(client: TestClient):
 
     yield env
 
-    # Teardown
-    client.delete(f"{API_BASE}/shifts/{shift_id}", headers=hdrs)
-    client.delete(f"{API_BASE}/shifts/{shift_id_b}", headers=hdrs)
-    client.delete(f"{API_BASE}/buses/{bus_id}", headers=hdrs)
-    client.delete(f"{API_BASE}/bus-models/{bus_model_id}", headers=hdrs)
+    cleanup_staging_simulation_graph(
+        model_ids=[bus_model_id],
+        bus_ids=[bus_id],
+        shift_ids=[shift_id, shift_id_b],
+    )
 
 
 # ---------------------------------------------------------------------------

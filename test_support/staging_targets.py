@@ -102,6 +102,27 @@ def _read_url(url: str, *, timeout: float) -> tuple[int, bytes]:
         raise StagingTargetError(f"Cannot reach required staging service {url}: {exc}") from exc
 
 
+def validate_backend_health_payload(payload: object) -> None:
+    """Accept the stable public health contract and validate details if present."""
+
+    if not isinstance(payload, dict) or payload.get("status") != "healthy":
+        raise StagingTargetError("Staging backend health is not healthy.")
+
+    services = payload.get("services")
+    if services is None:
+        return
+    try:
+        database_status = services["database"]["status"]
+    except (KeyError, TypeError) as exc:
+        raise StagingTargetError(
+            "Staging backend health has an invalid database status."
+        ) from exc
+    if database_status != "healthy":
+        raise StagingTargetError(
+            f"Staging backend reports database status {database_status!r}."
+        )
+
+
 async def _probe_database(database_url: str, expected_name: str) -> None:
     import asyncpg
 
@@ -154,13 +175,9 @@ def preflight_local_staging(
         )
     try:
         backend_health = json.loads(backend_health_body)
-        database_status = backend_health["services"]["database"]["status"]
-    except (KeyError, TypeError, ValueError) as exc:
-        raise StagingTargetError("Staging backend health has an invalid database status.") from exc
-    if database_status != "healthy":
-        raise StagingTargetError(
-            f"Staging backend reports database status {database_status!r}."
-        )
+    except (TypeError, ValueError) as exc:
+        raise StagingTargetError("Staging backend health is not valid JSON.") from exc
+    validate_backend_health_payload(backend_health)
 
     frontend_health_status, _ = _read_url(
         f"{targets.frontend_url}/health", timeout=timeout
