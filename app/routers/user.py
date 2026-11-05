@@ -28,6 +28,7 @@ from app.schemas.requests import (
 from app.models import (
     Users, BusesModels, Buses, Depots, GtfsStops,
     Shifts, ShiftsStructures, GtfsTrips, GtfsRoutes, GtfsCalendar,
+    GtfsStopsTimes, PredictionRuns, YearlyAnalysis,
     BusesManufacturers, BusesModelsRefs,
 )
 from app.core.auth import get_current_user, require_analyst
@@ -47,6 +48,14 @@ from app.core.shift_distance import (
 from app.schemas.lca import (
     ShiftTripDistance,
     ShiftYearlyDistanceResponse,
+)
+from app.services.deletion_integrity import (
+    blocker,
+    load_owned_optimization_references,
+    optimization_blockers_for_bus_model,
+    optimization_blockers_for_shift,
+    optimization_blockers_for_stop,
+    reject_blocked_deletion,
 )
 
 router = APIRouter()
@@ -152,6 +161,28 @@ async def update_bus_model(model_id: UUID, bus_model_update: BusModelUpdateReque
 @router.delete("/bus-models/{model_id}")
 async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_bus_model = await get_owned_bus_model(db, model_id, current_user.id)
+    buses = (
+        await db.execute(
+            select(Buses.id, Buses.name).where(
+                Buses.user_id == current_user.id,
+                Buses.bus_model_id == model_id,
+            )
+        )
+    ).all()
+    predictions = (
+        await db.execute(
+            select(PredictionRuns.id).where(
+                PredictionRuns.user_id == current_user.id,
+                PredictionRuns.bus_model_id == model_id,
+            )
+        )
+    ).all()
+    optimizations = await load_owned_optimization_references(db, current_user.id)
+    reject_blocked_deletion(
+        [blocker("bus", row.id, row.name) for row in buses]
+        + [blocker("prediction_run", row.id) for row in predictions]
+        + optimization_blockers_for_bus_model(optimizations, model_id)
+    )
     await db.delete(db_bus_model)
     await db.commit()
     return {"message": "Bus model deleted successfully"}
@@ -210,6 +241,14 @@ async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = D
 @router.delete("/buses/{bus_id}")
 async def delete_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_bus = await get_owned_bus(db, bus_id, current_user.id)
+    shifts = (
+        await db.execute(
+            select(Shifts.id, Shifts.name).where(Shifts.bus_id == bus_id)
+        )
+    ).all()
+    reject_blocked_deletion(
+        [blocker("shift", row.id, row.name) for row in shifts]
+    )
     await db.delete(db_bus)
     await db.commit()
     return {"message": "Bus deleted successfully"}
@@ -377,8 +416,46 @@ async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: Asy
 @router.delete("/depots/{depot_id}")
 async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_depot = await get_owned_depot(db, depot_id, current_user.id)
-    
+    stop = await db.get(GtfsStops, db_depot.stop_id) if db_depot.stop_id else None
+    blockers = []
+    if stop is not None:
+        shifts = (
+            await db.execute(
+                select(Shifts.id, Shifts.name)
+                .join(Buses, Buses.id == Shifts.bus_id)
+                .join(ShiftsStructures, ShiftsStructures.shift_id == Shifts.id)
+                .join(GtfsStopsTimes, GtfsStopsTimes.trip_id == ShiftsStructures.trip_id)
+                .where(
+                    Buses.user_id == current_user.id,
+                    GtfsStopsTimes.stop_id == stop.id,
+                )
+                .distinct()
+            )
+        ).all()
+        blockers.extend(blocker("shift", row.id, row.name) for row in shifts)
+        optimization_runs = await load_owned_optimization_references(db, current_user.id)
+        blockers.extend(optimization_blockers_for_stop(optimization_runs, stop.id))
+        stop_time_exists = await db.scalar(
+            select(func.count()).select_from(GtfsStopsTimes).where(
+                GtfsStopsTimes.stop_id == stop.id
+            )
+        )
+        if stop_time_exists and not shifts:
+            blockers.append(blocker("custom_stop", stop.id, stop.stop_name))
+        other_depot_exists = await db.scalar(
+            select(func.count()).select_from(Depots).where(
+                Depots.stop_id == stop.id,
+                Depots.id != db_depot.id,
+            )
+        )
+        if other_depot_exists:
+            blockers.append(blocker("depot", stop.id, stop.stop_name))
+    reject_blocked_deletion(blockers)
+
     await db.delete(db_depot)
+    await db.flush()
+    if stop is not None and str(stop.stop_id).startswith("depot_"):
+        await db.delete(stop)
     await db.commit()
     return {"message": "Depot deleted successfully"}
 
@@ -635,6 +712,25 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
 async def delete_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     shift = await _get_shift_if_owned(
         shift_id, current_user.id, current_user.company_id, db
+    )
+    optimization_runs = await load_owned_optimization_references(db, current_user.id)
+    analyses = (
+        await db.execute(
+            select(YearlyAnalysis.id, YearlyAnalysis.name)
+            .join(
+                PredictionRuns,
+                PredictionRuns.yearly_analysis_id == YearlyAnalysis.id,
+            )
+            .where(
+                PredictionRuns.user_id == current_user.id,
+                PredictionRuns.shift_id == shift_id,
+            )
+            .distinct()
+        )
+    ).all()
+    reject_blocked_deletion(
+        optimization_blockers_for_shift(optimization_runs, shift_id)
+        + [blocker("yearly_analysis", row.id, row.name) for row in analyses]
     )
     await db.execute(delete(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id))
     await db.delete(shift)

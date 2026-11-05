@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import exists, select, func, true, update
+from sqlalchemy import exists, select, func, true
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import get_async_session
@@ -58,7 +58,6 @@ from app.core.ownership import (
     get_owned_yearly_analysis,
     prediction_run_owned_filter,
     shift_trips_accessible_filter,
-    stamp_yearly_analysis_owner,
 )
 from app.services.weather import (
     count_weather_records,
@@ -70,6 +69,7 @@ from app.services.weather import (
     get_active_temperature_series,
     apply_hybrid_temperature_series,
 )
+from app.services.deletion_integrity import blocker, reject_blocked_deletion
 from app.services.hybrid_temperature import (
     HYBRID_PROVIDER,
     OPENMETEO_MODEL,
@@ -954,24 +954,21 @@ async def delete_optimization_run(
     if paired and any(candidate.status in {"pending", "running"} for candidate in runs):
         raise HTTPException(status_code=409, detail="Wait for both evaluations to finish before deleting them")
     try:
+        linked_analyses = []
         for candidate in runs:
-            linked_analyses = (
-                await db.execute(
-                    select(YearlyAnalysis).where(
+            linked_analyses.extend(
+                (
+                    await db.execute(
+                    select(YearlyAnalysis.id, YearlyAnalysis.name).where(
                         YearlyAnalysis.optimization_run_id == candidate.id
                     )
-                )
-            ).scalars().all()
-            for analysis in linked_analyses:
-                await get_owned_yearly_analysis(db, analysis.id, current_user.id)
-                analysis.features = stamp_yearly_analysis_owner(
-                    analysis.features, current_user.id
-                )
-            await db.execute(
-                update(YearlyAnalysis)
-                .where(YearlyAnalysis.optimization_run_id == candidate.id)
-                .values(optimization_run_id=None)
+                    )
+                ).all()
             )
+        reject_blocked_deletion(
+            [blocker("yearly_analysis", row.id, row.name) for row in linked_analyses]
+        )
+        for candidate in runs:
             await db.delete(candidate)
         await db.commit()
     except SQLAlchemyError as exc:

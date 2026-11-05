@@ -71,7 +71,6 @@ def _register_temp_user(client: TestClient) -> dict:
             "email": email,
             "full_name": "Optimization Delete Scope Test User",
             "password": password,
-            "role": "viewer",
         },
     )
     assert response.status_code == 200, (
@@ -333,7 +332,7 @@ def test_delete_optimization_run_owned_by_other_user_returns_404(
         _cleanup(run_ids=[run_id], user_ids=[temp_user["id"]])
 
 
-def test_delete_optimization_run_nulls_linked_yearly_analysis(
+def test_delete_optimization_run_blocks_linked_yearly_analysis(
     client: TestClient, auth_token: str, current_user_id: str, record
 ):
     run_id = _insert_optimization_run(current_user_id, "Disposable yearly-analysis run")
@@ -347,11 +346,18 @@ def test_delete_optimization_run_nulls_linked_yearly_analysis(
         after_link = _yearly_analysis_optimization_run_id(yearly_analysis_id)
         run_exists = _optimization_run_exists(run_id)
         record(
-            "delete_nulls_linked_yearly_analysis",
+            "delete_blocks_linked_yearly_analysis",
             before_link == run_id
-            and response.status_code == 200
-            and after_link is None
-            and not run_exists,
+            and response.status_code == 409
+            and response.json().get("detail", {}).get("blockers") == [
+                {
+                    "type": "yearly_analysis",
+                    "id": yearly_analysis_id,
+                    "name": "Disposable linked analysis",
+                }
+            ]
+            and after_link == run_id
+            and run_exists,
             (
                 f"before_link={before_link}, status={response.status_code}, "
                 f"body={response.text[:200]}, after_link={after_link}, run_exists={run_exists}"
