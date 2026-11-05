@@ -1,3 +1,5 @@
+import math
+
 from typing import List, Union, Literal
 from uuid import UUID
 from pydantic import ValidationError
@@ -584,12 +586,18 @@ async def create_optimization_run(
     current_user: Users = Depends(require_analyst),
 ):
     """Create and start an optimization run (background task)."""
+    explicit_bus_model = None
     if request.bus_model_id is not None:
-        await get_owned_bus_model(db, request.bus_model_id, current_user.id)
+        explicit_bus_model = await get_owned_bus_model(
+            db, request.bus_model_id, current_user.id
+        )
 
+    owned_shifts = []
     for shift_id in request.shift_ids:
-        await get_owned_shift(
-            db, shift_id, current_user.id, current_user.company_id
+        owned_shifts.append(
+            await get_owned_shift(
+                db, shift_id, current_user.id, current_user.company_id
+            )
         )
 
     prediction_bus_model_ids: set[UUID] = set()
@@ -655,6 +663,51 @@ async def create_optimization_run(
                     "model release and auxiliary estimator"
                 ),
             )
+
+    if request.mode == "joint" and request.battery_cost_per_kwh is None:
+        # Joint optimization needs a price for every physical pack before a
+        # pending run is persisted. Resolve the same model precedence used by
+        # the worker and retain the explicit legacy CHF/kWh fallback.
+        model_ids: set[UUID] = set()
+        if explicit_bus_model is not None:
+            model_ids.add(explicit_bus_model.id)
+        elif prediction_bus_model_ids:
+            model_ids.update(prediction_bus_model_ids)
+        else:
+            bus_ids = {shift.bus_id for shift in owned_shifts if shift.bus_id is not None}
+            if bus_ids:
+                result = await db.execute(
+                    select(Buses.bus_model_id).where(Buses.id.in_(bus_ids))
+                )
+                model_ids.update(
+                    model_id for model_id in result.scalars().all() if model_id is not None
+                )
+
+        if not model_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="Joint optimization requires a resolvable bus model",
+            )
+
+        for model_id in model_ids:
+            model = (
+                explicit_bus_model
+                if explicit_bus_model is not None and explicit_bus_model.id == model_id
+                else await get_owned_bus_model(db, model_id, current_user.id)
+            )
+            pack_cost = (model.specs or {}).get("battery_pack_cost_chf")
+            try:
+                numeric_pack_cost = float(pack_cost)
+            except (TypeError, ValueError):
+                numeric_pack_cost = math.nan
+            if not math.isfinite(numeric_pack_cost) or numeric_pack_cost < 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Set a finite nonnegative battery_pack_cost_chf in every "
+                        "bus model used by joint optimization"
+                    ),
+                )
 
     # Validate every private UUID before reading elevation/profile data. This
     # keeps foreign and missing references indistinguishable even when an
