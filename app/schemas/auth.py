@@ -10,7 +10,7 @@ from functools import lru_cache
 import logging
 
 import httpx
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from enum import Enum
 from password_strength import PasswordPolicy
 
@@ -170,9 +170,10 @@ class UserRegister(BaseModel):
 
 class UserUpdate(BaseModel):
     """Schema for updating user profile information"""
+    model_config = ConfigDict(extra="forbid")
+
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
-    role: Optional[RoleEnum] = None
 
 
 class UserPasswordUpdate(BaseModel):

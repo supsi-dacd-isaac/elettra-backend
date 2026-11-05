@@ -45,7 +45,7 @@ from app.models import (
     Depots,
     OptimizationRuns, YearlyAnalysis,
 )
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_analyst
 from app.core.ownership import (
     gtfs_stop_accessible_filter,
     get_accessible_gtfs_trip,
@@ -362,7 +362,7 @@ async def create_prediction_runs(
     request: PredictionRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     try:
         selected_stack = resolve_prediction_selection(
@@ -466,7 +466,7 @@ async def create_yearly_prediction_runs(
     request: YearlyPredictionRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     from app.services.prediction import physical_bus_mass, run_yearly_prediction_background
 
@@ -581,7 +581,7 @@ async def create_optimization_run(
     background_tasks: BackgroundTasks,
     request: OptimizationRequest = Body(openapi_examples=_OPTIMIZATION_EXAMPLES),
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     """Create and start an optimization run (background task)."""
     if request.bus_model_id is not None:
@@ -853,7 +853,7 @@ async def find_basis_comparison(
 @router.post("/optimization-runs/{run_id}/basis/{basis}")
 async def create_basis_comparison(
     run_id: UUID, basis: Literal["mean", "aggregate_q95"], background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst),
 ):
     """Explicitly optimize one basis; reuse a compatible owned result if present."""
     from simulation.aggregate_consumption import METHOD_VERSION
@@ -881,7 +881,7 @@ async def create_basis_comparison(
 async def delete_optimization_run(
     run_id: UUID,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     """Delete an optimization run owned by the current user."""
     result = await db.execute(
@@ -959,7 +959,7 @@ async def generate_pvgis_tmy(
                     "In both cases, missing or legacy data is generated and stored.",
     ),
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     import datetime as dt_mod
     from app.core.config import get_cached_settings
@@ -1118,7 +1118,7 @@ async def generate_pvgis_tmy(
 async def create_weather_temperature_clusters(
     request: WeatherClusteringRequest,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     from app.services.weather import _parse_time_str
 

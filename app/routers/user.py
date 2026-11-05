@@ -30,7 +30,7 @@ from app.models import (
     Shifts, ShiftsStructures, GtfsTrips, GtfsRoutes, GtfsCalendar,
     BusesManufacturers, BusesModelsRefs,
 )
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_analyst
 from app.core.ownership import (
     get_owned_bus,
     get_owned_bus_model,
@@ -123,7 +123,7 @@ async def read_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_se
 
 
 @router.post("/bus-models/", response_model=BusesModelsRead)
-async def create_bus_model(bus_model: BusModelCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def create_bus_model(bus_model: BusModelCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     require_current_user_id(bus_model.user_id, current_user.id)
     create_data = bus_model.model_dump(exclude_unset=True)
     create_data["user_id"] = current_user.id
@@ -134,7 +134,7 @@ async def create_bus_model(bus_model: BusModelCreateRequest, db: AsyncSession = 
     return db_bus_model
 
 @router.put("/bus-models/{model_id}", response_model=BusesModelsRead)
-async def update_bus_model(model_id: UUID, bus_model_update: BusModelUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def update_bus_model(model_id: UUID, bus_model_update: BusModelUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_bus_model = await get_owned_bus_model(db, model_id, current_user.id)
 
     update_data = bus_model_update.model_dump(exclude_unset=True, exclude={'id'})
@@ -150,7 +150,7 @@ async def update_bus_model(model_id: UUID, bus_model_update: BusModelUpdateReque
 
 
 @router.delete("/bus-models/{model_id}")
-async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def delete_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_bus_model = await get_owned_bus_model(db, model_id, current_user.id)
     await db.delete(db_bus_model)
     await db.commit()
@@ -178,7 +178,7 @@ async def read_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), 
 
 
 @router.post("/buses/", response_model=BusesRead)
-async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     require_current_user_id(bus.user_id, current_user.id)
     # Validate bus model if provided
     if bus.bus_model_id is not None:
@@ -192,7 +192,7 @@ async def create_bus(bus: BusesCreate, db: AsyncSession = Depends(get_async_sess
     return db_bus
 
 @router.put("/buses/{bus_id}", response_model=BusesRead)
-async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_bus = await get_owned_bus(db, bus_id, current_user.id)
     update_data = bus_update.model_dump(exclude_unset=True, exclude={'id'})
     if 'user_id' in update_data:
@@ -208,7 +208,7 @@ async def update_bus(bus_id: UUID, bus_update: BusesUpdate, db: AsyncSession = D
 
 
 @router.delete("/buses/{bus_id}")
-async def delete_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def delete_bus(bus_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_bus = await get_owned_bus(db, bus_id, current_user.id)
     await db.delete(db_bus)
     await db.commit()
@@ -224,7 +224,7 @@ def _validate_coords(lat: Optional[float], lon: Optional[float]):
 
 # Depot endpoints (authenticated users only)
 @router.post("/depots/", response_model=DepotReadWithLocation)
-async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def create_depot(depot: DepotCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     # Validate coords and bind ownership to the authenticated user.
     _validate_coords(depot.latitude, depot.longitude)
     require_current_user_id(depot.user_id, current_user.id)
@@ -315,7 +315,7 @@ async def read_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_sessio
 
 
 @router.put("/depots/{depot_id}", response_model=DepotReadWithLocation)
-async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_depot = await get_owned_depot(db, depot_id, current_user.id)
 
     update_data = depot_update.model_dump(exclude_unset=True)
@@ -375,7 +375,7 @@ async def update_depot(depot_id: UUID, depot_update: DepotUpdateRequest, db: Asy
 
 
 @router.delete("/depots/{depot_id}")
-async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_depot = await get_owned_depot(db, depot_id, current_user.id)
     
     await db.delete(db_depot)
@@ -385,7 +385,7 @@ async def delete_depot(depot_id: UUID, db: AsyncSession = Depends(get_async_sess
 
 # Shifts endpoints (authenticated users only)
 @router.post("/shifts/", response_model=ShiftReadWithStructure)
-async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     bus_id = payload.bus_id
     if bus_id is None:
         raise HTTPException(status_code=422, detail="A user-owned bus is required")
@@ -594,7 +594,7 @@ async def shift_info(shift_id: UUID, db: AsyncSession = Depends(get_async_sessio
 
 
 @router.put("/shifts/{shift_id}", response_model=ShiftReadWithStructure)
-async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     shift = await _get_shift_if_owned(
         shift_id, current_user.id, current_user.company_id, db
     )
@@ -632,7 +632,7 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
 
 
 @router.delete("/shifts/{shift_id}")
-async def delete_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def delete_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     shift = await _get_shift_if_owned(
         shift_id, current_user.id, current_user.company_id, db
     )

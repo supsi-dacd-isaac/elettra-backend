@@ -28,7 +28,7 @@ from app.models import (
     GtfsStopsTimes, GtfsRoutes, ElevationProfileJobs,
     ElevationProfileCleanupJobs,
 )
-from app.core.auth import get_current_user, require_admin
+from app.core.auth import get_current_user, require_admin, require_analyst
 from app.core.ownership import (
     AUXILIARY_TRIP_OWNER_KEY,
     get_accessible_gtfs_stop,
@@ -643,7 +643,7 @@ async def create_trip(trip: GtfsTripsCreate, db: AsyncSession = Depends(get_asyn
 
 
 @router.put("/gtfs-trips/{trip_pk}", response_model=GtfsTripsRead)
-async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_trip = await get_accessible_gtfs_trip(
         db, trip_pk, current_user.id, current_user.company_id
     )
@@ -696,7 +696,7 @@ async def update_trip(trip_pk: UUID, trip_update: GtfsTripsUpdate, db: AsyncSess
 
 
 @router.delete("/gtfs-trips/{trip_pk}")
-async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+async def delete_trip(trip_pk: UUID, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     db_trip = await get_accessible_gtfs_trip(
         db, trip_pk, current_user.id, current_user.company_id
     )
@@ -1322,7 +1322,7 @@ async def get_aux_trip_elevation_status(
 async def create_aux_trip(
     req: AuxTripCreate,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     prefix = req.status.value if hasattr(req.status, "value") else str(req.status)
     if prefix == "gtfs":

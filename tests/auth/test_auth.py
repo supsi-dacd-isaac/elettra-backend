@@ -337,6 +337,37 @@ def test_update_profile(client, record):
         _delete_user(email)
 
 
+def test_update_profile_cannot_escalate_role(client, record):
+    """Self-service profile changes must never modify authorization fields."""
+    email, password = _register_temp_user(client, password=STRONG_PASSWORD)
+    try:
+        login = client.post(
+            f"{AUTH_BASE}/login", json={"email": email, "password": password}
+        )
+        assert login.status_code == 200, f"temp login failed: {login.text}"
+        headers = auth_headers(login.json()["access_token"])
+
+        response = client.put(
+            f"{AUTH_BASE}/me",
+            json={"role": "admin"},
+            headers=headers,
+        )
+        record(
+            "profile_role_escalation_rejected",
+            response.status_code == 422,
+            f"status={response.status_code} body={response.text}",
+        )
+
+        profile = client.get(f"{AUTH_BASE}/me", headers=headers)
+        record(
+            "profile_role_unchanged",
+            profile.status_code == 200 and profile.json().get("role") == "analyst",
+            f"status={profile.status_code} body={profile.text}",
+        )
+    finally:
+        _delete_user(email)
+
+
 def test_delete_me_ephemeral_user(client, record):
     """Create a temp user, delete via DELETE /auth/me, ensure it's gone."""
     # Register temp user

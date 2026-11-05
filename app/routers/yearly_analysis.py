@@ -56,7 +56,7 @@ from app.models import (
     BusesLcaData, BusesModels,
     YearlyAnalysis, OptimizationRuns, PredictionRuns, Users,
 )
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_analyst
 from app.core.ownership import (
     get_owned_optimization_run,
     get_owned_yearly_analysis,
@@ -575,7 +575,7 @@ router = APIRouter()
 async def create_yearly_analysis(
     payload: YearlyAnalysisCreate,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     """Create a new yearly analysis, optionally linked to an optimization run."""
     if payload.optimization_run_id is not None:
@@ -705,7 +705,7 @@ async def update_yearly_analysis(
     yearly_analysis_id: UUID,
     payload: YearlyAnalysisUpdate,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     """Partially update a yearly analysis."""
     obj = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
@@ -772,7 +772,7 @@ async def update_yearly_analysis(
 async def delete_yearly_analysis(
     yearly_analysis_id: UUID,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     """Delete a yearly analysis."""
     obj = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
@@ -1135,7 +1135,7 @@ async def get_yearly_energy_summary(
 async def compute_and_store_yearly_energy_summary(
     yearly_analysis_id: UUID,
     db: AsyncSession = Depends(get_async_session),
-    current_user: Users = Depends(get_current_user),
+    current_user: Users = Depends(require_analyst),
 ):
     ya = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
 

@@ -105,8 +105,14 @@ async def update_user_profile(
                 detail="Email already registered"
             )
     
-    # Update user fields
+    # Keep the self-service profile boundary explicit. Authorization fields are
+    # managed only through the agency administration API.
     for field, value in update_data.items():
+        if field not in {"email", "full_name"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Profile field '{field}' cannot be changed",
+            )
         setattr(current_user, field, value)
     
     await db.commit()
