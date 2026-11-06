@@ -568,7 +568,7 @@ def _allocate_phases_by_share(
     allocated["total"] = round(allocated_sum, 4)
     return allocated
 
-from app.services.gtfs_datasets import inherit_provenance
+from app.services.gtfs_datasets import inherit_provenance, validate_source_analysis_gtfs
 
 router = APIRouter()
 
@@ -585,6 +585,7 @@ async def create_yearly_analysis(
             db, payload.optimization_run_id, current_user.id
         )
         _require_verified_optimization(opt_run, current_user.id)
+        await validate_source_analysis_gtfs(db, opt_run, getattr(current_user, "company_id", None))
 
     obj = YearlyAnalysis(**payload.model_dump(exclude_unset=True))
     source = (opt_run.input_params or {}).get("gtfs_provenance") if payload.optimization_run_id else None
@@ -722,6 +723,7 @@ async def update_yearly_analysis(
         )
         if update_data["optimization_run_id"] != obj.optimization_run_id:
             _require_verified_optimization(opt_run, current_user.id)
+            await validate_source_analysis_gtfs(db, opt_run, getattr(current_user, "company_id", None))
 
     source_provenance = (obj.features or {}).get("gtfs_provenance")
     if "optimization_run_id" in update_data and update_data["optimization_run_id"] != obj.optimization_run_id:

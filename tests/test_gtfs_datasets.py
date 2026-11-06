@@ -10,6 +10,7 @@ from app.schemas.gtfs_dataset import GtfsDatasetRead, GtfsDatasetReference
 from app.services.gtfs_datasets import (
     list_datasets, datasets_for_shifts, validate_shift_dataset,
     capture_provenance, inherit_provenance,
+    validate_analysis_provenance,
 )
 
 
@@ -94,3 +95,18 @@ def test_dataset_input_rejects_client_validity_and_partial_identity():
         GtfsDatasetReference(gtfs_year=2027)
     with pytest.raises(ValueError):
         GtfsDatasetReference(gtfs_year=2027, gtfs_file_date="2026-11-04", valid_from="2020-01-01")
+
+
+@pytest.mark.parametrize("second", [edition(2027), edition(2026, "2026-10-01")])
+def test_new_analysis_rejects_multiple_years_or_files_across_blocks(second):
+    with pytest.raises(HTTPException) as exc:
+        validate_analysis_provenance({'shifts':{'a':[edition().model_dump(mode='json')], 'b':[second.model_dump(mode='json')]}})
+    assert exc.value.status_code == 422
+
+
+def test_new_analysis_accepts_one_edition_and_auxiliaries_but_not_a_historical_mixed_block():
+    first=edition().model_dump(mode='json')
+    validate_analysis_provenance({'shifts':{'a':[first],'b':[first],'aux':[]}})
+    validate_analysis_provenance({'shifts':{'aux':[]}})
+    with pytest.raises(HTTPException):
+        validate_analysis_provenance({'shifts':{'mixed':[first,edition(2027).model_dump(mode='json')]}})

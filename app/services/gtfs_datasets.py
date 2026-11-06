@@ -86,6 +86,24 @@ async def capture_provenance(db, shift_ids, company_id):
     }}
 
 
+def validate_analysis_provenance(provenance):
+    """New evaluations may contain only one year/file edition; auxiliaries are neutral."""
+    keys = {(d["gtfs_year"], d["gtfs_file_date"])
+            for datasets in (provenance or {}).get("shifts", {}).values()
+            for d in datasets}
+    if len(keys) > 1:
+        raise HTTPException(422, "Select vehicle blocks from one GTFS dataset (year and file date)")
+
+
+async def validate_source_analysis_gtfs(db, run, company_id):
+    """Check new annual analyses without rewriting historical execution metadata."""
+    params = run.input_params or {}
+    source = params.get("gtfs_provenance")
+    if source is None:
+        source = await capture_provenance(db, [UUID(str(sid)) for sid in params.get("shift_ids", [])], company_id)
+    validate_analysis_provenance(source)
+
+
 def inherit_provenance(features, source):
     """Do not trust client-supplied provenance or rewrite it on feature edits."""
     result = dict(features or {})

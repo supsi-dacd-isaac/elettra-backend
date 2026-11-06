@@ -29,10 +29,17 @@ Structure updates are serialized on the block row.
 
 New optimization runs capture `input_params.gtfs_provenance` as
 `{"version":1,"source":"recorded","shifts":{"<uuid>":[<dataset>]}}`.
+Before profile checks or persistence, the server rejects selections containing
+more than one GTFS year/file edition, including different files of the same
+year and historically mixed blocks. Auxiliary trips contribute no edition.
 Annual analyses inherit this snapshot in `features.gtfs_provenance`; client
 feature changes cannot forge or overwrite it. Historical analyses without a
 snapshot remain distinguishable: the UI labels metadata derived from the
 current block as current information, rather than execution provenance.
+Creating an annual analysis or changing its source also requires a single
+edition, using the source snapshot or current blocks when no snapshot exists.
+Reading historical mixed analyses and editing their descriptive fields remain
+possible without rewriting the recorded metadata.
 
 Tests: `tests/test_gtfs_datasets.py`, `tests/test_gtfs_provenance_routes.py`,
 and `tests/test_gtfs_datasets_isolated.py`. The latter exercises authenticated
