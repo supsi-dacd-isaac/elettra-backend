@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.database import GtfsTripsRead
+from app.schemas.gtfs_dataset import GtfsDatasetRead
 
 
 class PredictionSubmitResponse(BaseModel):
@@ -152,6 +153,7 @@ class ShiftStructureItem(BaseModel):
 
 
 class ShiftReadWithStructure(BaseModel):
+    gtfs_datasets: list[GtfsDatasetRead] = Field(default_factory=list)
     id: UUID
     name: str
     bus_id: Optional[UUID]
@@ -197,6 +199,7 @@ class TripInfoBrief(BaseModel):
 
 class ShiftInfoResponse(BaseModel):
     """Detailed shift information including route, day of week, and trips"""
+    gtfs_datasets: list[GtfsDatasetRead] = Field(default_factory=list)
     id: UUID
     name: str
     bus_id: Optional[UUID]
@@ -319,6 +322,7 @@ class ShiftListItemRead(BaseModel):
     payload. The full shift detail endpoint (``GET /shifts/{id}``) still
     returns the complete structure.
     """
+    gtfs_datasets: list[GtfsDatasetRead] = Field(default_factory=list)
     id: UUID
     name: str
     bus_id: Optional[UUID] = None

@@ -22,6 +22,9 @@ from app.schemas.pagination import (
     PaginatedResponse, PaginationParams, build_paginated_response,
 )
 from app.schemas.external_apis import ElevationProfileResponse
+from app.schemas.gtfs_dataset import GtfsDatasetRead
+from app.services.gtfs_datasets import list_datasets
+
 from app.models import (
     Users, GtfsAgencies, GtfsCalendar,
     GtfsStops, GtfsTrips, Variants,
@@ -70,6 +73,14 @@ except ImportError:
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+
+@router.get("/datasets", response_model=list[GtfsDatasetRead])
+async def read_gtfs_datasets(
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    return await list_datasets(db, current_user.company_id)
 
 
 # GTFS Routes endpoints (authenticated users only)

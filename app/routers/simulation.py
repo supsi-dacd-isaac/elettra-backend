@@ -737,7 +737,11 @@ async def create_optimization_run(
 
     # `name` is a first-class column on optimization_runs; keep it out of
     # input_params (which is reserved for solver/technical inputs).
+    from app.services.gtfs_datasets import capture_provenance
     input_params = request.model_dump(mode="json", exclude={"name"})
+    input_params["gtfs_provenance"] = await capture_provenance(
+        db, request.shift_ids, current_user.company_id
+    )
     if request.evaluate_both_bases:
         input_params["consumption_basis"] = "mean"
 

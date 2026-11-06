@@ -59,6 +59,10 @@ from app.services.deletion_integrity import (
     reject_blocked_deletion,
 )
 
+from app.services.gtfs_datasets import (
+    datasets_for_shifts, datasets_for_trips, validate_shift_dataset,
+)
+
 router = APIRouter()
 
 
@@ -511,6 +515,9 @@ async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(g
         db, trip_ids, current_user.id, current_user.company_id
     )
 
+    datasets = await datasets_for_trips(db, trip_ids, current_user.company_id)
+    validate_shift_dataset(datasets, payload.gtfs_dataset)
+
     db_shift = Shifts(name=payload.name, bus_id=bus_id)
     db.add(db_shift)
     await db.flush()
@@ -524,7 +531,7 @@ async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(g
 
     rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id == db_shift.id).order_by(ShiftsStructures.sequence_number))).scalars().all()
     structure = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in rows]
-    return ShiftReadWithStructure(id=db_shift.id, name=db_shift.name, bus_id=db_shift.bus_id, structure=structure)
+    return ShiftReadWithStructure(id=db_shift.id, name=db_shift.name, bus_id=db_shift.bus_id, structure=structure, gtfs_datasets=datasets)
 
 
 @router.get(
@@ -588,12 +595,14 @@ async def list_shifts(
         for sid, c in count_rows.all():
             trip_counts[sid] = int(c)
 
+    dataset_map = await datasets_for_shifts(db, shift_ids, current_user.company_id)
     items = [
         ShiftListItemRead(
             id=s.id,
             name=s.name,
             bus_id=s.bus_id,
             trip_count=trip_counts.get(s.id, 0),
+            gtfs_datasets=dataset_map[s.id],
         )
         for s in rows
     ]
@@ -622,7 +631,8 @@ async def read_shift(shift_id: UUID, db: AsyncSession = Depends(get_async_sessio
     )
     rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id).order_by(ShiftsStructures.sequence_number))).scalars().all()
     structure = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in rows]
-    return ShiftReadWithStructure(id=shift.id, name=shift.name, bus_id=shift.bus_id, structure=structure)
+    dataset_map = await datasets_for_shifts(db, [shift.id], current_user.company_id)
+    return ShiftReadWithStructure(id=shift.id, name=shift.name, bus_id=shift.bus_id, structure=structure, gtfs_datasets=dataset_map[shift.id])
 
 
 @router.get("/shifts/{shift_id}/info", response_model=ShiftInfoResponse)
@@ -696,7 +706,9 @@ async def shift_info(shift_id: UUID, db: AsyncSession = Depends(get_async_sessio
     day_order = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     days_of_week = [d for d in day_order if d in days_set]
 
+    dataset_map = await datasets_for_shifts(db, [shift.id], current_user.company_id)
     return ShiftInfoResponse(
+        gtfs_datasets=dataset_map[shift.id],
         id=shift.id,
         name=shift.name,
         bus_id=shift.bus_id,
@@ -711,8 +723,14 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
     shift = await _get_shift_if_owned(
         shift_id, current_user.id, current_user.company_id, db
     )
+    # Serialize structure edits so concurrent requests cannot bypass the edition lock.
+    await db.execute(select(Shifts.id).where(Shifts.id == shift.id).with_for_update())
 
     update_data = payload.model_dump(exclude_unset=True)
+
+    previous = (await datasets_for_shifts(db, [shift.id], current_user.company_id))[shift.id]
+    if 'trip_ids' not in update_data and payload.gtfs_dataset is not None:
+        validate_shift_dataset(previous, payload.gtfs_dataset)
 
     if 'bus_id' in update_data:
         if update_data['bus_id'] is None:
@@ -730,6 +748,9 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
             db, trip_ids, current_user.id, current_user.company_id
         )
 
+        datasets = await datasets_for_trips(db, trip_ids, current_user.company_id)
+        validate_shift_dataset(datasets, payload.gtfs_dataset, previous=previous)
+
         await db.execute(delete(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id))
 
         for idx, trip_id in enumerate(trip_ids, start=1):
@@ -741,7 +762,8 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
 
     rows = (await db.execute(select(ShiftsStructures).where(ShiftsStructures.shift_id == shift.id).order_by(ShiftsStructures.sequence_number))).scalars().all()
     structure = [ShiftStructureItem(id=r.id, trip_id=r.trip_id, shift_id=r.shift_id, sequence_number=r.sequence_number) for r in rows]
-    return ShiftReadWithStructure(id=shift.id, name=shift.name, bus_id=shift.bus_id, structure=structure)
+    dataset_map = await datasets_for_shifts(db, [shift.id], current_user.company_id)
+    return ShiftReadWithStructure(id=shift.id, name=shift.name, bus_id=shift.bus_id, structure=structure, gtfs_datasets=dataset_map[shift.id])
 
 
 @router.delete("/shifts/{shift_id}")

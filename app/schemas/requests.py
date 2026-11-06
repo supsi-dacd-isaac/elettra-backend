@@ -723,8 +723,11 @@ class AuxTripCreate(BaseModel):
     day_of_week: Optional[str] = None  # monday..sunday; when set, overrides calendar_service_key
 
 
+from app.schemas.gtfs_dataset import GtfsDatasetReference
+
 # Shift creation/update requests
 class ShiftCreateRequest(BaseModel):
+    gtfs_dataset: Optional[GtfsDatasetReference] = None
     name: str = Field(min_length=1, max_length=200)
     bus_id: Optional[UUID] = None
     trip_ids: list[UUID] = Field(min_length=1, max_length=MAX_TRIP_IDS)
@@ -743,6 +746,7 @@ class ShiftCreateRequest(BaseModel):
 
 
 class ShiftUpdateRequest(BaseModel):
+    gtfs_dataset: Optional[GtfsDatasetReference] = None
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     bus_id: Optional[UUID] = None
     trip_ids: Optional[list[UUID]] = Field(

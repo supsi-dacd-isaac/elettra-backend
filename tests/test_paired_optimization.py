@@ -43,6 +43,12 @@ async def test_paired_creation_is_one_transaction_and_one_background_task(monkey
     monkeypatch.setattr(router,'get_owned_shift',owned_shift)
     monkeypatch.setattr(router,'get_owned_prediction_run',owned_prediction)
     monkeypatch.setattr(router,'ensure_shift_profiles_ready',profiles)
+    from app.services import gtfs_datasets
+    snapshot = {'version': 1, 'source': 'recorded', 'shifts': {str(sid): []}}
+    async def provenance(db, shift_ids, company_id):
+        assert shift_ids == [sid]
+        return snapshot
+    monkeypatch.setattr(gtfs_datasets, 'capture_provenance', provenance)
     monkeypatch.setattr(router,'resolve_prediction_selection',lambda **kw:
         NS(stack=NS(value='legacy'),model_release='test',auxiliary_estimator='test'))
     class DB:
@@ -62,6 +68,8 @@ async def test_paired_creation_is_one_transaction_and_one_background_task(monkey
         consumption_basis=basis,**({'evaluate_both_bases':True} if explicit_pair else {}))
     response=await router.create_optimization_run(tasks,request,db,NS(id=owner,company_id=uuid4()))
     mean,q95=db.rows
+    assert mean.input_params['gtfs_provenance'] == snapshot
+    assert q95.input_params['gtfs_provenance'] == snapshot
     assert response.optimization_run_id==mean.id
     assert response.basis_run_ids=={'mean':mean.id,'aggregate_q95':q95.id}
     assert checked==['shift','prediction','profiles']
