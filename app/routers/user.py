@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -64,6 +64,11 @@ from app.services.gtfs_datasets import (
 )
 
 router = APIRouter()
+
+
+def _escape_like_term(value: str) -> str:
+    """Escape a user-provided term for a literal SQL ``LIKE`` search."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 @router.get("/bus-manufacturers/", response_model=List[BusesManufacturersRead])
@@ -543,12 +548,21 @@ async def create_shift(payload: ShiftCreateRequest, db: AsyncSession = Depends(g
         "(name ASC, id ASC) owned by the current user. The full structure "
         "payload is intentionally omitted; use ``GET /shifts/{id}`` to load "
         "it. Each row carries a ``trip_count`` summary computed at the "
-        "database level."
+        "database level. The optional ``search`` term filters shift and "
+        "bus-model names before the total and page window are calculated."
     ),
 )
 async def list_shifts(
     pagination: PaginationParams = Depends(),
     bus_id: Optional[UUID] = None,
+    search: str = Query(
+        "",
+        max_length=100,
+        description=(
+            "Case-insensitive literal search in the shift name or assigned "
+            "bus-model name. Applied before counting and pagination."
+        ),
+    ),
     user_id: Optional[UUID] = None,  # noqa: ARG001 — kept for backwards compatibility, ignored by design
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
@@ -567,6 +581,19 @@ async def list_shifts(
     )
     if bus_id is not None:
         base_query = base_query.where(Shifts.bus_id == bus_id)
+
+    normalized_search = search.strip()
+    if normalized_search:
+        pattern = f"%{_escape_like_term(normalized_search)}%"
+        base_query = base_query.outerjoin(
+            BusesModels,
+            BusesModels.id == Buses.bus_model_id,
+        ).where(
+            or_(
+                Shifts.name.ilike(pattern, escape="\\"),
+                BusesModels.name.ilike(pattern, escape="\\"),
+            )
+        )
 
     total = await db.scalar(
         select(func.count()).select_from(base_query.subquery())

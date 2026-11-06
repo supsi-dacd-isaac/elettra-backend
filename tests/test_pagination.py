@@ -9,6 +9,10 @@ Covers:
 - ``total`` reflects the full filtered query (constant across pages)
 - ``has_next`` / ``has_previous`` correctness across pages
 - existing filters (``optimization_run_id``, ``bus_id``) keep working
+- shift search is applied before counting and pagination, including matches
+  beyond the first page and assigned bus-model names
+- shift search remains user-scoped and composes with the existing ``bus_id``
+  filter without changing requests that omit ``search``
 - list payload no longer carries the heavy ``features`` / ``results`` /
   ``input_params`` blobs
 
@@ -66,6 +70,19 @@ def _dsn_for_asyncpg() -> str:
     return dsn
 
 
+async def _async_first_agency_id() -> str | None:
+    import asyncpg
+
+    conn = await asyncpg.connect(_dsn_for_asyncpg())
+    try:
+        agency_id = await conn.fetchval(
+            "SELECT id FROM gtfs_agencies ORDER BY id LIMIT 1"
+        )
+        return str(agency_id) if agency_id else None
+    finally:
+        await conn.close()
+
+
 def _login(client: TestClient, email: str, password: str) -> str | None:
     r = client.post(f"{AUTH_BASE}/login", json={"email": email, "password": password})
     if r.status_code != 200:
@@ -82,13 +99,14 @@ def _login_default(client: TestClient) -> str | None:
 
 
 def _register_temp_user(client: TestClient, *, prefix: str) -> dict:
-    if not TEST_AGENCY_ID:
-        pytest.skip("TEST_AGENCY_ID environment variable is required")
+    agency_id = TEST_AGENCY_ID or asyncio.run(_async_first_agency_id())
+    if not agency_id:
+        pytest.skip("A test agency is required to register an isolated user")
     email = f"{prefix}_{uuid.uuid4().hex[:10]}@example.com"
     response = client.post(
         f"{AUTH_BASE}/register",
         json={
-            "company_id": TEST_AGENCY_ID,
+            "company_id": agency_id,
             "email": email,
             "full_name": "Pagination Test User",
             "password": TMP_PASSWORD,
@@ -145,9 +163,16 @@ PAGINATED_LIST_URLS = [
 @pytest.fixture(scope="module")
 def auth_token(client):
     token = _login_default(client)
+    temp_user_id = None
     if not token:
-        pytest.skip("Could not authenticate with TEST_LOGIN_EMAIL/PASSWORD")
-    return token
+        user = _register_temp_user(client, prefix="tmp_pagination_auth")
+        temp_user_id = user["id"]
+        token = _login(client, user["email"], user["password"])
+    if not token:
+        pytest.fail("Could not authenticate an isolated pagination test user")
+    yield token
+    if temp_user_id:
+        asyncio.run(_async_cleanup([], [], [temp_user_id]))
 
 
 # --- Default limit ---------------------------------------------------------
@@ -507,6 +532,103 @@ async def _async_insert_yearly_analysis(user_id: str, name: str) -> tuple[str, s
         await conn.close()
 
 
+async def _async_insert_shift_search_fixture(
+    user_id: str,
+    *,
+    group_term: str,
+    needle_term: str,
+    model_term: str,
+) -> dict[str, Any]:
+    """Create an isolated, deterministic set of shifts for search tests."""
+    import asyncpg
+
+    conn = await asyncpg.connect(_dsn_for_asyncpg())
+    try:
+        base_model_id = await conn.fetchval(
+            """
+            INSERT INTO buses_models (name, specs, user_id)
+            VALUES ($1, $2::jsonb, $3::uuid)
+            RETURNING id
+            """,
+            f"Base model {uuid.uuid4().hex}",
+            json.dumps({}),
+            user_id,
+        )
+        rare_model_id = await conn.fetchval(
+            """
+            INSERT INTO buses_models (name, specs, user_id)
+            VALUES ($1, $2::jsonb, $3::uuid)
+            RETURNING id
+            """,
+            model_term,
+            json.dumps({}),
+            user_id,
+        )
+        base_bus_id = await conn.fetchval(
+            """
+            INSERT INTO buses (name, specs, bus_model_id, user_id)
+            VALUES ($1, $2::jsonb, $3::uuid, $4::uuid)
+            RETURNING id
+            """,
+            f"Base search bus {uuid.uuid4().hex}",
+            json.dumps({}),
+            base_model_id,
+            user_id,
+        )
+        rare_bus_id = await conn.fetchval(
+            """
+            INSERT INTO buses (name, specs, bus_model_id, user_id)
+            VALUES ($1, $2::jsonb, $3::uuid, $4::uuid)
+            RETURNING id
+            """,
+            f"Rare search bus {uuid.uuid4().hex}",
+            json.dumps({}),
+            rare_model_id,
+            user_id,
+        )
+
+        group_ids = []
+        for index in range(25):
+            shift_id = await conn.fetchval(
+                """
+                INSERT INTO shifts (name, bus_id)
+                VALUES ($1, $2::uuid)
+                RETURNING id
+                """,
+                f"000 {group_term} {index:02d}",
+                base_bus_id,
+            )
+            group_ids.append(str(shift_id))
+
+        model_shift_id = await conn.fetchval(
+            """
+            INSERT INTO shifts (name, bus_id)
+            VALUES ($1, $2::uuid)
+            RETURNING id
+            """,
+            f"yyy ordinary model-backed shift {uuid.uuid4().hex}",
+            rare_bus_id,
+        )
+        needle_shift_id = await conn.fetchval(
+            """
+            INSERT INTO shifts (name, bus_id)
+            VALUES ($1, $2::uuid)
+            RETURNING id
+            """,
+            f"zzz {needle_term}",
+            base_bus_id,
+        )
+        return {
+            "base_bus_id": str(base_bus_id),
+            "rare_bus_id": str(rare_bus_id),
+            "group_ids": group_ids,
+            "model_shift_id": str(model_shift_id),
+            "needle_shift_id": str(needle_shift_id),
+        }
+    finally:
+        await conn.close()
+
+
 async def _async_cleanup(
     yearly_analysis_ids: Iterable[str],
     optimization_run_ids: Iterable[str],
@@ -536,6 +658,209 @@ async def _async_cleanup(
             )
     finally:
         await conn.close()
+
+
+def test_shift_search_filters_before_count_and_pagination(
+    client: TestClient, record
+):
+    """Search sees later pages, preserves pagination, filters models and stays scoped."""
+    user_ids: list[str] = []
+    suffix = uuid.uuid4().hex
+    group_term = f"groupable-{suffix}"
+    needle_term = f"deep-needle-{suffix}"
+    model_term = f"rare-model-{suffix}"
+
+    try:
+        owner = _register_temp_user(client, prefix="tmp_shift_search_owner")
+        user_ids.append(owner["id"])
+        foreign = _register_temp_user(client, prefix="tmp_shift_search_foreign")
+        user_ids.append(foreign["id"])
+
+        owner_token = _login(client, owner["email"], owner["password"])
+        assert owner_token, "Could not login as shift-search owner"
+
+        overlong = client.get(
+            f"{USER_BASE}/shifts/",
+            params={"search": "x" * 101},
+            headers=_headers(owner_token),
+        )
+        record(
+            "shift_search_rejects_over_100_characters",
+            overlong.status_code == 422,
+            f"status={overlong.status_code} body={overlong.text[:300]}",
+        )
+
+        owner_rows = asyncio.run(
+            _async_insert_shift_search_fixture(
+                owner["id"],
+                group_term=group_term,
+                needle_term=needle_term,
+                model_term=model_term,
+            )
+        )
+        asyncio.run(
+            _async_insert_shift_search_fixture(
+                foreign["id"],
+                group_term=group_term,
+                needle_term=needle_term,
+                model_term=model_term,
+            )
+        )
+
+        # Backwards compatibility: omitting search still returns the same
+        # lightweight envelope and the user's complete, ordered collection.
+        unfiltered = client.get(
+            f"{USER_BASE}/shifts/",
+            params={"skip": 0, "limit": 20},
+            headers=_headers(owner_token),
+        )
+        assert unfiltered.status_code == 200, unfiltered.text
+        unfiltered_body = unfiltered.json()
+        record(
+            "shift_search_omitted_preserves_total",
+            unfiltered_body.get("total") == 27,
+            f"body={unfiltered_body}",
+        )
+        record(
+            "shift_search_omitted_preserves_envelope",
+            set(ENVELOPE_KEYS).issubset(unfiltered_body)
+            and unfiltered_body.get("count") == 20,
+            f"body={unfiltered_body}",
+        )
+        record(
+            "shift_search_target_is_beyond_first_page",
+            owner_rows["needle_shift_id"]
+            not in {item["id"] for item in unfiltered_body.get("items", [])},
+            f"first_page_ids={[item['id'] for item in unfiltered_body.get('items', [])]}",
+        )
+
+        # Whitespace is treated like an omitted search, avoiding a breaking
+        # change for clients that always include an empty query parameter.
+        whitespace = client.get(
+            f"{USER_BASE}/shifts/",
+            params={"search": "   ", "skip": 0, "limit": 20},
+            headers=_headers(owner_token),
+        )
+        assert whitespace.status_code == 200, whitespace.text
+        record(
+            "shift_search_whitespace_is_backwards_compatible",
+            whitespace.json().get("total") == 27,
+            f"body={whitespace.json()}",
+        )
+
+        # Case-insensitive name search finds a shift which is absent from the
+        # unfiltered first page. The foreign user's identically named shift
+        # must not affect either the result or the filtered total.
+        needle = client.get(
+            f"{USER_BASE}/shifts/",
+            params={"search": needle_term.upper(), "skip": 0, "limit": 20},
+            headers=_headers(owner_token),
+        )
+        assert needle.status_code == 200, needle.text
+        needle_body = needle.json()
+        record(
+            "shift_search_finds_match_beyond_first_page",
+            needle_body.get("total") == 1
+            and [item["id"] for item in needle_body.get("items", [])]
+            == [owner_rows["needle_shift_id"]],
+            f"body={needle_body}",
+        )
+        record(
+            "shift_search_filtered_envelope_is_consistent",
+            needle_body.get("count") == 1
+            and needle_body.get("has_next") is False
+            and needle_body.get("has_previous") is False,
+            f"body={needle_body}",
+        )
+
+        # A filtered result set larger than the default page size retains
+        # correct totals and navigation metadata across both pages.
+        group_page_1 = client.get(
+            f"{USER_BASE}/shifts/",
+            params={"search": group_term, "skip": 0, "limit": 20},
+            headers=_headers(owner_token),
+        )
+        group_page_2 = client.get(
+            f"{USER_BASE}/shifts/",
+            params={"search": group_term, "skip": 20, "limit": 20},
+            headers=_headers(owner_token),
+        )
+        assert group_page_1.status_code == 200, group_page_1.text
+        assert group_page_2.status_code == 200, group_page_2.text
+        group_body_1 = group_page_1.json()
+        group_body_2 = group_page_2.json()
+        record(
+            "shift_search_filtered_first_page_metadata",
+            group_body_1.get("total") == 25
+            and group_body_1.get("count") == 20
+            and group_body_1.get("has_next") is True
+            and group_body_1.get("has_previous") is False,
+            f"body={group_body_1}",
+        )
+        record(
+            "shift_search_filtered_second_page_metadata",
+            group_body_2.get("total") == 25
+            and group_body_2.get("count") == 5
+            and group_body_2.get("has_next") is False
+            and group_body_2.get("has_previous") is True,
+            f"body={group_body_2}",
+        )
+        record(
+            "shift_search_filtered_pages_do_not_overlap",
+            {item["id"] for item in group_body_1.get("items", [])}.isdisjoint(
+                {item["id"] for item in group_body_2.get("items", [])}
+            ),
+            f"page1={group_body_1.get('items')} page2={group_body_2.get('items')}",
+        )
+
+        # Searching the assigned model composes with the pre-existing bus_id
+        # filter instead of replacing it.
+        model_match = client.get(
+            f"{USER_BASE}/shifts/",
+            params={
+                "search": model_term.upper(),
+                "bus_id": owner_rows["rare_bus_id"],
+            },
+            headers=_headers(owner_token),
+        )
+        wrong_bus = client.get(
+            f"{USER_BASE}/shifts/",
+            params={
+                "search": model_term,
+                "bus_id": owner_rows["base_bus_id"],
+            },
+            headers=_headers(owner_token),
+        )
+        assert model_match.status_code == 200, model_match.text
+        assert wrong_bus.status_code == 200, wrong_bus.text
+        record(
+            "shift_search_matches_assigned_bus_model",
+            model_match.json().get("total") == 1
+            and [item["id"] for item in model_match.json().get("items", [])]
+            == [owner_rows["model_shift_id"]],
+            f"body={model_match.json()}",
+        )
+        record(
+            "shift_search_composes_with_bus_id",
+            wrong_bus.json().get("total") == 0
+            and wrong_bus.json().get("items") == [],
+            f"body={wrong_bus.json()}",
+        )
+
+        # LIKE metacharacters are literal user input, not implicit wildcards.
+        literal_wildcard = client.get(
+            f"{USER_BASE}/shifts/",
+            params={"search": "%"},
+            headers=_headers(owner_token),
+        )
+        assert literal_wildcard.status_code == 200, literal_wildcard.text
+        record(
+            "shift_search_treats_wildcards_literally",
+            literal_wildcard.json().get("total") == 0,
+            f"body={literal_wildcard.json()}",
+        )
+    finally:
+        asyncio.run(_async_cleanup([], [], user_ids))
 
 
 def test_yearly_analyses_total_reflects_filter_for_temp_user(
@@ -649,3 +974,26 @@ def test_openapi_documents_paginated_responses(client: TestClient, record):
             key in props,
             f"props={list(props.keys())}",
         )
+
+    shift_parameters = (
+        r.json()
+        .get("paths", {})
+        .get(f"{USER_BASE}/shifts/", {})
+        .get("get", {})
+        .get("parameters", [])
+    )
+    search_parameter = next(
+        (
+            parameter
+            for parameter in shift_parameters
+            if parameter.get("name") == "search"
+        ),
+        None,
+    )
+    record(
+        "openapi_documents_shift_search",
+        search_parameter is not None
+        and search_parameter.get("in") == "query"
+        and search_parameter.get("schema", {}).get("maxLength") == 100,
+        f"search_parameter={search_parameter}",
+    )
