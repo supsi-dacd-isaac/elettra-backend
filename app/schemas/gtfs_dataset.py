@@ -12,4 +12,3 @@ class GtfsDatasetReference(BaseModel):
 class GtfsDatasetRead(GtfsDatasetReference):
     valid_from: date | None = None
     valid_to: date | None = None
-
