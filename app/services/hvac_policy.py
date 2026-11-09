@@ -147,8 +147,8 @@ def nearest_climatic_rows(temperature):
 
 class SolarResponse:
     """Small one-watt response table shared by all duties with identical inputs."""
-    def __init__(self, length, passengers, temperature, heating_type, clouding_one=True):
-        self.template = load_template_release().template_for_bus_length(length)
+    def __init__(self, length, passengers, temperature, heating_type, clouding_one=True, *, release=None):
+        self.template = (release or load_template_release()).template_for_bus_length(length)
         self.inputs = self.template.ssm_inputs(number_of_passengers=passengers,
                                                auxiliary_heating_type=heating_type)
         self.temperature = float(temperature)
@@ -278,10 +278,13 @@ def calculate_operational_hvac(*, policy_id, schedule, length, passengers, tempe
     else:
         ghi = np.full((1, last), feasibility_ghi(temperature))
     prefixes = {}
+    if 'vecto_template_release' not in cache:
+        cache['vecto_template_release'] = load_template_release()
     for count in dict.fromkeys([float(passengers), 0.]):
         response_key = ('response', length, count, temperature, heating_type)
         if response_key not in cache:
-            cache[response_key] = SolarResponse(length, count, temperature, heating_type)
+            cache[response_key] = SolarResponse(length, count, temperature, heating_type,
+                                               release=cache['vecto_template_release'])
         key = ('power', response_key, policy_id, weather_key, tuple(dates or []), tuple(saved_origins or []), zone, last)
         if key not in cache:
             if policy_id == FEASIBILITY_POLICY:

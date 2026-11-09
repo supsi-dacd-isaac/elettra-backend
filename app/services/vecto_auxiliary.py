@@ -15,6 +15,7 @@ from elettra_core.vecto_templates import (
     VECTO_HVAC_ONLY,
     VECTO_TEMPLATE_RELEASE,
     VectoTemplateEstimate,
+    load_template_release,
     vecto_template_auxiliary_power,
 )
 
@@ -106,14 +107,21 @@ def build_vecto_auxiliary_binding(
     max_passengers = float(bus_model_specs["max_passengers"])
     if not np.isfinite(max_passengers) or max_passengers < 0:
         raise ValueError("max_passengers must be finite and non-negative")
-    estimate = vecto_template_auxiliary_power(
-        bus_length_m=float(bus_model_specs["bus_length_m"]),
-        number_of_passengers=max_passengers * occupancy / 100.0,
-        temperature_celsius=float(external_temp_celsius),
-        auxiliary_contract=contract,
-        auxiliary_heating_type=auxiliary_heating_type,
-        solar_irradiance_wm2=VECTO_DEFAULT_GHI_WM2,
-    )
+    hvac_cache = hvac_cache if hvac_cache is not None else {}
+    if 'vecto_template_release' not in hvac_cache:
+        hvac_cache['vecto_template_release'] = load_template_release()
+    estimate_key = ('vecto_reference_estimate', float(bus_model_specs['bus_length_m']),
+                    max_passengers * occupancy / 100., float(external_temp_celsius),
+                    contract, auxiliary_heating_type)
+    if estimate_key not in hvac_cache:
+        hvac_cache[estimate_key] = vecto_template_auxiliary_power(
+            bus_length_m=estimate_key[1], number_of_passengers=estimate_key[2],
+            temperature_celsius=estimate_key[3], auxiliary_contract=contract,
+            auxiliary_heating_type=auxiliary_heating_type,
+            solar_irradiance_wm2=VECTO_DEFAULT_GHI_WM2,
+            release=hvac_cache['vecto_template_release'],
+        )
+    estimate = hvac_cache[estimate_key]
     if estimate.release_id != VECTO_TEMPLATE_RELEASE:
         raise ValueError("VECTO template release identity is not the runtime release")
 

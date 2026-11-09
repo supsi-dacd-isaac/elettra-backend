@@ -213,6 +213,25 @@ def test_operational_solar_does_not_add_qrf_calls_or_change_occurrence_count():
     assert [len(r['predictions']) for r in operational] == [len(r['predictions']) for r in baseline]
 
 
+def test_equivalent_bus_bindings_share_validated_templates_and_reference_estimates():
+    from types import SimpleNamespace
+    from app.services import vecto_auxiliary as adapter
+    from app.services.runtime_release import PredictionStack
+    cache = {}
+    arguments = dict(stack_release=SimpleNamespace(stack=PredictionStack.VECTO_G2),
+        bus_model_specs={'bus_length_m':18,'max_passengers':146}, occupancy_percent=70,
+        auxiliary_heating_type='default',hvac_cache=cache,
+        hvac_inputs={'policy_id':FEASIBILITY_POLICY,'schedule':schedule(5)})
+    with patch.object(adapter,'load_template_release',wraps=adapter.load_template_release) as load, \
+         patch.object(adapter,'vecto_template_auxiliary_power',wraps=adapter.vecto_template_auxiliary_power) as estimate:
+        first=adapter.build_vecto_auxiliary_binding(**arguments,external_temp_celsius=10)
+        repeat=adapter.build_vecto_auxiliary_binding(**arguments,external_temp_celsius=10)
+        assert first.estimate.result==repeat.estimate.result
+        assert estimate.call_count==1
+        adapter.build_vecto_auxiliary_binding(**arguments,external_temp_celsius=17)
+        assert estimate.call_count==2 and load.call_count==1
+
+
 @pytest.mark.asyncio
 async def test_terminal_hvac_preserves_existing_mean_q95_solver_workflow():
     from simulation.optimization_model import solve_optimization
