@@ -263,6 +263,7 @@ async def validate_elevation_jobs_schema(session) -> None:
         )
 
     required_column_checks = {
+        "hvac_weather_snapshots": {"sha256", "payload", "created_at"},
         "weather_measurements": {"temp_air_original"},
         "weather_temperature_clusters": {"temperature_series_id"},
         "yearly_analysis": {

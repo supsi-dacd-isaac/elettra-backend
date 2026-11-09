@@ -56,6 +56,8 @@ class BusData:
     bus_cost_chf: Optional[float] = None  # vehicle without traction batteries
     bus_model_id: Optional[str] = None
     bus_model_name: Optional[str] = None
+    # Deterministic HVAC in [minute, minute+1); independent of mass and trip errors.
+    terminal_hvac_kwh: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -195,6 +197,10 @@ def _prepare_arrays(
 
     for b_idx, bus in enumerate(buses):
         sorted_trips = sorted(bus.trips, key=lambda t: (t.arrival_minute, t.departure_minute))
+        for minute, energy in bus.terminal_hvac_kwh.items():
+            if not first_t <= minute <= last_t or not math.isfinite(energy) or energy < 0:
+                raise ValueError('Invalid terminal HVAC timeline')
+            discharge_base[minute - first_t, b_idx] += energy
         for trip in sorted_trips:
             t_idx = trip.arrival_minute - first_t
             if 0 <= t_idx < num_steps:
@@ -246,7 +252,7 @@ def _estimate_excess_pack_upper_bounds(
     bounds: list[int] = []
 
     for bus in buses:
-        total_base_discharge_kwh = float(sum(max(0.0, trip.base_energy_kwh) for trip in bus.trips))
+        total_base_discharge_kwh = float(sum(max(0.0, trip.base_energy_kwh) for trip in bus.trips)) + sum(bus.terminal_hvac_kwh.values())
         positive_sensitivity = float(sum(max(0.0, trip.sensitivity) for trip in bus.trips))
         max_physical_extra_cap_kwh = max(0, bus.max_packs - bus.reference_packs) * bus.pack_size_kwh
         worst_case_discharge_kwh = total_base_discharge_kwh + positive_sensitivity * max_physical_extra_cap_kwh
@@ -1049,6 +1055,7 @@ def solve_optimization(
                 "first_minute": int(first_t), "step_minutes": 1,
                 "soc_kwh": soc_val[:, b_idx].tolist(),
                 "charge_kwh": (power_val[:, b_idx] * dt).tolist(),
+                "terminal_hvac_kwh": [bus.terminal_hvac_kwh.get(first_t + t, 0.) for t in range(num_steps)],
             },
         })
 

@@ -100,7 +100,7 @@ async def test_exact_verification_collects_all_chosen_masses_before_inference(mo
     from app.models import OptimizationRuns
     owner, model = uuid4(), uuid4()
     initial = [NS(id=uuid4(), shift_id=uuid4(), user_id=owner, bus_model_id=model,
-        status='completed', model_name='same', prediction_stack='legacy', auxiliary_estimator_release=None,
+        status='completed', model_name='same', prediction_stack='legacy', auxiliary_estimator_release=None, yearly_analysis_id=None,
         external_temp_celsius=-5, occupancy_percent=50, auxiliary_heating_type='default',
         contextual_parameters={'num_battery_packs':16, 'battery_capacity_kwh':800}) for _ in range(2)]
     rows = {row.id: row for row in initial}
@@ -112,7 +112,8 @@ async def test_exact_verification_collects_all_chosen_masses_before_inference(mo
             commit=AsyncMock(), rollback=AsyncMock())
     async def prepare(db, run, ids, **kwargs):
         return [NS(shift_id=str(rows[id].shift_id)) for id in ids], [], NS()
-    async def ensure(db, user, shifts, bus_model_id, params, *, pending_jobs):
+    async def ensure(db, user, shifts, bus_model_id, params, *, pending_jobs, hvac_cache):
+        assert params['auxiliary_policy_id'] == 'legacy-fixed-100-v1'
         row = NS(id=uuid4(), shift_id=shifts[0], contextual_parameters={})
         rows[row.id] = row
         pending_jobs.append((row.id, params['num_battery_packs']))

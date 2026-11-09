@@ -573,6 +573,17 @@ from app.services.gtfs_datasets import inherit_provenance, validate_source_analy
 router = APIRouter()
 
 
+@router.get('/{analysis_id}/auxiliary-assumptions')
+async def yearly_auxiliary_assumptions(analysis_id: UUID, include_inputs: bool = False,
+    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    from app.services.hvac_export import export_runs
+    await get_owned_yearly_analysis(db, analysis_id, current_user.id)
+    rows = await db.execute(select(PredictionRuns).where(
+        PredictionRuns.yearly_analysis_id == analysis_id, PredictionRuns.user_id == current_user.id,
+    ).order_by(PredictionRuns.external_temp_celsius, PredictionRuns.shift_id))
+    return await export_runs(db, list(rows.scalars().all()), include_inputs=include_inputs)
+
+
 @router.post("/", response_model=YearlyAnalysisRead)
 async def create_yearly_analysis(
     payload: YearlyAnalysisCreate,
@@ -879,6 +890,10 @@ async def _build_energy_summary(
         "qrf_residual_kwh": "total_qrf_residual_kwh",
         "fixed_auxiliary_kwh": "total_fixed_auxiliary_kwh",
         "hvac_electrical_kwh": "total_hvac_electrical_kwh",
+        "hvac_in_trip_electrical_kwh": "total_hvac_in_trip_electrical_kwh",
+        "hvac_terminal_electrical_kwh": "total_hvac_terminal_electrical_kwh",
+        "hvac_terminal_diesel_fuel_kwh": "total_hvac_terminal_diesel_fuel_kwh",
+        "hvac_terminal_uncovered_thermal_kwh": "total_hvac_terminal_uncovered_thermal_kwh",
         "uncovered_thermal_kwh": "total_uncovered_thermal_kwh",
     }
 

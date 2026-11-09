@@ -35,6 +35,7 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
                 await on_progress({"iteration": iteration, "phase": "sizing", "iterations": history})
             result = await asyncio.to_thread(solve, buses, stations, remaining_config())
             entry = {"iteration": iteration, "solver_status": result.solver_status,
+                     "sizing_solver_seconds": result.solve_time_seconds,
                      "reference_packs": {b.shift_id: b.reference_packs for b in buses},
                      "linear_objective_value": result.objective_value}
             history.append(entry)
@@ -70,13 +71,14 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
                 await on_progress({"iteration": iteration, "phase": "fixed_design_verification", "iterations": history})
             checked = await asyncio.to_thread(solve, exact_buses, stations, check_config)
             entry["verification_solver_status"] = checked.solver_status
+            entry['verification_solver_seconds'] = checked.solve_time_seconds
             entry["charging_schedule_policy"] = checked.charging_schedule_policy
             entry["exact_prediction_run_ids"] = references
             entry["linear_energy_kwh"] = {
                 b.shift_id: sum(t.base_energy_kwh + t.sensitivity *
                                (packs[b.shift_id] - b.reference_packs) * b.pack_size_kwh
-                               for t in b.trips) for b in buses}
-            entry["exact_energy_kwh"] = {b.shift_id: sum(t.base_energy_kwh for t in b.trips)
+                               for t in b.trips) + sum(b.terminal_hvac_kwh.values()) for b in buses}
+            entry["exact_energy_kwh"] = {b.shift_id: sum(t.base_energy_kwh for t in b.trips) + sum(b.terminal_hvac_kwh.values())
                                           for b in exact_buses}
             if (time.monotonic() - started) >= time_budget_seconds:
                 status = "time_budget_exhausted"
@@ -110,6 +112,7 @@ async def optimize_and_verify(buses, stations, config, load_exact, *,
     result.solve_time_seconds = elapsed
     return result, {
         "status": status, "iterations": history, "elapsed_seconds": elapsed,
+        "solver_seconds": sum(h.get('sizing_solver_seconds', 0) + h.get('verification_solver_seconds', 0) for h in history),
         "time_budget_seconds": time_budget_seconds,
         "final_reference_prediction_run_ids": final_references,
         "optimality_scope": "linearized_sizing_only; fixed_design_full_forecast_feasibility",

@@ -181,9 +181,17 @@ async def apply_hybrid_temperature_series(
                 record = by_time.get(row.time_utc)
                 if record is None:
                     raise ValueError(f"existing weather series is missing {row.time_utc}")
-                if record.temp_air_original is None:
-                    record.temp_air_original = record.temp_air
+                # v2 pairs temperature, solar and provenance from the same
+                # selected PVGIS months, including the raw rollback baseline.
+                record.temp_air_original = row.pvgis_temp_air
                 record.temp_air = row.temp_air
+                clean = sanitize_weather_values(**{
+                    key: row.pvgis_fields.get(key)
+                    for key in ('pressure', 'relative_humidity', 'wind_direction', 'wind_speed')})
+                for key in ('ghi', 'dni', 'dhi', 'ir_h'):
+                    setattr(record, key, row.pvgis_fields.get(key))
+                for key, value in clean.items():
+                    setattr(record, key, value)
         else:
             new_records: list[WeatherMeasurements] = []
             for row in hybrid.rows:

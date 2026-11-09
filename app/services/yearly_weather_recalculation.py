@@ -65,6 +65,12 @@ def require_uniform_prediction_provenance(
     """Reject yearly aggregates that mix incompatible model semantics."""
 
     provenances = {prediction_run_provenance(run) for run in runs}
+    from app.services.hvac_policy import run_policy
+    if len({run_policy(run) for run in runs}) > 1:
+        raise ValueError('yearly aggregation cannot mix auxiliary operational policies')
+    weather_inputs = {(getattr(run, 'contextual_parameters', None) or {}).get('hvac_inputs', {}).get('weather_snapshot_sha256') for run in runs}
+    if len(weather_inputs) > 1:
+        raise ValueError('yearly aggregation cannot mix HVAC weather snapshots')
     if len(provenances) > 1:
         raise ValueError(
             "yearly aggregation cannot mix prediction stack, model release "
@@ -361,6 +367,8 @@ async def _prediction_kpis(db: AsyncSession, run: PredictionRuns) -> dict[str, A
         "qrfResidualKwh": "total_qrf_residual_kwh",
         "fixedAuxiliaryKwh": "total_fixed_auxiliary_kwh",
         "hvacElectricalKwh": "total_hvac_electrical_kwh",
+        "hvacInTripElectricalKwh": "total_hvac_in_trip_electrical_kwh",
+        "hvacTerminalElectricalKwh": "total_hvac_terminal_electrical_kwh",
         "uncoveredThermalKwh": "total_uncovered_thermal_kwh",
     }
     components = {
@@ -379,6 +387,8 @@ async def _prediction_kpis(db: AsyncSession, run: PredictionRuns) -> dict[str, A
         for key, value in (row.quantiles or {}).items():
             if value is not None:
                 quantile_totals[key] = quantile_totals.get(key, 0.0) + float(value)
+    terminal = float(summary.get('total_hvac_terminal_electrical_kwh', 0))
+    quantile_totals = {key: value + terminal for key, value in quantile_totals.items()}
 
     def q_label(raw: str) -> str:
         return f"q{round(float(raw) * 100):02d}"
@@ -529,6 +539,10 @@ def _build_energy_summary_blob(
         "qrf_residual_kwh": "total_qrf_residual_kwh",
         "fixed_auxiliary_kwh": "total_fixed_auxiliary_kwh",
         "hvac_electrical_kwh": "total_hvac_electrical_kwh",
+        "hvac_in_trip_electrical_kwh": "total_hvac_in_trip_electrical_kwh",
+        "hvac_terminal_electrical_kwh": "total_hvac_terminal_electrical_kwh",
+        "hvac_terminal_diesel_fuel_kwh": "total_hvac_terminal_diesel_fuel_kwh",
+        "hvac_terminal_uncovered_thermal_kwh": "total_hvac_terminal_uncovered_thermal_kwh",
         "uncovered_thermal_kwh": "total_uncovered_thermal_kwh",
     }
     for scenario, run in zip(scenarios, runs, strict=True):
@@ -792,10 +806,29 @@ async def recalculate_yearly_analysis(
 
         new_runs: list[PredictionRuns] = []
         run_arguments: list[tuple[UUID, list[float], int | None]] = []
+        from app.services.hvac_policy import ANNUAL_POLICY, run_policy, fingerprint, service_origins_utc
+        from app.services.hvac_context import capture_weather, load_schedules
+        operational = [r for r in old_runs if run_policy(r) == ANNUAL_POLICY]
+        if operational:
+            from types import SimpleNamespace
+            sha, _payload, calendar = await capture_weather(db, SimpleNamespace(
+                features={**(analysis.features or {}), 'scenarios': new_scenarios},
+                weather_temperature_series_id=binding.series.id,
+                weather_cluster_start_time=binding.start_time, weather_cluster_end_time=binding.end_time))
+            schedules = await load_schedules(db, operational[0].user_id, list({r.shift_id for r in operational}))
         for old_run, scenario in zip(old_runs, new_scenarios, strict=True):
             context = old_run.contextual_parameters or {}
             quantiles = [float(value) for value in context.get("quantiles", [0.05, 0.5, 0.95])]
             packs = context.get("num_battery_packs")
+            new_context = {'auxiliary_policy_id': run_policy(old_run)}
+            if run_policy(old_run) == ANNUAL_POLICY:
+                inputs = dict(policy_id=ANNUAL_POLICY, schedule=schedules[str(old_run.shift_id)],
+                              weather_snapshot_sha256=sha, cluster_dates=calendar[scenario['temperature']])
+                inputs['service_origins_utc'] = service_origins_utc(inputs['cluster_dates'], inputs['schedule'][0]['timezone'])
+                inputs['temperature_clustering'] = dict(method='KMeans', random_state=42, n_init=10,
+                    k=len(calendar), temperature_c=scenario['temperature'], occurrences=len(inputs['cluster_dates']),
+                    start_time=binding.start_time, end_time=binding.end_time, window_timezone='UTC')
+                new_context.update(hvac_inputs=inputs, hvac_input_fingerprint=fingerprint(inputs))
             new_run = PredictionRuns(
                 user_id=old_run.user_id,
                 shift_id=old_run.shift_id,
@@ -807,6 +840,7 @@ async def recalculate_yearly_analysis(
                 external_temp_celsius=scenario["temperature"],
                 auxiliary_heating_type=old_run.auxiliary_heating_type,
                 occupancy_percent=old_run.occupancy_percent,
+                contextual_parameters=new_context,
                 status="pending",
             )
             db.add(new_run)

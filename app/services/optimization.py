@@ -216,9 +216,25 @@ async def _prediction_component_summary(
             TripPredictions.prediction_run_id.in_(prediction_run_ids)
         )
     )
-    return _aggregate_prediction_components(
+    result = _aggregate_prediction_components(
         list(result.scalars().all()), solver_consumption=solver_consumption
     )
+    if result is not None:
+        from app.services.diesel_heating import diesel_liters_from_kwh
+        rows = await db.execute(select(PredictionRuns).where(PredictionRuns.id.in_(prediction_run_ids)))
+        runs = list(rows.scalars().all())
+        if any((r.contextual_parameters or {}).get('hvac_inputs') for r in runs):
+            totals = result['totals']
+            totals['hvac_in_trip_electrical_kwh'] = totals['hvac_electrical_kwh']
+            for target, source in [('hvac_terminal_electrical_kwh', 'total_hvac_terminal_electrical_kwh'),
+                                   ('hvac_terminal_diesel_fuel_kwh', 'total_hvac_terminal_diesel_fuel_kwh'),
+                                   ('hvac_terminal_uncovered_thermal_kwh', 'total_hvac_terminal_uncovered_thermal_kwh')]:
+                totals[target] = sum(float((r.summary or {}).get(source, 0)) for r in runs)
+            totals['hvac_electrical_kwh'] += totals['hvac_terminal_electrical_kwh']
+            totals['diesel_fuel_kwh'] += totals['hvac_terminal_diesel_fuel_kwh']
+            totals['diesel_liters'] += diesel_liters_from_kwh(totals['hvac_terminal_diesel_fuel_kwh'])
+            totals['uncovered_thermal_kwh'] += totals['hvac_terminal_uncovered_thermal_kwh']
+    return result
 
 
 def _time_str_to_minutes(time_str: str | None) -> int | None:
@@ -252,7 +268,7 @@ async def ensure_predictions(
     shift_ids: list[UUID],
     bus_model_id: UUID | None,
     prediction_params: dict,
-    *, pending_jobs=None, statistics_cache=None, trip_cache=None,
+    *, pending_jobs=None, statistics_cache=None, trip_cache=None, hvac_cache=None,
 ) -> list[UUID]:
     """
     For each shift, find a completed prediction run matching the given parameters.
@@ -271,6 +287,25 @@ async def ensure_predictions(
         for value in prediction_params.get("quantiles", [0.05, 0.5, 0.95])
     ]
     requested_packs = prediction_params.get("num_battery_packs")
+    from app.services.hvac_policy import LEGACY_POLICY, resolve_policy, run_policy, fingerprint
+    from app.services.hvac_context import load_schedules
+    hvac_cache = hvac_cache if hvac_cache is not None else {}
+    policy = resolve_policy(prediction_params.get('auxiliary_policy_id'),
+        annual=prediction_params.get('yearly_analysis_id') is not None,
+        legacy_stack=selected_stack.stack is PredictionStack.LEGACY)
+    inherited_inputs = prediction_params.get('hvac_inputs')
+    expected_inputs = {}
+    if policy != LEGACY_POLICY:
+        if inherited_inputs:
+            if len(shift_ids) != 1 or inherited_inputs['policy_id'] != policy:
+                raise ValueError('HVAC inherited inputs must describe one matching duty')
+            expected_inputs[str(shift_ids[0])] = inherited_inputs
+        else:
+            key = ('current-schedules', str(user_id), tuple(map(str, shift_ids)))
+            if key not in hvac_cache:
+                hvac_cache[key] = await load_schedules(db, user_id, shift_ids)
+            expected_inputs = {sid: dict(schedule=schedule, policy_id=policy)
+                               for sid, schedule in hvac_cache[key].items()}
 
     run_ids: list[UUID] = []
     for shift_id in shift_ids:
@@ -332,6 +367,10 @@ async def ensure_predictions(
         existing = None
         for candidate in result.scalars().all():
             context = candidate.contextual_parameters or {}
+            if run_policy(candidate) != policy:
+                continue
+            if policy != LEGACY_POLICY and context.get('hvac_input_fingerprint') != fingerprint(expected_inputs[str(shift_id)]):
+                continue
             context_quantiles = context.get("quantiles")
             if not isinstance(context_quantiles, list) or [
                 float(value) for value in context_quantiles
@@ -380,6 +419,11 @@ async def ensure_predictions(
             external_temp_celsius=prediction_params["external_temp_celsius"],
             auxiliary_heating_type=prediction_params["auxiliary_heating_type"],
             occupancy_percent=prediction_params["occupancy_percent"],
+            yearly_analysis_id=prediction_params.get('yearly_analysis_id'),
+            contextual_parameters={'auxiliary_policy_id': policy, **({
+                'hvac_inputs': expected_inputs[str(shift_id)],
+                'hvac_input_fingerprint': fingerprint(expected_inputs[str(shift_id)]),
+            } if policy != LEGACY_POLICY else {})},
             status="pending",
         )
         db.add(run)
@@ -390,7 +434,7 @@ async def ensure_predictions(
     if pending_jobs is None and jobs:
         await db.commit()
         await predict_consumption_jobs(db, jobs, requested_quantiles,
-                                       statistics_cache=statistics_cache, trip_cache=trip_cache)
+                                       statistics_cache=statistics_cache, trip_cache=trip_cache, hvac_cache=hvac_cache)
 
     return run_ids
 
@@ -421,7 +465,8 @@ def _prediction_provenance(
 ) -> dict[str, object]:
     """Validate model/stack/aux identity before optimization consumes energy."""
 
-    identities: set[tuple[str, str, str]] = set()
+    from app.services.hvac_policy import run_policy
+    identities = set()
     for run in prediction_runs:
         selected = resolve_prediction_selection(
             prediction_stack=getattr(run, "prediction_stack", None) or None,
@@ -441,6 +486,7 @@ def _prediction_provenance(
                 selected.stack.value,
                 selected.model_release,
                 selected.auxiliary_estimator,
+                run_policy(run),
             )
         )
     if len(identities) != 1:
@@ -448,11 +494,12 @@ def _prediction_provenance(
             "Optimization prediction runs must share one model, stack and "
             "auxiliary estimator"
         )
-    stack, model, estimator = next(iter(identities))
+    stack, model, estimator, policy = next(iter(identities))
     return {
         "prediction_stack": stack,
         "model_release": model,
         "auxiliary_estimator_release": estimator,
+        "auxiliary_policy_id": policy,
         "prediction_run_ids": [str(run.id) for run in prediction_runs],
     }
 
@@ -550,6 +597,19 @@ async def prepare_optimization_input(
                 raise ValueError(f"Prediction {pred.id} has missing or non-finite energy/mass sensitivity")
         trip_predictions[str(pred.id)] = predictions
     prediction_runs = list(selected.values())
+    from app.services.hvac_context import load_schedules
+    from app.services.hvac_policy import LEGACY_POLICY, run_policy, fingerprint
+    operational_runs = [r for r in prediction_runs if run_policy(r) != LEGACY_POLICY]
+    if operational_runs:
+        schedules = await load_schedules(db, optimization_run.user_id, [r.shift_id for r in operational_runs])
+        for pred in operational_runs:
+            context = pred.contextual_parameters or {}
+            inputs = context.get('hvac_inputs') or {}
+            if (fingerprint(inputs) != context.get('hvac_input_fingerprint')
+                    or inputs.get('schedule') != schedules[str(pred.shift_id)]):
+                raise ValueError('HVAC timetable changed; recalculate predictions')
+            if 'hvac_terminal_intervals' not in context:
+                raise ValueError('Operational HVAC prediction is missing its terminal timeline')
 
     # Build every physical trip sequence before validating the daily cycle.  A
     # fleet evaluation is one solver problem, so one invalid vehicle block
@@ -714,6 +774,11 @@ async def prepare_optimization_input(
 
         trip_data_list = prepared["trips"]
         last_stop_id = prepared["last_stop_id"]
+        terminal_timeline = {}
+        for interval in ctx.get('hvac_terminal_intervals', []):
+            for item in interval['minute_energy']:
+                minute = item['minute']
+                terminal_timeline[minute] = terminal_timeline.get(minute, 0.) + item['electrical_kwh']
         buses.append(BusData(
             shift_id=str(pred_run.shift_id),
             shift_name=shift_name,
@@ -730,6 +795,7 @@ async def prepare_optimization_input(
             bus_cost_chf=bus_cost,
             bus_model_id=specs.get("_bus_model_id"),
             bus_model_name=specs.get("_bus_model_name"),
+            terminal_hvac_kwh=terminal_timeline,
         ))
 
     # Build OptimizationConfig
@@ -791,6 +857,7 @@ async def run_optimization(
         budget = params.get("optimization_time_budget_seconds", 900)
 
         forecast_trip_cache = {}
+        hvac_cache = {}
 
         async def profiles_for(references):
             requests = []
@@ -812,7 +879,7 @@ async def run_optimization(
                     raise TimeoutError("Aggregate forecast time budget exhausted")
                 async with asyncio.timeout(remaining):
                     profile_cache.update(await load_aggregate_profiles(db, requests,
-                        statistics_cache=statistics_cache, trip_cache=forecast_trip_cache))
+                        statistics_cache=statistics_cache, trip_cache=forecast_trip_cache, hvac_cache=hvac_cache))
             return {sid: profile_cache[pid] for sid, pid in references.items()}
 
         async def apply_basis(prepared, references):
@@ -837,6 +904,7 @@ async def run_optimization(
                 bus_model_id=run.bus_model_id,
                 prediction_params=pred_params,
                 statistics_cache=statistics_cache, trip_cache=forecast_trip_cache,
+                hvac_cache=hvac_cache,
             )
             run.prediction_run_ids = [str(rid) for rid in prediction_run_ids]
             await db.commit()
@@ -899,9 +967,12 @@ async def run_optimization(
                          "external_temp_celsius": ref.external_temp_celsius,
                          "occupancy_percent": ref.occupancy_percent,
                          "auxiliary_heating_type": ref.auxiliary_heating_type,
+                         "auxiliary_policy_id": (ref.contextual_parameters or {}).get('auxiliary_policy_id', 'legacy-fixed-100-v1'),
+                         "hvac_inputs": (ref.contextual_parameters or {}).get('hvac_inputs'),
+                         "yearly_analysis_id": getattr(ref, 'yearly_analysis_id', None),
                          "quantiles": (ref.contextual_parameters or {}).get("quantiles", [0.05, 0.5, 0.95]),
                          "num_battery_packs": count},
-                        pending_jobs=jobs,
+                        pending_jobs=jobs, hvac_cache=hvac_cache,
                     )
                     pred = await db.get(PredictionRuns, created[0])
                     provenance_runs.append(pred)
@@ -912,7 +983,7 @@ async def run_optimization(
                 for contract, jobs in pending.items():
                     if jobs:
                         await predict_consumption_jobs(db, jobs, list(contract[-1]),
-                            statistics_cache=statistics_cache, trip_cache=forecast_trip_cache)
+                            statistics_cache=statistics_cache, trip_cache=forecast_trip_cache, hvac_cache=hvac_cache)
             run.prediction_run_ids = [str(pid) for pid in prediction_run_ids]
             await db.commit()
             exact_buses, _, _ = await prepare_optimization_input(

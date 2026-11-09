@@ -11,6 +11,16 @@ import numpy as np
 from simulation.aggregate_consumption import METHOD_VERSION, shift_seed
 
 
+def terminal_discharge(bus, timeline):
+    values = np.zeros(len(timeline['charge_kwh']))
+    for minute, energy in getattr(bus, 'terminal_hvac_kwh', {}).items():
+        index = minute - timeline['first_minute']
+        if not 0 <= index < len(values) or not math.isfinite(energy) or energy < 0:
+            raise ValueError('Invalid terminal HVAC timeline')
+        values[index] += energy
+    return values
+
+
 def simulate_plan_coverage(bus, support, timeline, *, usable_kwh, samples, seed):
     """Replay independent trajectories on the fixed plan without another solver.
 
@@ -21,11 +31,15 @@ def simulate_plan_coverage(bus, support, timeline, *, usable_kwh, samples, seed)
     started = time.monotonic()
     values = np.asarray(support)
     charge = np.asarray(timeline["charge_kwh"])
+    terminal = terminal_discharge(bus, timeline)
     if values.ndim != 2 or values.shape[0] != len(bus.trips) or not np.isfinite(values).all():
         raise ValueError("Complete finite predictive support is required")
     arrivals = {}
     for index, trip in enumerate(bus.trips):
         arrivals.setdefault(trip.arrival_minute-timeline["first_minute"], []).append(index)
+    for minute in np.flatnonzero(terminal):
+        arrivals.setdefault(int(minute), [])
+    charge_prefix = np.r_[0., np.cumsum(charge)]
     rng = np.random.default_rng(seed)
     maximums = np.empty(samples)
     batch = max(1, min(25_000, 2_000_000//len(bus.trips)))
@@ -36,8 +50,8 @@ def simulate_plan_coverage(bus, support, timeline, *, usable_kwh, samples, seed)
         drawdown, peak = np.zeros(count), np.zeros(count)
         previous = 0
         for minute, trips in sorted(arrivals.items()):
-            drawdown = np.maximum(0, drawdown-float(charge[previous:minute].sum()))
-            drawdown = np.maximum(0, drawdown+energy[:, trips].sum(axis=1)-charge[minute])
+            drawdown = np.maximum(0, drawdown-(charge_prefix[minute]-charge_prefix[previous]))
+            drawdown = np.maximum(0, drawdown+energy[:, trips].sum(axis=1)+terminal[minute]-charge[minute])
             peak = np.maximum(peak, drawdown)
             previous = minute+1
         maximums[first:first+count] = peak
@@ -66,7 +80,8 @@ def replay_profile(bus, energies, timeline, *, nominal_kwh, min_soc, max_soc, st
     """
     charge = timeline["charge_kwh"]
     first = timeline["first_minute"]
-    discharge = [0.0] * len(charge)
+    discharge = terminal_discharge(bus, timeline).tolist()
+    terminal_total = sum(discharge)
     if len(energies) != len(bus.trips):
         raise ValueError("Energy profile must cover every trip occurrence")
     for trip, energy in zip(bus.trips, energies):
@@ -90,7 +105,8 @@ def replay_profile(bus, energies, timeline, *, nominal_kwh, min_soc, max_soc, st
             maximum, critical = drawdown, first+index+1
         soc.append(upper-drawdown)
     return {
-        "total_consumption_kwh": sum(energies), "required_usable_kwh": maximum,
+        "total_consumption_kwh": sum(energies) + terminal_total,
+        "terminal_hvac_kwh": terminal_total, "required_usable_kwh": maximum,
         "available_usable_kwh": usable, "margin_kwh": usable-maximum,
         "within_soc_limits": maximum <= usable+1e-5,
         "min_soc_kwh": min(soc), "critical_minute": critical,

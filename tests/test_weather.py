@@ -7,6 +7,7 @@ Tests for the meteorological API section:
 """
 import os
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 
 from app.services.weather import sanitize_weather_values
@@ -26,6 +27,24 @@ TEST_LON = 8.951
 # Coordinates for which no TMY data exists
 MISSING_LAT = 0.001
 MISSING_LON = 0.001
+
+
+@pytest.fixture(autouse=True)
+def bounded_live_weather_requests(monkeypatch):
+    """Exercise the real provider with a bounded test timeout.
+
+    Provider failures are already an explicit accepted outcome below; a full
+    regression suite must not wait for production-length retries. Deterministic
+    successful imports are covered by test_hybrid_temperature and its DB suite.
+    """
+    from app.routers import simulation
+    fetch = simulation.fetch_hybrid_temperature_series
+
+    async def bounded(**kwargs):
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5., connect=3.)) as client:
+            return await fetch(**kwargs, client=client)
+
+    monkeypatch.setattr(simulation, 'fetch_hybrid_temperature_series', bounded)
 
 
 def get_auth_token(client: TestClient) -> str | None:

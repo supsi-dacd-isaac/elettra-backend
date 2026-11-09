@@ -172,6 +172,7 @@ def _validated_quantiles(values: list[float]) -> list[float]:
 
 
 class PredictionRequest(BaseModel):
+    auxiliary_policy_id: Optional[Literal['legacy-fixed-100-v1', 'feasibility-ghi-temperature-cap10-v1', 'annual-pvgis-local-cap10-v1']] = None
     shift_ids: list[UUID] = Field(min_length=1, max_length=MAX_SHIFT_IDS)
     bus_model_id: UUID
     yearly_analysis_id: Optional[UUID] = Field(
@@ -243,6 +244,7 @@ class YearlyPredictionAssignment(BaseModel):
 
 class YearlyPredictionRequest(BaseModel):
     """All weather scenarios and the fixed battery assignment in one request."""
+    auxiliary_policy_id: Optional[Literal['legacy-fixed-100-v1', 'annual-pvgis-local-cap10-v1']] = None
     yearly_analysis_id: UUID
     bus_model_id: UUID
     model_name: str = Field(default_factory=default_prediction_model_name)
@@ -336,6 +338,7 @@ class ChargingStationConfig(BaseModel):
 
 
 class PredictionParams(BaseModel):
+    auxiliary_policy_id: Optional[Literal['legacy-fixed-100-v1', 'feasibility-ghi-temperature-cap10-v1']] = None
     """Parameters for auto-prediction when prediction_run_ids is not given."""
     model_name: str = Field(default_factory=default_prediction_model_name)
     prediction_stack: PredictionStackType = Field(

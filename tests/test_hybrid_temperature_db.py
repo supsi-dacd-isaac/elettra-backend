@@ -101,7 +101,7 @@ async def test_apply_resume_cluster_provenance_and_rollback():
                 source_time_utc=start + timedelta(hours=index),
                 temp_air=12.0 + math.sin(index / 100.0),
                 pvgis_temp_air=8.0,
-                pvgis_fields={},
+                pvgis_fields={'ghi': 100. + index % 24, 'dni': 80., 'dhi': 20.},
             )
             for index in range(8760)
         )
@@ -132,6 +132,8 @@ async def test_apply_resume_cluster_provenance_and_rollback():
             assert len(records) == 8760
             assert all(record.temp_air_original is not None for record in records)
             assert records[0].temp_air == pytest.approx(12.0)
+            assert records[0].ghi == pytest.approx(100.)
+            assert records[200].temp_air_original == pytest.approx(8.)
             cluster_rows = (
                 await db.execute(
                     text(
@@ -159,7 +161,8 @@ async def test_apply_resume_cluster_provenance_and_rollback():
         revised = replace(
             hybrid,
             rows=tuple(
-                replace(row, temp_air=row.temp_air + 1.0) for row in hybrid.rows
+                replace(row, temp_air=row.temp_air + 1.0,
+                        pvgis_fields={**row.pvgis_fields, 'ghi': row.pvgis_fields['ghi'] + 50}) for row in hybrid.rows
             ),
         )
         async with AsyncSessionLocal() as db:
@@ -170,6 +173,7 @@ async def test_apply_resume_cluster_provenance_and_rollback():
         async with AsyncSessionLocal() as db:
             records = await fetch_weather_records(db, LATITUDE, LONGITUDE)
             assert records[0].temp_air == pytest.approx(13.0)
+            assert records[0].ghi == pytest.approx(150.)
             assert records[0].temp_air_original == pytest.approx(8.0)
             active = await get_active_temperature_series(db, LATITUDE, LONGITUDE)
             assert active is not None and active.id == superseding.id

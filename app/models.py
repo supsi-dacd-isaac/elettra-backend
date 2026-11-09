@@ -81,6 +81,13 @@ class GtfsStops(Base):
     gtfs_stops_times: Mapped[list['GtfsStopsTimes']] = relationship('GtfsStopsTimes', back_populates='stop')
 
 
+class HvacWeatherSnapshots(Base):
+    __tablename__ = 'hvac_weather_snapshots'
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(True), nullable=False, server_default=text('now()'))
+
+
 class WeatherTemperatureSeries(Base):
     __tablename__ = 'weather_temperature_series'
     __table_args__ = (
