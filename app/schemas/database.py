@@ -147,6 +147,11 @@ class PredictionRunsRead(BaseModel):
     status: str = Field(examples=["completed"])
     created_at: datetime
     completed_at: Optional[datetime]
+    @field_serializer('contextual_parameters', 'summary')
+    def compact_hvac_inputs(self, value):
+        from app.services.hvac_export import compact
+        return compact(value)
+
     model_config = ConfigDict(from_attributes=True)
 
 class TripPredictionsRead(BaseModel):

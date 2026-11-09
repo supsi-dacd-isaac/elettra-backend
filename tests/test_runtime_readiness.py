@@ -44,6 +44,7 @@ class _ReadySession:
         if parameters and parameters.get("table_name"):
             columns = {
                 "weather_measurements": {"temp_air_original"},
+                "hvac_weather_snapshots": {"sha256", "payload", "created_at"},
                 "weather_temperature_clusters": {"temperature_series_id"},
                 "yearly_analysis": {
                     "weather_temperature_series_id",

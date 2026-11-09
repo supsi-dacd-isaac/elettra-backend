@@ -930,6 +930,7 @@ def test_optimization_provenance_rejects_auxiliary_mismatch(monkeypatch):
         "prediction_stack": "vecto-g2",
         "model_release": "g2-release",
         "auxiliary_estimator_release": VECTO_HVAC_AUXILIARY_ESTIMATOR,
+        "auxiliary_policy_id": "legacy-fixed-100-v1",
         "prediction_run_ids": ["run-1"],
     }
     valid.auxiliary_estimator_release = VECTO_COMPLETE_AUXILIARY_ESTIMATOR

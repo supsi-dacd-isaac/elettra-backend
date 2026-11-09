@@ -44,6 +44,9 @@ from app.services.runtime_release import (
 )
 from app.services.model_release import get_validated_model_artifact
 from app.services.vecto_auxiliary import build_vecto_auxiliary_binding
+from app.services.hvac_policy import LEGACY_POLICY, run_policy
+from app.services.hvac_context import prepare_hvac_contexts
+from app.services.diesel_heating import diesel_liters_from_kwh
 from elettra_core import AuxiliaryEnergyComponents, PASSENGER_MASS_KG, RAW_TRIP_FEATURE_COLUMNS
 from simulation.consumption_prediction import ConsumptionPredictor
 
@@ -577,6 +580,7 @@ class PreparedPrediction:
     override_mass: np.ndarray
     qrf_reference_mass: Optional[np.ndarray]
     qrf_reference_occupancy_percent: Optional[float]
+    terminal_intervals: tuple = ()
 
     def prediction_arguments(self) -> dict:
         return {
@@ -589,7 +593,7 @@ class PreparedPrediction:
         }
 
 
-async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None) -> PreparedPrediction:
+async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None, *, hvac_cache=None) -> PreparedPrediction:
     # Load bus model specs
     bus_model = await db.get(BusesModels, run.bus_model_id)
     if bus_model is None:
@@ -621,18 +625,34 @@ async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None) -> Pr
         raise ValueError(f"No valid trip statistics for shift {run.shift_id}")
 
     auxiliary_context: dict[str, object] | None = None
+    terminal_intervals = ()
     if stack_release.stack is PredictionStack.LEGACY:
         aux_fn = build_aux_energy_fn(specs, run.auxiliary_heating_type)
     else:
-        vecto_binding = build_vecto_auxiliary_binding(
+        hvac_cache = hvac_cache if hvac_cache is not None else {}
+        capture_needed = not (run.contextual_parameters or {}).get('hvac_inputs')
+        await prepare_hvac_contexts(db, [run], hvac_cache)
+        if capture_needed and run_policy(run) != LEGACY_POLICY:
+            await db.commit()  # resolved inputs survive inference failures
+        hvac_inputs = (run.contextual_parameters or {}).get('hvac_inputs')
+        if hvac_inputs:
+            expected = [(r['sequence_number'], r['trip_id']) for r in hvac_inputs['schedule']]
+            actual = [(r['sequence_number'], str(r['trip_id'])) for r in trip_stats]
+            if expected != actual:
+                raise ValueError('Saved HVAC timetable does not match the prediction occurrences')
+        vecto_binding = await asyncio.to_thread(build_vecto_auxiliary_binding,
             stack_release=stack_release,
             bus_model_specs=specs,
             occupancy_percent=float(run.occupancy_percent),
             external_temp_celsius=float(run.external_temp_celsius),
             auxiliary_heating_type=run.auxiliary_heating_type,
+            hvac_inputs=hvac_inputs,
+            weather_snapshot=hvac_cache.get(('weather', (hvac_inputs or {}).get('weather_snapshot_sha256'))),
+            hvac_cache=hvac_cache,
         )
         aux_fn = vecto_binding.energy_fn
         auxiliary_context = vecto_binding.metadata()
+        terminal_intervals = vecto_binding.terminal_intervals
 
     # Get predictor (cached) and bind it to the same stack contract.
     # Build override_mass array (same mass for all trips)
@@ -660,6 +680,7 @@ async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None) -> Pr
         run, specs, stack_release, predictor, mass, passenger_mass_kg, trip_stats,
         aux_fn, auxiliary_context, override_mass, qrf_reference_mass,
         qrf_reference_occupancy_percent,
+        terminal_intervals,
     )
 
 
@@ -691,6 +712,33 @@ async def _store_prediction(db, prepared, results, quantiles, *, commit=True) ->
 
     # Enrich summary with auxiliary_heating_type + diesel breakdown
     summary = results.get("summary") or {}
+    if run_policy(run) != LEGACY_POLICY:
+        terminal = prepared.terminal_intervals
+        terminal_electric = sum(r['hvac_electrical_kwh'] for r in terminal)
+        terminal_fuel = sum(r['diesel_fuel_kwh'] for r in terminal)
+        terminal_uncovered = sum(r['uncovered_thermal_kwh'] for r in terminal)
+        summary['total_hvac_in_trip_electrical_kwh'] = float(summary.get('total_hvac_electrical_kwh', 0))
+        summary['total_hvac_terminal_electrical_kwh'] = terminal_electric
+        summary['total_hvac_terminal_diesel_fuel_kwh'] = terminal_fuel
+        summary['total_hvac_terminal_diesel_liters'] = diesel_liters_from_kwh(terminal_fuel)
+        summary['total_hvac_terminal_uncovered_thermal_kwh'] = terminal_uncovered
+        summary['total_hvac_in_trip_diesel_fuel_kwh'] = float(summary.get('total_diesel_fuel_kwh', 0))
+        summary['total_hvac_in_trip_uncovered_thermal_kwh'] = float(summary.get('total_uncovered_thermal_kwh', 0))
+        for key in ['total_consumption_kwh', 'total_auxiliary_kwh', 'total_hvac_electrical_kwh']:
+            summary[key] = float(summary.get(key, 0)) + terminal_electric
+        for key, extra in [('total_diesel_fuel_kwh', terminal_fuel),
+                           ('total_diesel_liters', diesel_liters_from_kwh(terminal_fuel)),
+                           ('total_uncovered_thermal_kwh', terminal_uncovered)]:
+            summary[key] = float(summary.get(key, 0)) + extra
+        distance = summary.get('total_distance_km') or 0
+        if distance > 0:
+            summary['consumption_per_km_kwh'] = summary['total_consumption_kwh'] / distance
+            summary['auxiliary_per_km_kwh'] = summary['total_auxiliary_kwh'] / distance
+        for key, value in (summary.get('quantiles') or {}).items():
+            summary['quantiles'][key] = float(value) + terminal_electric
+            if distance > 0:
+                summary.setdefault('consumption_per_km_kwh_quantiles', {})[key] = summary['quantiles'][key] / distance
+        summary['auxiliary_assumptions'] = (auxiliary_context or {}).get('operational')
     summary["auxiliary_heating_type"] = run.auxiliary_heating_type
     summary["prediction_stack"] = stack_release.stack.value
     summary["auxiliary_estimator_release"] = stack_release.auxiliary_estimator
@@ -749,6 +797,10 @@ async def _store_prediction(db, prepared, results, quantiles, *, commit=True) ->
 
     # Store contextual parameters
     run.contextual_parameters = _sanitize_json({
+        **{key: value for key, value in (run.contextual_parameters or {}).items()
+           if key in ('auxiliary_policy_id', 'auxiliary_policy', 'hvac_inputs', 'hvac_input_fingerprint')},
+        **({'hvac_terminal_intervals': list(prepared.terminal_intervals)}
+           if run_policy(run) != LEGACY_POLICY else {}),
         "battery_capacity_kwh": battery_capacity_kwh,
         "bus_length_m": bus_length_m,
         "num_battery_packs": packs,
@@ -946,7 +998,7 @@ def _predict_combined(prepared: list[PreparedPrediction], quantiles: list[float]
 
 async def predict_consumption_jobs(
     db: AsyncSession, jobs: list[tuple[UUID, Optional[int]]], quantiles: list[float],
-    *, statistics_cache=None, trip_cache=None,
+    *, statistics_cache=None, trip_cache=None, hvac_cache=None,
 ) -> None:
     """Share statistics and infer all known forecasts together, across duties and masses.
 
@@ -971,6 +1023,9 @@ async def predict_consumption_jobs(
         for run in runs:
             run.status = 'running'
         await db.commit()
+        hvac_cache = hvac_cache if hvac_cache is not None else {}
+        await prepare_hvac_contexts(db, runs, hvac_cache)
+        await db.commit()
         shift_cache = statistics_cache if statistics_cache is not None else {}
         trip_cache = trip_cache if trip_cache is not None else {}
         prepared = []
@@ -979,7 +1034,7 @@ async def predict_consumption_jobs(
                 shift_cache[str(run.shift_id)] = await load_shift_trip_statistics(
                     db, run.shift_id, trip_cache=trip_cache,
                 )
-            prepared.append(await _prepare_prediction(db, run, packs, shift_cache[str(run.shift_id)]))
+            prepared.append(await _prepare_prediction(db, run, packs, shift_cache[str(run.shift_id)], hvac_cache=hvac_cache))
         prepared_at = time.perf_counter()
         logger.info("Combined forecast prepared: runs=%d shifts=%d unique_trips=%d seconds=%.3f",
                     len(jobs), len(shift_cache), len(trip_cache), prepared_at - started)
@@ -997,6 +1052,12 @@ async def predict_consumption_jobs(
                 results[index] = result
         predicted_at = time.perf_counter()
         for item, result in zip(prepared, results, strict=True):
+            result.setdefault('summary', {})['inference_batch'] = {
+                'runs': len(jobs), 'trip_occurrences': sum(len(p.trip_stats) for p in prepared),
+                'preparation_seconds': prepared_at - started,
+                'inference_seconds': predicted_at - prepared_at,
+                'model_invocations': len(groups),
+            }
             await _store_prediction(db, item, result, quantiles, commit=False)
         await db.commit()
         logger.info("Combined forecast completed: runs=%d rows=%d inference_seconds=%.3f total_seconds=%.3f",

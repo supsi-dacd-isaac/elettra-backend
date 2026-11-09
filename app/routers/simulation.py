@@ -377,6 +377,12 @@ async def create_prediction_runs(
     except RuntimeReleaseConfigurationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    from app.services.hvac_policy import resolve_policy
+    try:
+        policy = resolve_policy(request.auxiliary_policy_id, annual=request.yearly_analysis_id is not None,
+                                legacy_stack=selected_stack.stack is PredictionStack.LEGACY)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     bus_model = await get_owned_bus_model(db, request.bus_model_id, current_user.id)
     if selected_stack.stack is not PredictionStack.LEGACY:
         try:
@@ -448,6 +454,7 @@ async def create_prediction_runs(
             external_temp_celsius=request.external_temp_celsius,
             auxiliary_heating_type=request.auxiliary_heating_type,
             occupancy_percent=request.occupancy_percent,
+            contextual_parameters={'auxiliary_policy_id': policy},
             status="pending",
         )
         db.add(run)
@@ -488,6 +495,9 @@ async def create_yearly_prediction_runs(
     except RuntimeReleaseConfigurationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
+        from app.services.hvac_policy import resolve_policy
+        policy = resolve_policy(request.auxiliary_policy_id, annual=True,
+                                legacy_stack=selected_stack.stack is PredictionStack.LEGACY)
         for item in request.assignments:
             physical_bus_mass(bus_model.specs or {}, occupancy_percent=request.occupancy_percent,
                               num_battery_packs=item.num_battery_packs)
@@ -526,6 +536,7 @@ async def create_yearly_prediction_runs(
                 auxiliary_estimator_release=selected_stack.auxiliary_estimator,
                 external_temp_celsius=scenario.external_temp_celsius,
                 occupancy_percent=request.occupancy_percent,
+                contextual_parameters={'auxiliary_policy_id': policy},
                 auxiliary_heating_type=request.auxiliary_heating_type, status="pending",
             )
             db.add(run)
@@ -566,6 +577,24 @@ async def get_prediction_run(
     current_user: Users = Depends(get_current_user),
 ):
     return await get_owned_prediction_run(db, run_id, current_user.id)
+
+
+@router.get('/prediction-runs/{run_id}/auxiliary-assumptions')
+async def prediction_auxiliary_assumptions(run_id: UUID, include_inputs: bool = False,
+    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    from app.services.hvac_export import export_runs
+    run = await get_owned_prediction_run(db, run_id, current_user.id)
+    return await export_runs(db, [run], include_inputs=include_inputs)
+
+
+@router.get('/optimization-runs/{run_id}/auxiliary-assumptions')
+async def optimization_auxiliary_assumptions(run_id: UUID, include_inputs: bool = False,
+    db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(get_current_user)):
+    from app.services.hvac_export import export_runs
+    run = await get_owned_optimization_run(db, run_id, current_user.id)
+    ids = list(((run.results or {}).get('selected_prediction_run_ids') or {}).values()) or run.prediction_run_ids or []
+    predictions = [await get_owned_prediction_run(db, UUID(str(pid)), current_user.id) for pid in ids]
+    return await export_runs(db, predictions, include_inputs=include_inputs)
 
 
 @router.get("/prediction-runs/{run_id}/predictions", response_model=List[TripPredictionsRead])
@@ -1044,7 +1073,9 @@ async def generate_pvgis_tmy(
             or temperature_series is None
             or temperature_series.provider != HYBRID_PROVIDER
             or temperature_series.openmeteo_model != OPENMETEO_MODEL
-            or temperature_series.processing_version != PROCESSING_VERSION
+            # A read must not replace a historical hybrid series solely
+            # because a newer importer is available. New imports use v2;
+            # explicit maintenance/recalculation owns historical upgrades.
         )
         if needs_generation:
             hybrid = await fetch_hybrid_temperature_series(

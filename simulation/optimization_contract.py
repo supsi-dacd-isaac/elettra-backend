@@ -40,7 +40,7 @@ def select_references(runs, shift_ids, *, mode, user_id, explicit=None):
             "bus_model_id", "model_name", "prediction_stack", "auxiliary_estimator_release",
             "external_temp_celsius", "occupancy_percent", "auxiliary_heating_type",
         )) + (json.dumps({key: (run.contextual_parameters or {}).get(key)
-                         for key in ("bus_length_m", "greybox_params", "quantiles")}, sort_keys=True),))
+                         for key in ("bus_length_m", "greybox_params", "quantiles", "auxiliary_policy_id", "hvac_input_fingerprint")}, sort_keys=True),))
     if set(groups) != set(shifts):
         raise ValueError("Prediction catalogue must cover exactly the selected shifts")
     if any(len(values) != 1 for values in identities.values()):
