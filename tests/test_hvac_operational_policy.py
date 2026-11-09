@@ -94,6 +94,18 @@ def test_lookup_at_ventilation_climatic_and_saturation_transitions(temperature):
     np.testing.assert_allclose(actual,expected,atol=.002,rtol=0)
 
 
+def test_cached_climatic_selection_preserves_official_tie_breaks():
+    rows = [vecto_ssm.default_environmental_condition(i) for i in range(1,12)]
+    def boundaries(values):
+        ordered=sorted(set(values))
+        return ordered+[(a+b)/2+epsilon for a,b in zip(ordered,ordered[1:]) for epsilon in [-1e-8,0,1e-8]]
+    for temperature in boundaries(row.temperature_celsius for row in rows):
+        response=SolarResponse(18,102.2,temperature,'default')
+        for ghi in boundaries(row.solar_irradiance_wm2 for row in rows):
+            expected=environmental_condition_for_scenario(temperature_celsius=temperature,solar_irradiance_wm2=ghi)
+            assert response.direct(ghi)[1][0] == expected.environmental_id
+
+
 def weather():
     origin=datetime(2030,1,1,tzinfo=timezone.utc)
     return dict(time_utc=[(origin+timedelta(hours=i)).isoformat() for i in range(8760)],
@@ -119,6 +131,11 @@ def test_missing_weather_fails_and_fingerprints_change():
     with pytest.raises(ValueError): annual_ghi(data,['2030-01-01'],'Europe/Zurich',60)
     data=weather();data['time_utc'].pop()
     with pytest.raises(ValueError): annual_ghi(data,['2030-01-01'],'Europe/Zurich',60)
+
+
+def test_fingerprint_matches_jsonb_negative_zero_normalization():
+    assert fingerprint({'temperature_c': [-0.0, 1.], 'metadata': {'offset': -0.0}}) == fingerprint(
+        {'temperature_c': [0.0, 1.], 'metadata': {'offset': 0.0}})
 
 
 def test_terminal_discharge_during_charging_solver_replay_and_statistical_coverage():
@@ -299,7 +316,7 @@ async def test_weather_archive_is_deduplicated_and_immutable():
     from sqlalchemy.exc import DBAPIError
     from app.database import AsyncSessionLocal
     from app.models import HvacWeatherSnapshots
-    payload=dict(test=str(uuid4()),ghi=[0.,100.]); sha=fingerprint(payload)
+    payload=dict(test=str(uuid4()),ghi=[-0.,100.],temperature_c=[-0.0,1.]); sha=fingerprint(payload)
     async with AsyncSessionLocal() as db:
         try:
             for _ in range(2):

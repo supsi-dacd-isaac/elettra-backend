@@ -16,9 +16,10 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
-from elettra_core.vecto_ssm import VECTO_DEFAULT_COMFORT_POLICY, vecto_auxiliary_power
+from elettra_core.vecto_ssm import (VECTO_DEFAULT_COMFORT_POLICY, vecto_auxiliary_power,
+                                   default_environmental_condition)
 from elettra_core.vecto_templates import (
-    environmental_condition_for_scenario, load_template_release,
+    load_template_release,
 )
 
 LEGACY_POLICY = 'legacy-fixed-100-v1'
@@ -30,7 +31,15 @@ ENERGY_KEYS = ('hvac_electrical_kwh', 'diesel_fuel_kwh', 'uncovered_thermal_kwh'
 
 
 def fingerprint(value) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
+    # PostgreSQL JSONB canonicalizes negative zero. Hash the same numerical
+    # representation before insertion and after retrieval, including metadata.
+    def canonical(item):
+        if isinstance(item, dict):
+            return {key: canonical(part) for key, part in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [canonical(part) for part in item]
+        return 0.0 if isinstance(item, float) and item == 0 else item
+    return hashlib.sha256(json.dumps(canonical(value), sort_keys=True, separators=(',', ':'),
                                     allow_nan=False).encode()).hexdigest()
 
 
@@ -128,6 +137,14 @@ def terminal_intervals(schedule: list[dict], cap=10.) -> list[dict]:
     return result
 
 
+@lru_cache(maxsize=64)
+def nearest_climatic_rows(temperature):
+    """Cache the frozen selector's first (temperature) tie-break once per T."""
+    rows = tuple(default_environmental_condition(index) for index in range(1, 12))
+    distance = min(abs(row.temperature_celsius - temperature) for row in rows)
+    return tuple(row for row in rows if abs(row.temperature_celsius - temperature) == distance)
+
+
 class SolarResponse:
     """Small one-watt response table shared by all duties with identical inputs."""
     def __init__(self, length, passengers, temperature, heating_type, clouding_one=True):
@@ -135,16 +152,24 @@ class SolarResponse:
         self.inputs = self.template.ssm_inputs(number_of_passengers=passengers,
                                                auxiliary_heating_type=heating_type)
         self.temperature = float(temperature)
+        if not math.isfinite(self.temperature):
+            raise ValueError('HVAC temperature must be finite')
+        self._climatic_rows = nearest_climatic_rows(self.temperature)
         self.clouding_one = clouding_one
         self._table = np.empty((0, 3))
         self._signatures = []
 
     def direct(self, ghi):
-        environment = environmental_condition_for_scenario(
-            temperature_celsius=self.temperature, solar_irradiance_wm2=float(ghi))
+        physical_ghi = float(ghi)
+        if not math.isfinite(physical_ghi) or physical_ghi < 0:
+            raise ValueError('HVAC GHI must be finite and non-negative')
+        # Same lexicographic selector as the frozen template adapter. Avoid
+        # constructing/validating eleven identical rows at every grid point.
+        selected = min(self._climatic_rows, key=lambda row: (
+            abs(row.solar_irradiance_wm2 - physical_ghi), row.environmental_id))
         original = .65 if self.temperature < 17 else .8
-        if self.clouding_one:
-            environment = replace(environment, solar_irradiance_wm2=float(ghi) / original)
+        environment = replace(selected, temperature_celsius=self.temperature,
+            solar_irradiance_wm2=physical_ghi / original if self.clouding_one else physical_ghi)
         result = vecto_auxiliary_power(environment=environment, inputs=self.inputs)
         values = np.array([result.p_hvac_electrical_kw, result.p_fuel_kw,
                            result.unmet_thermal_demand_kw])
