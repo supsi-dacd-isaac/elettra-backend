@@ -108,5 +108,7 @@ saturation, diesel heating, timezone/DST/extended times/PVGIS offset, missing
 weather, input fingerprints, terminal caps/depot exclusion, simultaneous charging,
 SOC and statistical replay, QRF batching, lazy exports and authentication.
 Private deployment records, credentials and raw operational snapshots belong
-outside this repository. Deployment of this change is restricted to the
-explicitly authorized `elettra-user-staging` Compose project.
+outside this repository. For backend `1.6.0` and frontend `0.11.0`, validate the immutable release images
+in `elettra-user-staging` before promoting the same digests to production.
+Back up production before applying missing migration 010; preserve existing
+results, runtime configuration and the frozen VECTO core.

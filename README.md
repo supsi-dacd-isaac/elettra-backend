@@ -204,3 +204,8 @@ coverage of the external service.
 the application version in `config/elettra-config.image.yaml`, initializes a
 clean PostgreSQL database, runs pytest, builds native AMD64/ARM64 images, and
 publishes the release only after verification succeeds.
+
+Backend `1.6.0` promotes `1.6.0-rc.2` without functional changes and pairs with
+frontend `0.11.0`. See [release notes](CHANGELOG.md). Existing installations
+require migration `010_hvac_weather_snapshots.sql` if not already applied;
+back up the database first. Saved historical analyses are not rewritten.
