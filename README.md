@@ -1,539 +1,188 @@
-# Elettra Backend
+# ELETTRA backend
 
-FastAPI backend for managing GTFS agencies/routes/trips, electric bus models and simulation run metadata with JWT authentication.
+FastAPI service for ELETTRA's electric-bus planning workflow. It provides
+authentication, agency and fleet data, versioned GTFS access, vehicle blocks,
+consumption prediction and optimization, yearly analysis, economic assessment,
+and environmental lifecycle indicators.
 
-> NOTE: This README reflects the CURRENT exposed API (routers: `auth`, `api`). Historical documentation about pfaedle, GTFS dataset ingestion, energy algorithms, etc. was removed because those endpoints are not presently implemented in `app/routers`. See *Roadmap* for planned re‑introductions.
+The backend is a separate deployment from the Vite frontend. The current
+application version is defined in
+[`config/elettra-config.image.yaml`](config/elettra-config.image.yaml).
 
----
-## Table of Contents
-1. Features
-2. Tech Stack
-3. Project Structure
-4. Quick Start
-5. Configuration
-6. Database Setup
-7. Running the App
-8. Available API Endpoints
-9. Authentication Flow
-10. Bus Model & Simulation Examples
-11. Testing
-12. Development Tips
-13. Roadmap
-14. License & Acknowledgments
-15. Dockerization
+## Main capabilities
 
----
-## 1. Features
-Current implemented features:
-- JWT authentication (`/auth/login`, `/auth/register`, `/auth/me`).
-- User administration (list/create/read/update) – restricted to admins.
-- GTFS base entities: Agencies, Routes (as `gtfs-routes`), Trips, Stops (lookup via stop_times relationships), Variants.
-- Bus model catalog per agency (company) with JSON specs field.
-- Simulation runs metadata (create / update / list / read).
-- Pydantic v2 configuration loading from YAML/JSON via `ELETTRA_CONFIG_FILE`.
-- Automatic OpenAPI docs with persisted authorization.
-- Structured test reporting (see `tests/README.md`).
+- JWT authentication and user/agency administration.
+- Bus-model, bus, depot/custom-location, and vehicle-block persistence.
+- Versioned GTFS routes, trips, stops, calendars, variants, auxiliary trips,
+  driving distance, elevation profiles, and trip statistics.
+- Prediction and optimization runs for battery-only, charging, and joint
+  feasibility evaluation.
+- Representative-weather yearly analyses with saved configuration,
+  assumptions, costs, and LCA results.
+- Economic endpoints for investment, annualization, operating costs, and
+  electric/diesel comparison.
+- Environmental endpoints backed by the Energie Schweiz/Mobitool catalogue,
+  including the parameterized annual vehicle LCA.
+- Hybrid PVGIS/Open-Meteo weather reference and auditable HVAC assumptions.
+- PostgreSQL persistence, MinIO object storage, readiness checks, and generated
+  OpenAPI documentation.
 
-Out of scope (not currently exposed): route energy algorithms, GTFS dataset ingestion pipeline, pfaedle shape enhancement, battery sizing endpoints.
+## API layout
 
----
-## 2. Tech Stack
-- Python 3.12+
-- FastAPI / Starlette
-- SQLAlchemy 2.0 (async engine + models under `app/models.py` for GTFS tables; legacy models in `app/database.py` kept for compatibility)
-- PostgreSQL / asyncpg
-- JWT (`python-jose`)
-- Pydantic v2 / pydantic-settings
-- Pytest (custom reporting)
+| Prefix | Scope |
+|---|---|
+| `/auth` | login, registration, current profile, password, logout |
+| `/api/v1/agency` | agencies and agency users |
+| `/api/v1/user` | bus models, buses, depots, and vehicle blocks |
+| `/api/v1/gtfs` | datasets, routes, trips, stops, elevation, and auxiliary trips |
+| `/api/v1/simulation` | prediction, optimization, statistics, weather, and HVAC provenance |
+| `/api/v1/yearly-analysis` | yearly CRUD, assumptions, costs, LCA, and previews |
+| `/api/v1/economic` | economic defaults and calculations |
+| `/api/v1/environmental` | catalogue and environmental calculations |
 
----
-## 3. Project Structure (trimmed)
-```
-app/
-  core/            # auth & config
-  routers/         # auth.py, api.py (all endpoints)
-  models.py        # ORM models (gtfs_*, variants, bus_models, etc.)
-  database.py      # Legacy/alternative ORM models & async session
-config/
-  elettra-config.yaml
-tests/
-  auth/            # authentication test module
-  reports/         # generated verbose + JSON reports
-  README.md        # test suite details
-main.py            # FastAPI app factory + router mounting
-README.md          # (this file)
-```
+Runtime discovery is available at `/docs` and `/redoc`. A lightweight public
+version endpoint is exposed at `/api/v1/version`; `/health` is the public
+liveness endpoint, while `/api/v1/readiness` is an authenticated administrator
+check of dependencies.
 
----
-## 4. Quick Start
+See [the API reference](docs/API_REFERENCE.md) for request examples and the
+complete endpoint catalogue.
+
+## Requirements
+
+- Python 3.12 for the application image
+- PostgreSQL
+- MinIO for elevation/model artifacts in the full stack
+- OSRM and external weather/LCA services for the corresponding integrations
+
+Python dependencies are pinned through `requirements.txt` and
+`requirements.lock`. The repository also contains the independently versioned
+`elettra_core` feature/VECTO contract package described by `pyproject.toml`.
+
+## Quick start with Docker Compose
+
+Create the ignored local configuration from the non-secret image baseline:
+
 ```bash
-git clone <repo-url>
-cd elettra-backend
+cp config/elettra-config.image.yaml config/elettra-config.docker.yaml
+docker compose up --build db minio minio-create-bucket app
+```
+
+The default compose mapping exposes:
+
+- API and Swagger: <http://127.0.0.1:8002/docs>
+- PostgreSQL: `127.0.0.1:5440`
+- MinIO API: `127.0.0.1:9002`
+- MinIO console: <http://127.0.0.1:9003>
+
+The compose defaults are for local development only. Production must provide a
+strong `APP_SECRET_KEY`, an explicit database URL, restricted CORS origins, and
+least-privilege object-storage credentials. Use
+`docker-compose.external.yml` for the external production deployment model.
+
+## Run from source
+
+```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-export ELETTRA_CONFIG_FILE="$(pwd)/config/elettra-config.yaml"
-python main.py  # runs uvicorn via __main__ guard
-```
-Visit: http://127.0.0.1:8000/docs
-
----
-## 5. Configuration
-All required settings live in `config/elettra-config.yaml` (or a JSON equivalent). The loader expects *all* keys to be present; no silent defaults.
-Set with env var:
-```
-export ELETTRA_CONFIG_FILE=/absolute/path/to/elettra-config.yaml
-```
-See file for adjustable values: database_url, CORS origins, JWT secret, etc.
-
----
-## 6. Database Setup
-Minimal required extensions (example PostgreSQL):
-```sql
-CREATE DATABASE elettra;
-\c elettra;
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";  -- for gen_random_uuid()
-```
-You must create tables according to the schema your deployment uses (e.g. run migrations or pre‑existing SQL). Current code assumes tables already exist matching models in `app/models.py` (e.g. `public.gtfs_agencies`, `public.gtfs_routes`, ...).
-
----
-## 7. Running the App
-Development (auto‑reload controlled by config file):
-```bash
-python main.py
-```
-Alternative explicit uvicorn:
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-Production (basic example):
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+pip install -r requirements.lock
+cp config/elettra-config.image.yaml config/elettra-config.docker.yaml
+export ELETTRA_CONFIG_FILE="$PWD/config/elettra-config.docker.yaml"
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
----
-## 8. Available API Endpoints (Current)
-(Prefix `/api/v1` for core API; `/auth` for authentication.)
+Before starting, edit the copied configuration so `database.url` points to a
+reachable PostgreSQL instance. Selected settings can also be overridden by
+environment variables, including `DATABASE_URL`, `APP_SECRET_KEY`,
+`APP_ALLOWED_ORIGINS`, `APP_DEBUG`, and `APP_LOG_LEVEL`.
 
-Authentication:
-- POST `/auth/login` – obtain JWT
-- POST `/auth/register` – create user (email uniqueness enforced)
-- GET  `/auth/me` – current user info (requires Bearer token)
+Configuration is fail-closed: required keys must be present in the selected
+YAML/JSON file. The application does not silently fill a missing deployment
+configuration.
 
-Users (admin only):
-- POST `/api/v1/users/`
-- GET  `/api/v1/users/` (pagination via `skip`, `limit`)
-- GET  `/api/v1/users/{user_id}`
-- PUT  `/api/v1/users/{user_id}`
+## Current HVAC policy
 
-Agencies:
-- POST `/api/v1/agencies/`
-- GET  `/api/v1/agencies/`
-- GET  `/api/v1/agencies/{agency_id}`
+New feasibility and yearly runs record the auxiliary-energy policy used for
+reproduction:
 
-GTFS Routes (named `gtfs-routes`):
-- POST `/api/v1/gtfs-routes/`
-- GET  `/api/v1/gtfs-routes/`
-- GET  `/api/v1/gtfs-routes/{route_id}` (internal UUID key)
-- GET  `/api/v1/gtfs-routes/by-agency/{agency_id}`
-- GET  `/api/v1/gtfs-routes/by-agency/{agency_id}/with-variant-1` – routes with variant 1 elevation data
-- GET  `/api/v1/gtfs-routes/by-agency/{agency_id}/with-largest-variant` – routes with largest variant elevation data
+- feasibility maps temperature to one engineering GHI value, shared by Mean
+  and Q95 evaluation;
+- yearly analysis uses hourly PVGIS GHI interpolated at every service minute,
+  with the saved temperature clusters, GTFS timezone, daylight saving, and
+  PVGIS offset;
+- terminal HVAC covers at most the final 10 minutes at the same stop, uses an
+  empty bus, excludes depots, and does not model thermal inertia;
+- fixed auxiliaries are applied during trips, not during terminal waiting.
 
-Trips:
-- GET `/api/v1/gtfs-trips/by-route/{route_id}`
-- GET `/api/v1/gtfs-trips/by-stop/{stop_id}` (reverse lookup via stop_times)
+The authenticated auxiliary-assumptions endpoints expose the policy summary
+and, on request, the complete reproduction inputs. Historical runs retain their
+recorded legacy behavior. See
+[HVAC operational policy](docs/hvac-operational-policy.md) and
+[VECTO HVAC templates](docs/VECTO_HVAC_TEMPLATES.md).
 
-Stops:
-- GET `/api/v1/gtfs-stops/by-trip/{trip_id}` (ordered by sequence)
+## Bus models and LCA size resolution
 
-Variants:
-- GET `/api/v1/variants/by-route/{route_id}` – all variants for a route with elevation data
-- GET `/api/v1/variants/{route_id}/{variant_num}` – specific variant with elevation data
+New bus models store both the user-selected LCA category in `specs.size` and
+the physical length in `specs.bus_length_m`. Environmental calculations use
+the explicit `size` when present. For legacy rows only, a validated physical
+length is converted to the catalogue category as follows:
 
-Calendar:
-- GET `/api/v1/gtfs-calendar/by-trip/{trip_id}` *(Note: current query uses a direct filter; underlying schema may need refinement to join via trips' service reference.)*
+- `<= 10 m` → `9m`
+- `> 10 m` and `<= 14 m` → `13m`
+- `> 14 m` → `18m`
 
-Bus Models:
-- POST `/api/v1/user/bus-models/`
-- GET  `/api/v1/user/bus-models/`
-- GET  `/api/v1/user/bus-models/{model_id}`
-- PUT  `/api/v1/user/bus-models/{model_id}`
+Missing, boolean, non-finite, non-numeric, or non-positive lengths are rejected
+instead of guessed. The same resolver is used by vehicle-block and yearly LCA
+endpoints. No category is inferred from the model name.
 
-New bus models require a complete physical `specs` object. Historical rows
-remain readable even if incomplete. A metadata-only PUT may omit `specs`; when
-`specs` is supplied, it replaces the stored object and must be complete.
+## Database initialization
 
-Simulation Runs:
-- POST `/api/v1/simulation-runs/`
-- GET  `/api/v1/simulation-runs/`
-- GET  `/api/v1/simulation-runs/{run_id}`
-- PUT  `/api/v1/simulation-runs/{run_id}`
-- GET  `/api/v1/simulation-runs/{run_id}/results` – get simulation output results, either complete or filtered by specific JSON keys (use `?keys=key1,key2,key3` to filter)
+The local PostgreSQL container initializes an empty volume from
+`db/elettra_schema_init.sql`. Existing deployments must apply the required
+migrations/schema updates explicitly; mounting the initialization script does
+not migrate a populated volume.
 
-Weather & PVGIS:
-- GET `/api/v1/simulation/pvgis-tmy/?latitude={lat}&longitude={lon}` – generate or retrieve a hybrid TMY temperature series. PVGIS selects the typical source months and supplies the non-temperature fields; Open-Meteo Archive `best_match` supplies `temperature_2m` using its terrain model. New cache coordinates are canonicalized to five decimal places and `coerce_year` is configured via YAML settings.
+See:
 
-Root:
-- GET `/` – simple status payload
+- [Automatic database initialization](docs/DB_AUTO_INIT.md)
+- [Database schema updates](docs/database-schema-updates.md)
+- [GTFS datasets](docs/gtfs-datasets.md)
 
----
-## 9. Authentication Flow
-1. Register (or pre‑seed) a user: `POST /auth/register` with body:
-```json
-{
-  "company_id": "<agency_uuid>",
-  "email": "you@example.com",
-  "full_name": "You",
-  "password": "Secret123",
-  "role": "admin"
-}
-```
-2. Login: `POST /auth/login` with email/password.
-3. Retrieve token from response and use: `Authorization: Bearer <token>`.
-4. Swagger UI (http://localhost:8000/docs) retains token between requests.
+## Tests
 
----
-## 10. Bus Model & Simulation Examples
-Create a bus model:
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/user/bus-models/ \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "<user_uuid>",
-    "name": "eCitaro-12m",
-    "specs": {
-      "bus_length_m": 12,
-      "empty_weight_kg": 12000,
-      "battery_pack_size_kwh": 40,
-      "battery_pack_weight_kg": 274,
-      "min_battery_packs": 6,
-      "max_battery_packs": 10,
-      "max_passengers": 80
-    },
-    "manufacturer": "Mercedes"
-  }'
-```
-Update a simulation run:
-```bash
-curl -X PUT http://127.0.0.1:8000/api/v1/simulation-runs/<run_uuid> \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"status": "running"}'
-```
-
----
-## 11. Testing
-Test suite lives under `tests/` with verbose per‑module reports.
-Run all tests:
-```bash
-pytest
-```
-Auth tests only:
-```bash
-pytest -k auth
-```
-Generate colored report (opt‑in):
-```bash
-TEST_REPORT_COLOR=1 pytest -k auth
-```
-Reports appear in `tests/reports/` as both `.txt` and `.json`.
-See `tests/README.md` for details / adding new suites.
-
-### 11.1 Release gate
-
-Backend releases are created by `.github/workflows/container-release.yml`.
-For a new release, update `config/elettra-config.image.yaml`, merge the commit
-to `main`, then push a matching semantic-version tag such as `v1.0.2`. The
-workflow verifies the tag and application version, initializes a clean
-PostgreSQL database, and runs pytest before publishing the multi-architecture
-GHCR image. The GitHub Release job depends on both verification and image
-publication, so a failed test or build cannot publish a release.
-
-The workflow can also be run manually from GitHub Actions to exercise the CI
-test environment without publishing an image or release. Tests requiring the
-deployment GTFS dataset, OSRM, MinIO or private model artifacts remain explicit
-opt-in integration tests and are reported as skipped on the hosted runner.
-
-Release images are built in parallel on native `ubuntu-24.04` (AMD64) and
-`ubuntu-24.04-arm` (ARM64) runners, without QEMU emulation. Each job publishes
-by immutable digest and checks its application version, architecture and frozen
-core identity. Only after all requested architectures pass does the publishing
-job assemble the multi-platform index and assign the release tags. The assembly
-checks require all requested platforms and their SBOM/provenance attestations;
-GitHub provenance is then attached to the final index digest.
-
-BuildKit caches live in GHCR under `buildcache-amd64` and `buildcache-arm64`,
-separate from release aliases. These caches can be reused across branches and
-release tags, and parallel architecture jobs do not overwrite each other's
-cache. Dependency layers remain reusable while `requirements.lock`, the base
-image and the relevant build inputs are unchanged. `fix/**` branch builds retain
-the existing AMD64-only candidate publication; semantic-version tags build both
-architectures. RC tags remain GitHub Pre-releases and do not move `latest` or
-stable version aliases.
-
-#### Promoting a release candidate
-
-The application version is baked into the image. Retagging an RC image, or
-removing the GitHub Pre-release flag, does not change the version reported by
-`/api/v1/version`. For an official release, update
-`config/elettra-config.image.yaml` to the stable version, include the validated
-candidate changes and workflow changes in `main`, and push the matching stable
-tag. The workflow rebuilds the image with the official version and reruns its
-checks, reusing cached dependency layers where possible. Keep existing RC tags
-and digests intact. The frontend has its own embedded version and release gate.
-
-Offline checks for native runner selection, complete image assembly and
-publication ordering can be run with:
+The full release gate is the pytest suite:
 
 ```bash
-python -m unittest discover -s tests -p test_container_release.py -v
-actionlint .github/workflows/container-release.yml
+./run_tests.sh
 ```
 
-The offline Python checks require PyYAML, already included in `requirements.lock`,
-and do not start the application or connect to a database. The first native
-multi-platform release exercises the new runners and populates the registry
-caches; compare it with a later build to measure the benefit of cache reuse.
+The wrapper activates `.venv` when available, sets the test environment,
+validates that local database/backend targets are the dedicated staging stack,
+and forwards additional pytest arguments. For example:
 
----
-## 12. Development Tips
-- Configuration: ensure `ELETTRA_CONFIG_FILE` is set *before* starting `main.py`.
-- Database schema: keep ORM models (`app/models.py`) aligned with Postgres tables (UUID PKs expected; some fields rely on `gen_random_uuid()`).
-- Adding endpoints: extend `app/routers/api.py`; keep request/response models in `app/schemas.py` (Pydantic v2). Use `from_attributes=True` for ORM reads.
-- Authentication utilities live in `app/core/auth.py` (`authenticate_user`, `create_access_token`, permission helpers).
-- Consider writing integration tests with the synchronous `client` fixture unless true async behavior is under test.
-
----
-## 13. Roadmap
-Planned / desirable re‑introductions or improvements:
-- GTFS dataset ingestion & normalization pipeline.
-- Shape / elevation enrichment via pfaedle & geospatial stack.
-- Energy consumption & battery sizing algorithm endpoints.
-- Improved calendar/trip service resolution (current calendar by trip filter may need join adjustments).
-- Role-based authorization granularity across non‑user endpoints.
-- Pagination & filtering for large GTFS tables.
-- Dedicated migration system (e.g. Alembic) and seed scripts.
-- Distinct test database & data factories.
-
----
-## 14. License & Acknowledgments
-
-Elettra-authored code is licensed under MIT (see `LICENSE`). The behavioural
-VECTO transcription in `elettra_core/vecto_ssm.py` is a separately identified
-EUPL-1.2 component. See `THIRD_PARTY_NOTICES.md` and
-`LICENSES/EUPL-1.2.txt` before redistributing source, wheels or images. The
-combined `elettra-core` package uses the SPDX expression
-`MIT AND EUPL-1.2`; the public-distribution component boundary was approved by
-the SUPSI release owner on 2026-08-31 and is recorded in the third-party
-notice.
-
-Acknowledgments:
-- FastAPI & SQLAlchemy teams
-- Open GTFS ecosystem
-- (Future) pfaedle integration contributors
-
----
-## 15. Dockerization
-Two supported compose modes are provided:
-
-### 15.0 Quick Docker Run (External Host DB)
-1. Build image:
-   ```bash
-   docker build -t elettra-backend .
-   ```
-2. Run container with host networking (recommended for external DB on host):
-   ```bash
-   docker run -d \
-     --network host \
-     -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
-     -e ELETTRA_CONFIG_FILE=/app/config/elettra-config.docker.yaml \
-     -e DATABASE_URL="postgresql+asyncpg://admin:admin@localhost:5440/elettra" \
-     --name elettra-api \
-     elettra-backend
-   ```
-   
-   > **Note**: The path `$(pwd)/../elettra-backend-data/elevation_profiles` is just an example. Replace it with the actual path to your elevation profiles directory.
-3. Verify:
-   ```bash
-   curl http://localhost:8000/    # should return status JSON
-   docker logs -f elettra-api     # watch startup logs
-   ```
-
-> **Note**: Using `--network host` allows the container to access services running on the host (like your PostgreSQL database) directly via `localhost`. The `-v` flag mounts the elevation profiles directory as read-only so the API can access elevation data files.
-
-**Alternative for cross-platform compatibility** (if host networking is not available):
 ```bash
-docker run -d \
-  --add-host=host.docker.internal:host-gateway \
-  -p 8000:8000 \
-  -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
-  -e DATABASE_URL="postgresql+asyncpg://admin:admin@host.docker.internal:5440/elettra" \
-  --name elettra-api \
-  elettra-backend
+./run_tests.sh tests/test_lca_size.py -q
+./run_tests.sh -k yearly -q
 ```
 
-Optional (env file to shorten command):
-```bash
-cp .env.docker.example .env.docker
-# edit credentials in .env.docker
-docker run -d \
-  --network host \
-  -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
-  --env-file .env.docker \
-  --name elettra-api \
-  elettra-backend
-```
+Tests that require deployment GTFS data, OSRM, MinIO, or private model artifacts
+remain explicit opt-in integration tests. Do not interpret those skips as unit
+coverage of the external service.
 
-### 15.1 Internal Ephemeral Database (Full Stack)
-Uses `docker-compose.yml` to spin up both the API (`app`) and a Postgres service (`db`). Data persists in the named volume `db-data`.
+## Documentation
 
-Run:
-```bash
-docker compose up --build -d
-# View logs
-docker compose logs -f app
-```
-Tear down (preserving data volume):
-```bash
-docker compose down
-```
-Remove volumes (DESTROYS db data):
-```bash
-docker compose down -v
-```
+- [API reference](docs/API_REFERENCE.md)
+- [Aggregate feasibility contract](docs/aggregate-feasibility.md)
+- [Grid energy and annual LCA](docs/GRID_BUS_ENERGY_AND_LCA.md)
+- [Diesel-heating emissions](docs/DIESEL_HEATING_EMISSIONS.md)
+- [Hybrid TMY weather](docs/hybrid-tmy-pvgis-openmeteo.md)
+- [HVAC operational policy](docs/hvac-operational-policy.md)
+- [Feature extraction contract](docs/FEATURE_EXTRACTION_CONTRACT.md)
+- [Threat response guide](docs/THREAT_RESPONSE_GUIDE.md)
 
-### 15.2 External / Managed Database
-If you already run PostgreSQL and MinIO elsewhere, use
-`docker-compose.external.yml`. It defines the API and an optional elevation
-worker enabled with the `road-deck` profile.
+## Release
 
-Example run:
-```bash
-export DATABASE_URL="postgresql+asyncpg://$user:$password@$host:5432/elettra"
-export APP_SECRET_KEY="$(openssl rand -hex 32)"
-export ELEVATION_PROFILES_READ_ACCESS_KEY="elettra-backend-reader"
-export ELEVATION_PROFILES_READ_SECRET_KEY="..."
-export ELETTRA_BACKEND_IMAGE="registry.example/elettra-backend@sha256:<digest>"
-docker compose -f docker-compose.external.yml pull app
-docker compose -f docker-compose.external.yml up --no-build -d app
-```
-
-For a production rollout of a prebuilt image, use `--no-build`; the digest in
-`ELETTRA_BACKEND_IMAGE` must be the image that passed the release gate.
-
-Before enabling the worker, provision a separate MinIO identity with
-List/Get/Put/DeleteObject permissions and set
-`ELEVATION_PROFILES_WRITE_ACCESS_KEY` and
-`ELEVATION_PROFILES_WRITE_SECRET_KEY`. Then start it with
-`docker compose -f docker-compose.external.yml --profile road-deck up -d`.
-
-### 15.3 Configuration Files inside Containers
-By default the image expects: `ELETTRA_CONFIG_FILE=/app/config/elettra-config.docker.yaml`.
-Mount (read‑only) your tailored config:
-```bash
-# In compose service definition (already present):
-volumes:
-  - ./config/elettra-config.docker.yaml:/app/config/elettra-config.docker.yaml:ro
-```
-Only a *placeholder* `database_url` inside the file is required because `DATABASE_URL` env will override it if provided (see overrides in `app/core/config.py`).
-
-### 15.4 Environment Overrides
-The loader allows these direct env overrides (case sensitive):
-- `DATABASE_URL` → replaces `database_url`
-- `APP_LOG_LEVEL` → replaces `log_level`
-- `APP_DEBUG` (`true/false/1/0`) → replaces `debug`
-- `APP_ALLOWED_ORIGINS` (comma separated)
-- `APP_SECRET_KEY`
-- `ELEVATION_PROFILES_BUCKET` and `ELEVATION_PROFILES_RELEASE`
-- `LEGACY_CONSUMPTION_MODEL_RELEASE`, `VECTO_G2_CONSUMPTION_MODEL_RELEASE`
-  and optional `VECTO_G0_TRANSFER_MODEL_RELEASE`
-- `DEFAULT_PREDICTION_STACK` (`legacy` or `vecto-g2`) and
-  `ENABLE_EXPERIMENTAL_PREDICTION_STACKS`
-- `ELETTRA_CORE_SOURCE_COMMIT` (required exact tag commit when a VECTO stack
-  is registered; the image must have been built with the same value through
-  `--build-arg ELETTRA_CORE_SOURCE_COMMIT=<40-char-git-sha>`)
-- `ELEVATION_PROFILES_READ_ACCESS_KEY` / `ELEVATION_PROFILES_READ_SECRET_KEY`
-  (mapped to the backend's MinIO identity)
-
-### 15.5 Development (Live Reload) in Docker
-For rapid iteration you can:
-1. Uncomment the source bind mount in `docker-compose.yml` or `docker-compose.external.yml`:
-   ```yaml
-   volumes:
-     - ./:/app
-   ```
-2. Override the command to enable reload:
-   ```yaml
-   command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-   ```
-Reload is **not** recommended for production.
-
-### 15.6 Manual Image Build, Run & other commands
-(See 15.0 for preferred external DB run.)
-```bash
-docker build \
-  --build-arg ELETTRA_CORE_SOURCE_COMMIT="$(git rev-parse 'elettra-core-v2.2.1^{}')" \
-  --label org.opencontainers.image.source-backend-commit="$(git rev-parse HEAD)" \
-  -t elettra-backend:"$(git rev-parse HEAD)" .
-# Preferred: use host networking with elevation data
-docker run -d \
-  --network host \
-  -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
-  -e DATABASE_URL="postgresql+asyncpg://$user:$password@localhost:5440/elettra" \
-  --name elettra-api elettra-backend
-
-# Alternative: explicit port mapping with host gateway
-docker run -d \
-  --add-host=host.docker.internal:host-gateway \
-  -p 8000:8000 \
-      -v "$(pwd)/../elettra-backend-data/elevation_profiles:/app/data/elevation_profiles:ro" \
-  -e DATABASE_URL="postgresql+asyncpg://$user:$password@host.docker.internal:5440/elettra" \
-  --name elettra-api elettra-backend
-
-# Container management
-docker start elettra-api    # Start if stopped
-docker stop elettra-api     # Stop the container
-docker rm elettra-api       # Remove the container
-```
-
-### 15.7 Health & Logs
-- Basic health: `curl http://localhost:8000/`
-- Dependency readiness: `curl -f http://localhost:8000/health` (returns `503`
-  until PostgreSQL migrations 005/006/007 and the configured MinIO namespace are
-  reachable)
-- Container logs: `docker logs -f elettra-api`
-
-### 15.8 Security Notes
-- Always set a strong `APP_SECRET_KEY` (override value in config file).
-- Use distinct MinIO identities: read-only for the backend and write-capable
-  for the elevation worker; do not reuse MinIO root credentials. The backend
-  reader also needs read access to the `consumption-models` bucket used by
-  prediction.
-- Restrict exposed ports in production (e.g. run behind a reverse proxy / API gateway).
-- Use separate, least‑privilege DB credentials for production.
-- When using `--network host`, the container shares the host's network stack entirely.
-
-### 15.9 Upgrading
-```bash
-docker compose pull && docker compose up -d --build
-# or for external setup
-docker compose -f docker-compose.external.yml up -d --build
-```
-
-### 15.10 Troubleshooting
-| Symptom | Action |
-|---------|--------|
-| App cannot reach DB | Verify `DATABASE_URL` host/port, firewalls. Use `--network host` for localhost DB access |
-| Connection refused | Ensure database is running and accessible. Check if using correct host (localhost vs host.docker.internal) |
-| `psycopg2` / build errors | Ensure base image has `libpq-dev` & build-essential (already in Dockerfile) |
-| Config file not found | Confirm `ELETTRA_CONFIG_FILE` path inside container and mounted volume path |
-| 403/401 on endpoints | Ensure Authorization header contains fresh JWT (re-login if expired) |
-| Changes not reflected | Use `--reload` + bind mount (dev only) |
-| Port already in use | Stop existing containers or use different port mapping |
-
-### 15.11 Network Modes Explained
-- **Host networking** (`--network host`): Container shares host's network stack. Simplest for local development.
-- **Bridge networking** (default): Container gets its own IP. Requires port mapping (`-p`) and special host access.
-- **Custom networks**: For complex multi-container setups with internal communication.
-
----
-**Elettra** – Foundation for electric public transport analytics.
+`.github/workflows/container-release.yml` checks that the semantic tag matches
+the application version in `config/elettra-config.image.yaml`, initializes a
+clean PostgreSQL database, runs pytest, builds native AMD64/ARM64 images, and
+publishes the release only after verification succeeds.
