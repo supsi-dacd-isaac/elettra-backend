@@ -16,6 +16,7 @@ from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from elettra_core import PASSENGER_MASS_KG
+from app.core.config import get_cached_settings
 
 from app.models import (
     Buses,
@@ -48,6 +49,12 @@ from app.services.runtime_release import PredictionStack, resolve_prediction_sel
 from app.services.optimization_process import run_workers, threads_per_worker
 
 logger = logging.getLogger(__name__)
+
+
+def effective_mip_rel_gap(params: dict) -> float:
+    """Keep explicit request values (including zero); otherwise use runtime default."""
+    value = params.get("mip_rel_gap")
+    return get_cached_settings().optimization_mip_rel_gap if value is None else value
 
 
 class OptimizationInputValidationError(ValueError):
@@ -820,7 +827,7 @@ async def prepare_optimization_input(
         solver_name=params.get("solver_name", "highs"),
         solver_threads=threads_per_worker(),
         max_solver_time_seconds=params.get("max_solver_time_seconds"),
-        mip_rel_gap=params.get("mip_rel_gap"),
+        mip_rel_gap=effective_mip_rel_gap(params),
         mip_abs_gap=params.get("mip_abs_gap"),
         feasibility_tol=params.get("feasibility_tol"),
         optimality_tol=params.get("optimality_tol"),
@@ -845,6 +852,9 @@ async def run_optimization(
 
     try:
         run.status = "running"
+        # Persist the effective default in the existing JSON for reproducibility.
+        run.input_params = {**run.input_params,
+                            "mip_rel_gap": effective_mip_rel_gap(run.input_params)}
         await db.commit()
 
         params = run.input_params

@@ -75,7 +75,7 @@ def route_stop_pair(client):
     ),
     reason="Requires OSRM_BASE_URL, auth and TEST_ROUTE_ID",
 )
-def test_create_depot_trip(client, record, monkeypatch, route_stop_pair):
+def test_create_depot_trip(client, record, monkeypatch, route_stop_pair, request):
     # Ensure MINIO endpoint points to host-exposed port when running tests locally
     monkeypatch.setenv("MINIO_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9002"))
 
@@ -100,9 +100,12 @@ def test_create_depot_trip(client, record, monkeypatch, route_stop_pair):
     if ok:
         data, job = _created_trip_and_job(r)
         created_trip_id = data.get("id")
+        request.addfinalizer(lambda: _cleanup_trip(client, created_trip_id, headers))
         record("created_has_shape_id", bool(data.get("shape_id")), "Missing shape_id")
         record("created_status_depot", data.get("status") == "depot", f"status={data.get('status')}")
-        record("elevation_job_created", job.get("status") == "pending", f"job={job}")
+        # The live staging worker can claim or finish the job before HTTP returns.
+        record("elevation_job_created", job.get("status") in {"pending", "processing", "succeeded"}
+               and job.get("trip_id") == created_trip_id, f"job={job}")
 
         # The profile is intentionally unavailable until the worker succeeds.
         if created_trip_id:
@@ -133,8 +136,6 @@ def test_create_depot_trip(client, record, monkeypatch, route_stop_pair):
                     f"Found {len(non_null_altitudes)}/{len(records)} non-null altitude values"
                 )
     
-    # Clean up the created trip
-    _cleanup_trip(client, created_trip_id, headers)
 
 
 @pytest.mark.skipif(
@@ -150,7 +151,7 @@ def test_create_depot_trip(client, record, monkeypatch, route_stop_pair):
     ),
     reason="Requires OSRM_BASE_URL, auth and TEST_ROUTE_ID",
 )
-def test_create_transfer_trip(client, record, monkeypatch, route_stop_pair):
+def test_create_transfer_trip(client, record, monkeypatch, route_stop_pair, request):
     monkeypatch.setenv("MINIO_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9002"))
 
     dep_stop_id, arr_stop_id = route_stop_pair
@@ -173,9 +174,11 @@ def test_create_transfer_trip(client, record, monkeypatch, route_stop_pair):
     if ok:
         data, job = _created_trip_and_job(r)
         created_trip_id = data.get("id")
+        request.addfinalizer(lambda: _cleanup_trip(client, created_trip_id, headers))
         record("created_status_transfer", data.get("status") == "transfer", f"status={data.get('status')}")
         record("gtfs_service_auxiliary", data.get("gtfs_service_id") == "auxiliary", f"gtfs_service_id={data.get('gtfs_service_id')}")
-        record("elevation_job_created", job.get("status") == "pending", f"job={job}")
+        record("elevation_job_created", job.get("status") in {"pending", "processing", "succeeded"}
+               and job.get("trip_id") == created_trip_id, f"job={job}")
         
         # Try fetching elevation profile and check for valid altitudes
         if created_trip_id:
@@ -207,7 +210,6 @@ def test_create_transfer_trip(client, record, monkeypatch, route_stop_pair):
                 )
     
     # Clean up the created trip
-    _cleanup_trip(client, created_trip_id, headers)
 
 
 @pytest.mark.skipif(
@@ -223,7 +225,7 @@ def test_create_transfer_trip(client, record, monkeypatch, route_stop_pair):
     ),
     reason="Requires OSRM_BASE_URL, auth and TEST_ROUTE_ID",
 )
-def test_create_depot_trip_with_day_of_week(client, record, monkeypatch, route_stop_pair):
+def test_create_depot_trip_with_day_of_week(client, record, monkeypatch, route_stop_pair, request):
     monkeypatch.setenv("MINIO_ENDPOINT", os.getenv("MINIO_ENDPOINT", "localhost:9002"))
 
     dep_stop_id, arr_stop_id = route_stop_pair
@@ -248,7 +250,7 @@ def test_create_depot_trip_with_day_of_week(client, record, monkeypatch, route_s
     if ok:
         data, job = _created_trip_and_job(r)
         created_trip_id = data.get("id")
+        request.addfinalizer(lambda: _cleanup_trip(client, created_trip_id, headers))
         record("gtfs_service_auxiliary_mon", data.get("gtfs_service_id") == "auxiliary_mon", f"gtfs_service_id={data.get('gtfs_service_id')}")
-        record("elevation_job_created", job.get("status") == "pending", f"job={job}")
-
-    _cleanup_trip(client, created_trip_id, headers)
+        record("elevation_job_created", job.get("status") in {"pending", "processing", "succeeded"}
+               and job.get("trip_id") == created_trip_id, f"job={job}")

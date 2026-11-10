@@ -48,6 +48,24 @@ check of dependencies.
 See [the API reference](docs/API_REFERENCE.md) for request examples and the
 complete endpoint catalogue.
 
+## Optimization tolerance
+
+`ELETTRA_OPTIMIZATION_MIP_REL_GAP` sets the backend's default relative MIP
+optimality gap (default `1e-6`, finite values from `0` to `1`). Restart the
+backend after changing it. It applies to both sizing and fixed-design charging
+verification, for every optimization mode and consumption basis. Physical
+feasibility tolerances are unchanged; the absolute MIP gap remains zero unless
+explicitly supplied in the request.
+
+An explicit API `mip_rel_gap` overrides this default, including `0` for an exact
+gap; omitted or null values use the environment default. Each executing run
+records the effective value in its existing `input_params` JSON. Invalid
+environment values prevent startup. Set this variable in the container's
+environment when deploying with Docker Compose.
+
+Fleet diagnostics and tolerance benchmarks are opt-in, one-off tests. See
+[`tests/README.md`](tests/README.md); do not enable them in routine release checks.
+
 ## Requirements
 
 - Python 3.12 for the application image

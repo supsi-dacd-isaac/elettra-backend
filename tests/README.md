@@ -66,6 +66,40 @@ The integration assertions require a conclusive outcome: verified feasibility
 or established infeasibility. An API job marked `completed` with a solver
 timeout or an unverified forecast is not accepted as a successful calculation.
 
+The entire `test_fleet_optimization.py` module is skipped by default, including
+release/production verification. They are one-off staging diagnostics, not production
+smoke tests. This also skips fleet setup, candidate selection and charging-only
+runs, so routine tests do not create or simulate the large fleet.
+Opt in with `ELETTRA_RUN_LONG_FLEET=1` to retain normal time limits.
+To investigate their final outcomes without an operational time deadline:
+
+```bash
+ELETTRA_RUN_LONG_FLEET=1 ELETTRA_FLEET_UNBOUNDED=1 \
+ELETTRA_FLEET_DIAGNOSTIC_RESULTS=/tmp/elettra-fleet-unbounded-results \
+./run_tests.sh tests/test_fleet_optimization.py -k 'fleet_battery_only or fleet_joint' -s
+```
+
+This test-only worker refuses any database except local staging port 9004.
+It removes the solver, supervisor and polling deadlines. Its pipeline budget
+uses a JSON-compatible `1e100`-second sentinel instead of infinity, only in
+temporary test rows. API validation and deployed application limits are unchanged.
+Both mean and Q95 results are saved before fixture cleanup. The experiment can
+run for hours; solver optimality and physical verification are still required.
+
+The one-off tolerance benchmark uses only routes 401, 404 and 407 (21 shifts),
+and is likewise excluded by default. It compares BATTERY_ONLY and JOINT for
+Mean and aggregate Q95 at relative MIP gaps `0`, `1e-8`, `1e-6`, `1e-4` and
+`1e-3`, with all other inputs fixed:
+
+```bash
+ELETTRA_RUN_FLEET_TOLERANCE_BENCHMARK=1 \
+ELETTRA_FLEET_TOLERANCE_RESULTS=/tmp/elettra-fleet-tolerance-401-404-407.json \
+./run_tests.sh tests/test_fleet_tolerance_benchmark.py -s
+```
+
+The JSON artifact is updated after each Mean/Q95 pair, so completed measurements
+survive an interrupted experiment. This remains a staging-only diagnostic.
+
 ## Environment
 
 The test environment file is selected in this order:

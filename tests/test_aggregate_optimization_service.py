@@ -61,6 +61,7 @@ async def test_service_uses_full_profile_at_selected_mass_once_per_reference(mon
     monkeypatch.setattr(service, '_prediction_component_summary', components)
     shared = {}
     await service.run_optimization(DB(), run_id, profile_cache=shared)
+    assert run.input_params['mip_rel_gap'] == service.get_cached_settings().optimization_mip_rel_gap
     if paired:
         await service.run_optimization(DB(), other.id, profile_cache=shared)
         assert other.status == 'completed', other.results

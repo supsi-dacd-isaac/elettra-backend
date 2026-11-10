@@ -433,6 +433,18 @@ curl -X POST http://127.0.0.1:8002/api/v1/simulation/optimization-runs/ \
   }'
 ```
 
+Solver tolerance:
+
+- Omitted or null `mip_rel_gap` uses the backend environment variable
+  `ELETTRA_OPTIMIZATION_MIP_REL_GAP`, default `1e-6` (0.0001%).
+- An explicit `mip_rel_gap`, including `0`, overrides that default for the run.
+  The effective value is saved in `input_params` when execution starts.
+- The same value applies to sizing and fixed-design verification, including
+  both mean and Q95 runs. It controls the relative optimality gap, not physical
+  feasibility tolerances; SOC and charging constraints remain enforced.
+- `mip_abs_gap` defaults to zero. Existing explicit per-request solver settings
+  remain supported.
+
 Optimization result semantics:
 - `solver_status` is the solver termination/result only. It does not by itself mean the requested electrification is physically feasible.
 - `electrification_feasible` is `false` whenever any bus requires `excess_packs`.

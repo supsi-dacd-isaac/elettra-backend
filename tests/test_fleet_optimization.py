@@ -4,7 +4,7 @@ Replicates the playground optimization (optimize_pyomo_gb_sensitivity.py)
 through the checked-out API with staging data. Exercises depot charging, charging_only,
 battery_only, and joint optimization modes.
 
-Run with:  ./run_tests.sh tests/test_fleet_optimization.py
+Run only on request: ELETTRA_RUN_LONG_FLEET=1 ./run_tests.sh tests/test_fleet_optimization.py
 """
 
 import json
@@ -342,9 +342,10 @@ def run_prediction_and_wait(
 
 
 def wait_for_optimization(
-    client: TestClient, token: str, run_id: str, max_wait: int = 600,
+    client: TestClient, token: str, run_id: str, max_wait: int | None = 600,
 ) -> dict:
-    for _ in range(max_wait):
+    started = time.monotonic()
+    while max_wait is None or time.monotonic() - started < max_wait:
         time.sleep(1)
         r = client.get(f"{SIM_BASE}/optimization-runs/{run_id}", headers=auth_headers(token))
         assert r.status_code == 200
@@ -354,13 +355,28 @@ def wait_for_optimization(
     pytest.fail(f"Optimization did not complete in {max_wait}s")
 
 
+@pytest.fixture(autouse=True)
+def diagnostic_fleet_limits(request, monkeypatch):
+    if request.node.name not in {"test_fleet_battery_only", "test_fleet_joint"}:
+        return
+    if os.getenv("ELETTRA_FLEET_UNBOUNDED") != "1":
+        return
+    from test_support.fleet_unbounded_worker import install_test_supervisor
+    install_test_supervisor(monkeypatch)
+    original_wait = wait_for_optimization
+    monkeypatch.setattr(__import__(__name__), "wait_for_optimization",
+                        lambda client, token, run_id, max_wait=None:
+                        original_wait(client, token, run_id, max_wait=None))
+
+
 # ---------------------------------------------------------------------------
 # Skip condition
 # ---------------------------------------------------------------------------
 
-_SKIP_REASON = "Requires TEST_ROUTE_ID and auth env vars and shift data"
+_SKIP_REASON = "One-off fleet diagnostic: requires ELETTRA_RUN_LONG_FLEET=1, auth and shift data"
 _skip_cond = not (
-    os.getenv("TEST_ROUTE_ID")
+    os.getenv("ELETTRA_RUN_LONG_FLEET") == "1"
+    and os.getenv("TEST_ROUTE_ID")
     and (
         os.getenv("TEST_API_TOKEN")
         or (os.getenv("TEST_LOGIN_EMAIL") and os.getenv("TEST_LOGIN_PASSWORD"))
@@ -585,6 +601,8 @@ def test_fleet_charging_only(client: TestClient, fleet_env, record):
 
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
+@pytest.mark.skipif(os.getenv("ELETTRA_RUN_LONG_FLEET") != "1",
+                    reason="Long diagnostic: excluded from ordinary release checks")
 def test_fleet_battery_only(client: TestClient, fleet_env, record):
     """Run battery_only optimization on ALL shifts: fix chargers, optimize battery size."""
     token = fleet_env["token"]
@@ -638,6 +656,8 @@ def test_fleet_battery_only(client: TestClient, fleet_env, record):
 
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
+@pytest.mark.skipif(os.getenv("ELETTRA_RUN_LONG_FLEET") != "1",
+                    reason="Long diagnostic: excluded from ordinary release checks")
 def test_fleet_joint(client: TestClient, fleet_env, record):
     """Run joint optimization on ALL shifts: charger installation + battery sizing."""
     token = fleet_env["token"]

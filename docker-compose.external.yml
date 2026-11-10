@@ -22,6 +22,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to the production PostgreSQL instance}
       APP_LOG_LEVEL: INFO
       APP_DEBUG: "false"
+      ELETTRA_OPTIMIZATION_MIP_REL_GAP: ${ELETTRA_OPTIMIZATION_MIP_REL_GAP:-1e-6}
       # No production fallback: refusing to render the compose file is safer
       # than starting with the secret embedded in the repository config.
       APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY must be set to a strong production secret}

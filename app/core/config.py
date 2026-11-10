@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     default_charging_power_kw: float = Field(..., validation_alias=AliasPath("elettra", "default_charging_power_kw"))
 
     # ---- Simulation ----
+    optimization_mip_rel_gap: float = Field(
+        default=1e-6, ge=0, le=1, allow_inf_nan=False,
+        validation_alias="ELETTRA_OPTIMIZATION_MIP_REL_GAP",
+    )
     max_concurrent_simulations: int = Field(
         ..., gt=0, validation_alias=AliasPath("simulation", "max_concurrent_simulations")
     )
