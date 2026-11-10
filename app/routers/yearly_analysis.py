@@ -74,6 +74,7 @@ from app.services.yearly_weather_recalculation import (
     require_uniform_prediction_provenance,
     resolve_analysis_weather_binding,
 )
+from app.services.lca_size import resolve_lca_size_prefix
 from app.services.diesel_heating import (
     diesel_heating_config,
     diesel_heating_factor,
@@ -366,9 +367,6 @@ _LCA_PHASES = (
     "maintenance", "vehicle", "endOfLife", "infrastructure",
 )
 
-_SIZE_PREFIXES = ("9m", "13m", "18m")
-
-
 def _lca_base_url() -> str:
     return get_cached_settings().lca_api_base_url.rstrip("/")
 
@@ -388,28 +386,6 @@ async def _lca_get_impact(vehicle_id: str) -> Optional[dict]:
     except Exception as exc:
         logger.warning("LCA API call failed for vehicle %s: %s", vehicle_id, exc)
         return None
-
-
-def _extract_size_prefix(model_size: str | None) -> str | None:
-    if not model_size or model_size in ("None", "N/A"):
-        return None
-    for prefix in _SIZE_PREFIXES:
-        if model_size.startswith(prefix):
-            return prefix
-    return None
-
-
-def _bus_length_to_size_prefix(bus_length_m: float | int | None) -> str | None:
-    """Map a numeric bus length to the closest standard LCA size prefix."""
-    if bus_length_m is None:
-        return None
-    length = float(bus_length_m)
-    if length <= 10:
-        return "9m"
-    elif length <= 14:
-        return "13m"
-    else:
-        return "18m"
 
 
 def _resolve_bus_size_class(bus_length_m: float | int | None) -> str | None:
@@ -458,24 +434,22 @@ async def _resolve_lca_vehicle(
 
     specs = bus_model.specs or {}
     model_size = specs.get("size")
-    size_prefix = _extract_size_prefix(str(model_size) if model_size is not None else None)
+    size_resolution = resolve_lca_size_prefix(specs)
 
-    if size_prefix is None:
-        size_prefix = _bus_length_to_size_prefix(specs.get("bus_length_m"))
-        if size_prefix is not None:
-            logger.debug(
-                "LCA resolve: specs.size not set for bus_model '%s', "
-                "falling back to specs.bus_length_m=%s → prefix '%s'",
-                bus_model.name, specs.get("bus_length_m"), size_prefix,
-            )
-
-    if size_prefix is None:
+    if size_resolution is None:
         logger.warning(
             "LCA resolve: cannot determine size prefix for bus_model '%s' "
             "(specs.size=%r, specs.bus_length_m=%r)",
             bus_model.name, model_size, specs.get("bus_length_m"),
         )
         return None
+    size_prefix = size_resolution.prefix
+    if size_resolution.source == "bus_length_m":
+        logger.debug(
+            "LCA resolve: specs.size not usable for bus_model '%s', "
+            "falling back to specs.bus_length_m=%r → prefix '%s'",
+            bus_model.name, specs.get("bus_length_m"), size_prefix,
+        )
 
     lca_stmt = select(BusesLcaData).where(
         BusesLcaData.active.is_(True),
