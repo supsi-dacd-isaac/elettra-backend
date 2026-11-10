@@ -1,7 +1,7 @@
-"""Fleet optimization test: 74 shifts with 4 bus models.
+"""Fleet optimization tests using the available TPL shifts and four bus models.
 
 Replicates the playground optimization (optimize_pyomo_gb_sensitivity.py)
-through the production API. Exercises depot charging, charging_only,
+through the checked-out API with staging data. Exercises depot charging, charging_only,
 battery_only, and joint optimization modes.
 
 Run with:  ./run_tests.sh tests/test_fleet_optimization.py
@@ -138,7 +138,6 @@ CHARGING_STATIONS_BY_NAME = {
     "Viganello, S. Siro":         {"slot_costs_chf": [350e3],                     "max_total_power_kw": 450,  "max_power_per_slot_kw": 450},
 }
 
-DEPOT_STATION_NAMES = ["TPL Rimessa 1", "TPL Rimessa 2", "TPL Rimessa 3"]
 DEPOT_CONFIG = {"slot_costs_chf": [100e3, 100e3, 100e3, 100e3], "max_total_power_kw": 1000, "max_power_per_slot_kw": 80}
 
 
@@ -191,7 +190,7 @@ def _shift_key(fname: str) -> str:
     return base
 
 
-def load_shift_files() -> list[dict]:
+def load_shift_files(*, include_depots: bool = False) -> list[dict]:
     """
     Load all shift JSONs, merging __part1/__part2/__part3 into single shifts.
     Returns list of {key, route, model_name, trip_ids, name}.
@@ -210,7 +209,9 @@ def load_shift_files() -> list[dict]:
         for p in sorted(paths):
             with open(p) as fh:
                 trips = json.load(fh)
-            trip_ids.extend(t["id"] for t in trips if t.get("status") == "gtfs")
+            trip_ids.extend(t["id"] for t in trips
+                            if t.get("status") == "gtfs"
+                            or (include_depots and t.get("status") == "depot"))
         if not trip_ids:
             continue
         route = _route_from_filename(paths[0].name)
@@ -226,41 +227,41 @@ def load_shift_files() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Resolve stop names to stop_ids via DB
+# Resolve charging opportunities from the selected shifts
 # ---------------------------------------------------------------------------
 
-def resolve_stop_ids_by_name(client: TestClient, token: str, stop_names: list[str]) -> dict[str, list[str]]:
-    """Query the GTFS stops table to map stop_name -> [stop_id, ...] (all platforms).
+def select_charging_stations(client, token, shift_ids, *, include_depots=False):
+    """Use the same owned-shift termini endpoint as the frontend, never name lookup."""
+    if not shift_ids:
+        raise ValueError("At least one shift is required")
+    response = client.post(
+        f"{SIM_BASE}/charging-stops/candidates",
+        json={"shift_ids": list(dict.fromkeys(shift_ids))},
+        headers=auth_headers(token),
+    )
+    assert response.status_code == 200, response.text
+    return configure_charging_stations(response.json(), include_depots=include_depots)
 
-    Uses asyncpg directly to avoid event-loop conflicts with AsyncSessionLocal.
-    Returns ALL stop_ids for each name since the same physical stop can have
-    multiple platforms with different UUIDs.
-    """
-    import asyncio
-    import asyncpg
-    from app.core.config import get_cached_settings
 
-    settings = get_cached_settings()
-    dsn = settings.database_url
-    if dsn.startswith("postgresql+asyncpg://"):
-        dsn = "postgresql://" + dsn.split("://", 1)[1]
-
-    async def _resolve():
-        conn = await asyncpg.connect(dsn)
-        try:
-            rows = await conn.fetch(
-                "SELECT id, stop_name FROM gtfs_stops WHERE stop_name = ANY($1::text[])",
-                stop_names,
-            )
-        finally:
-            await conn.close()
-        name_map: dict[str, list[str]] = {}
-        for row in rows:
-            sname = row["stop_name"]
-            name_map.setdefault(sname, []).append(str(row["id"]))
-        return name_map
-
-    return asyncio.run(_resolve())
+def configure_charging_stations(candidates, *, include_depots=False):
+    """Apply fixture prices only to actual terminal IDs; retain distinct platforms."""
+    stations, depots, seen = [], [], set()
+    for candidate in candidates:
+        sid, name = candidate["stop_id"], candidate["stop_name"]
+        if sid in seen:
+            continue
+        seen.add(sid)
+        if candidate["is_depot"]:
+            # An intermediate return is also a charging opportunity, even if
+            # no vehicle block finishes there (depot_bus_count == 0).
+            if include_depots:
+                slots = max(4, candidate.get("depot_bus_count", 0))
+                depots.append(dict(stop_id=sid, slot_costs_chf=[100_000.] * slots,
+                                   max_total_power_kw=2000.,
+                                   max_power_per_slot_kw=DEPOT_CONFIG["max_power_per_slot_kw"]))
+        elif name in CHARGING_STATIONS_BY_NAME:
+            stations.append({"stop_id": sid, **CHARGING_STATIONS_BY_NAME[name]})
+    return stations, depots
 
 
 def discover_all_end_stops(trip_ids: list[str]) -> dict[str, str]:
@@ -373,15 +374,36 @@ _skip_cond = not (
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def fleet_env(client: TestClient):
-    """Set up 4 bus models, up to 74 shifts, and predictions for all of them."""
+def fleet_env(client: TestClient, request):
+    return build_fleet_env(client, request, load_shift_files())
+
+
+@pytest.fixture(scope="module")
+def depot_env(client: TestClient, request):
+    # Preserve the source depot movements, including returns between split duties.
+    from test_support.fleet_depot_fixture import owned_depot_shift_copies
+    token = get_auth_token(client)
+    assert token, "Authentication failed"
+    shifts = owned_depot_shift_copies(
+        request, load_shift_files(include_depots=True)[:5], current_user_id(client, token))
+    return build_fleet_env(client, request, shifts)
+
+
+def build_fleet_env(client, request, shift_defs):
+    """Create only temporary models/buses/shifts and clean them even after setup errors."""
     token = get_auth_token(client)
     assert token, "Authentication failed"
     hdrs = auth_headers(token)
     user_id = current_user_id(client, token)
 
-    # 1. Create bus models
     model_ids: dict[str, str] = {}
+    bus_ids: dict[str, str] = {}
+    shift_records: list[dict] = []
+    request.addfinalizer(lambda: cleanup_staging_simulation_graph(
+        model_ids=list(model_ids.values()), bus_ids=list(bus_ids.values()),
+        shift_ids=[s["shift_id"] for s in shift_records]))
+
+    # 1. Create bus models
     for model_name, specs in BUS_MODEL_SPECS.items():
         unique = uuid.uuid4().hex[:8]
         r = client.post(
@@ -393,7 +415,6 @@ def fleet_env(client: TestClient):
         model_ids[model_name] = r.json()["id"]
 
     # 2. Create one bus per model
-    bus_ids: dict[str, str] = {}
     for model_name, model_id in model_ids.items():
         unique = uuid.uuid4().hex[:8]
         r = client.post(
@@ -404,12 +425,10 @@ def fleet_env(client: TestClient):
         assert r.status_code == 200, f"create bus {model_name} failed: {r.text}"
         bus_ids[model_name] = r.json()["id"]
 
-    # 3. Load shift files
-    shift_defs = load_shift_files()
+    # 3. Validate the requested fixture scope
     assert len(shift_defs) > 0, "No shift files found"
 
     # 4. Create shifts via API
-    shift_records: list[dict] = []  # {shift_id, model_name, bus_model_id, key}
     for sd in shift_defs:
         model_name = sd["model_name"]
         bus_id = bus_ids[model_name]
@@ -425,6 +444,7 @@ def fleet_env(client: TestClient):
             "bus_model_id": model_ids[model_name],
             "key": sd["key"],
             "route": sd["route"],
+            "trip_ids": sd["trip_ids"],
         })
 
     # 5. Run predictions in batches (by bus model)
@@ -439,45 +459,9 @@ def fleet_env(client: TestClient):
         for sid, pid in zip(model_shift_ids, pred_ids):
             prediction_run_ids[sid] = [pid]
 
-    # 6. Resolve charging station stop_ids (ALL platforms per name)
-    all_station_names = list(CHARGING_STATIONS_BY_NAME.keys()) + DEPOT_STATION_NAMES
-    name_to_stop_ids = resolve_stop_ids_by_name(client, token, all_station_names)
-
-    # Build station configs: one entry per platform (stop_id), sharing the
-    # same cost/power settings.  This ensures trips ending at any platform
-    # of a named stop can be matched to a charger.
-    known_stop_ids: set[str] = set()
-    charging_stations_config = []
-    for name, cfg in CHARGING_STATIONS_BY_NAME.items():
-        sids = name_to_stop_ids.get(name, [])
-        for sid in sids:
-            if sid not in known_stop_ids:
-                entry = {
-                    "stop_id": sid,
-                    "slot_costs_chf": cfg["slot_costs_chf"],
-                    "max_total_power_kw": cfg["max_total_power_kw"],
-                }
-                if "max_power_per_slot_kw" in cfg:
-                    entry["max_power_per_slot_kw"] = cfg["max_power_per_slot_kw"]
-                charging_stations_config.append(entry)
-                known_stop_ids.add(sid)
-
-    # Depot: 1 slot per bus in the fleet, high power
-    n_buses_total = len(shift_records)
-    depot_slots = max(4, n_buses_total)
-    depot_power = 2000.0  # 2 MW
-    depot_stations_config = []
-    for name in DEPOT_STATION_NAMES:
-        sids = name_to_stop_ids.get(name, [])
-        for sid in sids:
-            if sid not in known_stop_ids:
-                depot_stations_config.append({
-                    "stop_id": sid,
-                    "slot_costs_chf": [100_000.0] * depot_slots,
-                    "max_total_power_kw": depot_power,
-                    "max_power_per_slot_kw": DEPOT_CONFIG["max_power_per_slot_kw"],
-                })
-                known_stop_ids.add(sid)
+    # 6. Scope candidates to this fixture's trips and the logged-in user's depots.
+    charging_stations_config, depot_stations_config = select_charging_stations(
+        client, token, [s["shift_id"] for s in shift_records], include_depots=True)
 
     env = {
         "token": token,
@@ -488,17 +472,10 @@ def fleet_env(client: TestClient):
         "prediction_run_ids": prediction_run_ids,
         "charging_stations_config": charging_stations_config,
         "depot_stations_config": depot_stations_config,
-        "name_to_stop_ids": name_to_stop_ids,
         "optimization_run_ids": [],
     }
 
-    yield env
-
-    cleanup_staging_simulation_graph(
-        model_ids=list(model_ids.values()),
-        bus_ids=list(bus_ids.values()),
-        shift_ids=[record["shift_id"] for record in shift_records],
-    )
+    return env
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +494,7 @@ def test_fleet_setup_complete(client: TestClient, fleet_env, record):
         "fleet_setup_complete",
         ok,
         f"shifts={n_shifts}, predictions={n_predictions}, "
-        f"candidate_stations={n_stations} (all platforms), depot={n_depot}",
+        f"candidate_stations={n_stations} (selected trip termini), depot={n_depot}",
     )
 
 
@@ -528,6 +505,40 @@ def _collect_all_ids(fleet_env) -> tuple[list[str], list[str]]:
     for sid in all_shift_ids:
         all_pred_ids.extend(fleet_env["prediction_run_ids"].get(sid, []))
     return all_shift_ids, all_pred_ids
+
+
+def optimization_is_conclusive(data):
+    """A completed API job may still contain a timeout or unverified forecast."""
+    result = data.get("results") or {}
+    verification = result.get("forecast_verification") or {}
+    return (
+        data.get("status") == "completed"
+        and result.get("solver_status") in {"optimal", "infeasible"}
+        and verification.get("status") in {"verified", "physical_limits_exceeded", "infeasible"}
+    )
+
+
+@pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
+@pytest.mark.parametrize("subset_size", [1, 5, None])
+def test_fleet_candidates_match_selected_trip_termini(client, fleet_env, subset_size):
+    """Independent stop-times oracle excludes intermediate/other-edition/parent rows."""
+    selected = fleet_env["shift_records"][:subset_size]
+    trip_ids = list(dict.fromkeys(tid for shift in selected for tid in shift["trip_ids"]))
+    expected = discover_all_end_stops(trip_ids)
+    response = client.post(
+        f"{SIM_BASE}/charging-stops/candidates",
+        json={"shift_ids": [s["shift_id"] for s in selected]},
+        headers=auth_headers(fleet_env["token"]),
+    )
+    assert response.status_code == 200, response.text
+    candidates = response.json()
+    assert len(candidates) == len(expected)
+    assert {c["stop_id"]: c["stop_name"] for c in candidates} == expected
+    stations, depots = configure_charging_stations(candidates)
+    assert not depots
+    assert {s["stop_id"] for s in stations} == {
+        sid for sid, name in expected.items() if name in CHARGING_STATIONS_BY_NAME
+    }
 
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
@@ -561,7 +572,7 @@ def test_fleet_charging_only(client: TestClient, fleet_env, record):
     data = wait_for_optimization(client, token, run_id, max_wait=900)
 
     res = data.get("results", {})
-    ok = data["status"] == "completed"
+    ok = optimization_is_conclusive(data)
     record(
         "fleet_charging_only", ok,
         f"status={data['status']}, buses={len(all_shift_ids)}, "
@@ -613,7 +624,7 @@ def test_fleet_battery_only(client: TestClient, fleet_env, record):
     data = wait_for_optimization(client, token, run_id, max_wait=900)
 
     res = data.get("results", {})
-    ok = data["status"] == "completed"
+    ok = optimization_is_conclusive(data)
     batt = res.get("battery_results", {})
     excess = sum(1 for v in batt.values() if v.get("excess_packs", 0) > 0)
     record(
@@ -660,7 +671,7 @@ def test_fleet_joint(client: TestClient, fleet_env, record):
     data = wait_for_optimization(client, token, run_id, max_wait=900)
 
     res = data.get("results", {})
-    ok = data["status"] == "completed"
+    ok = optimization_is_conclusive(data)
     record(
         "fleet_joint", ok,
         f"status={data['status']}, buses={len(all_shift_ids)}, "
@@ -674,19 +685,21 @@ def test_fleet_joint(client: TestClient, fleet_env, record):
 
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
-def test_depot_charging_utilized(client: TestClient, fleet_env, record):
-    """Verify that depot charging is actually used when depot_dwell_minutes_after is set."""
-    token = fleet_env["token"]
+def test_depot_charging_utilized(client: TestClient, depot_env, record):
+    """Verify actual depot energy with real return trips and post-shift dwell enabled."""
+    token = depot_env["token"]
 
-    # Use first 5 shifts (mixed bus types) for a focused depot test
-    subset = fleet_env["shift_records"][:5]
+    # Separate five-shift fixture retaining its actual depot movements.
+    subset = depot_env["shift_records"][:5]
     subset_shift_ids = [s["shift_id"] for s in subset]
     subset_pred_ids = []
     for sid in subset_shift_ids:
-        subset_pred_ids.extend(fleet_env["prediction_run_ids"].get(sid, []))
+        subset_pred_ids.extend(depot_env["prediction_run_ids"].get(sid, []))
 
-    # Include depot stations in the charging config
-    stations = fleet_env["charging_stations_config"] + fleet_env["depot_stations_config"]
+    assert depot_env["depot_stations_config"], "No selected shift actually returns to an owned depot"
+
+    # Include only depots reached by this subset
+    stations = depot_env["charging_stations_config"] + depot_env["depot_stations_config"]
 
     # Fixed chargers for battery_only mode
     stations_fixed = [
@@ -718,17 +731,14 @@ def test_depot_charging_utilized(client: TestClient, fleet_env, record):
     )
     assert r.status_code == 200, f"depot charging submit failed: {r.text}"
     run_id = r.json()["optimization_run_id"]
-    fleet_env["optimization_run_ids"].append(run_id)
+    depot_env["optimization_run_ids"].append(run_id)
     data = wait_for_optimization(client, token, run_id, max_wait=600)
 
-    completed = data["status"] == "completed"
+    completed = optimization_is_conclusive(data)
     results = data.get("results", {})
     station_util = results.get("station_utilization", {})
 
-    depot_stop_ids = set()
-    for name in DEPOT_STATION_NAMES:
-        sids = fleet_env["name_to_stop_ids"].get(name, [])
-        depot_stop_ids.update(sids)
+    depot_stop_ids = {s["stop_id"] for s in depot_env["depot_stations_config"]}
 
     depot_energy = sum(
         station_util.get(sid, {}).get("total_energy_kwh", 0)
@@ -737,7 +747,11 @@ def test_depot_charging_utilized(client: TestClient, fleet_env, record):
 
     record(
         "depot_charging_utilized",
-        completed,
+        completed and depot_energy > 0,
         f"status={data['status']}, depot_energy={depot_energy:.1f} kWh, "
+        f"shifts={len(subset)}, candidate_stations={len(stations)}, "
         f"depot_stations_found={len(depot_stop_ids)}",
     )
+
+    assert completed, f"Depot optimization failed: {results}"
+    assert depot_energy > 0, "The solver completed without charging at any selected depot"

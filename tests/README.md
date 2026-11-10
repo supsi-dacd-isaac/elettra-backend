@@ -43,6 +43,29 @@ behavior.
 The official VECTO SSM oracle has its own instructions in
 [`vecto_oracle/README.md`](vecto_oracle/README.md).
 
+### Fleet charging regressions
+
+```bash
+./run_tests.sh tests/test_fleet_charging_selection.py tests/test_fleet_optimization.py -q
+```
+
+These integrations execute the checked-out API and solver workers against the
+validated staging database and profile storage. Charging candidates come from
+`/api/v1/simulation/charging-stops/candidates` for the test's selected shifts;
+they are never expanded by searching all GTFS records with the same stop name.
+The candidate list is neither truncated nor allowed to bypass the API limit.
+
+The depot case uses five source duties with their depot movements preserved.
+It creates owned temporary copies of auxiliary trips and depot stops, references
+existing elevation objects read-only, and asserts positive depot charging energy.
+Cleanup removes only fixture-created rows, including after setup failure.
+The selection regressions also compare candidates against the actual trip
+termini for one shift, five shifts and the full fleet. Full solver cases can
+take several minutes each (up to 600 solver seconds per fleet scenario).
+The integration assertions require a conclusive outcome: verified feasibility
+or established infeasibility. An API job marked `completed` with a solver
+timeout or an unverified forecast is not accepted as a successful calculation.
+
 ## Environment
 
 The test environment file is selected in this order:
