@@ -23,7 +23,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.routers.yearly_analysis import (
     _scale_indicator_phases,
     _allocate_phases_by_share,
-    _bus_length_to_size_prefix,
     _resolve_bus_size_class,
     _get_configured_diesel_lca_vehicle,
     _LCA_PHASES,
@@ -324,33 +323,6 @@ class TestAllocatePhasesByShare:
         phase_sum = sum(result[k] for k in PHASE_KEYS if result.get(k) is not None)
         assert abs(phase_sum - electric_total) < 1.0
         assert abs(result["total"] - phase_sum) < 0.01
-
-
-class TestBusLengthToSizePrefix:
-    """Tests for _bus_length_to_size_prefix fallback mapping."""
-
-    def test_9m(self):
-        assert _bus_length_to_size_prefix(9) == "9m"
-        assert _bus_length_to_size_prefix(8.5) == "9m"
-        assert _bus_length_to_size_prefix(10) == "9m"
-
-    def test_13m(self):
-        assert _bus_length_to_size_prefix(12) == "13m"
-        assert _bus_length_to_size_prefix(13) == "13m"
-        assert _bus_length_to_size_prefix(14) == "13m"
-        assert _bus_length_to_size_prefix(11) == "13m"
-
-    def test_18m(self):
-        assert _bus_length_to_size_prefix(18) == "18m"
-        assert _bus_length_to_size_prefix(15) == "18m"
-        assert _bus_length_to_size_prefix(24) == "18m"
-
-    def test_none(self):
-        assert _bus_length_to_size_prefix(None) is None
-
-    def test_float_conversion(self):
-        assert _bus_length_to_size_prefix(12.0) == "13m"
-        assert _bus_length_to_size_prefix(18.5) == "18m"
 
 
 class TestRealLcaApiResponse:

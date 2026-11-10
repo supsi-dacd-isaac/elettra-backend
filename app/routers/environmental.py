@@ -27,6 +27,7 @@ from app.models import (
     GtfsStopsTimes, GtfsTrips, Shifts, ShiftsStructures, Users,
 )
 from app.core.shift_distance import RECURRENCE_DAYS, RecurrenceType
+from app.services.lca_size import LCA_SIZE_PREFIXES, resolve_lca_size_prefix
 from app.schemas.lca import (
     DataVersion,
     ElectricityMix,
@@ -93,21 +94,6 @@ def _extract_query_params(request: Request) -> Dict[str, str]:
 # Shift yearly impact  (GET1)
 # ========================================================================== #
 
-_SIZE_PREFIXES = ("9m", "13m", "18m")
-
-
-def _extract_size_prefix(model_size: str | None) -> str | None:
-    """
-    Return the canonical LCA size prefix (``9m``, ``13m``, ``18m``) from a
-    ``buses_models.specs.size`` value, or ``None`` when no match is found.
-    """
-    if not model_size or model_size in ("None", "N/A"):
-        return None
-    for prefix in _SIZE_PREFIXES:
-        if model_size.startswith(prefix):
-            return prefix
-    return None
-
 
 _INDICATOR_UNITS: Dict[str, str] = {
     "primaryEnergy": "MJ oil-eq",
@@ -151,7 +137,8 @@ def _scale_breakdown(
     description=(
         "End-to-end yearly environmental impact for a bus shift.\n\n"
         "**Steps performed internally:**\n"
-        "1. Resolve ``shift → bus → bus_model → specs.size``.\n"
+        "1. Resolve ``shift → bus → bus_model → specs.size`` (falling back "
+        "to ``specs.bus_length_m``).\n"
         "2. Match the size prefix (9m / 13m / 18m) against the active "
         "``buses_lca_data`` row.\n"
         "3. Call the upstream LCA API ``/vehicle/{lca_id}/impact`` to get "
@@ -191,7 +178,7 @@ async def get_shift_yearly_impact(
     else:
         days_per_year = RECURRENCE_DAYS[recurrence]
 
-    # --- shift → bus → bus_model → specs.size --------------------------------
+    # --- shift → bus → bus_model → LCA size ----------------------------------
     shift = await get_owned_shift(
         db, shift_id, current_user.id, current_user.company_id
     )
@@ -204,16 +191,29 @@ async def get_shift_yearly_impact(
 
     bus_model = await get_owned_bus_model(db, bus.bus_model_id, current_user.id)
 
-    model_size = (bus_model.specs or {}).get("size")
-    size_prefix = _extract_size_prefix(str(model_size) if model_size is not None else None)
-    if size_prefix is None:
+    specs = bus_model.specs or {}
+    model_size = specs.get("size")
+    bus_length_m = specs.get("bus_length_m")
+    size_resolution = resolve_lca_size_prefix(specs)
+    if size_resolution is None:
         raise HTTPException(
             status_code=422,
             detail=(
                 f"Cannot determine LCA size category from bus model "
-                f"'{bus_model.name}' (specs.size='{model_size}'). "
-                f"Expected a value starting with one of: {', '.join(_SIZE_PREFIXES)}."
+                f"'{bus_model.name}' (specs.size={model_size!r}, "
+                f"specs.bus_length_m={bus_length_m!r}). Expected specs.size "
+                f"to start with one of {', '.join(LCA_SIZE_PREFIXES)}, or a "
+                f"finite positive specs.bus_length_m."
             ),
+        )
+    size_prefix = size_resolution.prefix
+    if size_resolution.source == "bus_length_m":
+        logger.debug(
+            "Shift LCA resolve: specs.size not usable for bus_model '%s', "
+            "falling back to specs.bus_length_m=%r → prefix '%s'",
+            bus_model.name,
+            bus_length_m,
+            size_prefix,
         )
 
     # --- match active buses_lca_data row -------------------------------------
