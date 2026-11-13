@@ -144,6 +144,24 @@ class GtfsRoutesReadWithVariant(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AgencyNetworkPreviewPoint(BaseModel):
+    lat: float
+    lon: float
+
+
+class AgencyNetworkPreviewLine(BaseModel):
+    label: str
+    color: Optional[str] = None
+    points: list[AgencyNetworkPreviewPoint]
+
+
+class AgencyNetworkPreviewRead(BaseModel):
+    agency_id: UUID
+    agency_name: str
+    route_count: int = Field(ge=0)
+    lines: list[AgencyNetworkPreviewLine]
+
+
 class ShiftStructureItem(BaseModel):
     id: UUID
     trip_id: UUID
