@@ -10,6 +10,8 @@ import logging
 import math
 import os
 import time
+from simulation.battery_policy import policy_from_params, session_timing
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -81,6 +83,7 @@ class StationData:
     max_total_power_kw: float
     max_power_per_slot_kw: Optional[float]
     cost_model: Optional[dict] = None
+    is_depot: bool = False
 
 
 @dataclass
@@ -90,6 +93,13 @@ class OptimizationConfig:
     min_soc: float = 0.4
     max_soc: float = 0.9
     state_of_health: float = 1.0
+    battery_soc_policy: str = "residual_soc"
+    allowed_min_soc: float = .1
+    allowed_max_soc: float = .95
+
+    @property
+    def battery_policy(self):
+        return policy_from_params(vars(self))
 
     # Battery cost (joint mode)
     battery_cost_per_kwh: float = 0.0
@@ -99,6 +109,7 @@ class OptimizationConfig:
     # Session constraints
     min_session_duration_minutes: int = 0
     session_connection_minutes: int = 0
+    layover_reduction_minutes: int = 0
     lock_entire_dwell: bool = True
     cp_slack_minutes: int = 0
 
@@ -248,7 +259,8 @@ def _estimate_excess_pack_upper_bounds(
     config: OptimizationConfig,
 ) -> np.ndarray:
     """Estimate a conservative upper bound for excess-pack slack variables."""
-    usable_soc_window = max(1e-6, float(config.max_soc) - float(config.min_soc))
+    policy = config.battery_policy
+    usable_soc_window = policy.max_soc - policy.min_soc
     bounds: list[int] = []
 
     for bus in buses:
@@ -273,6 +285,11 @@ def solve_optimization(
     config: OptimizationConfig,
 ) -> OptimizationResult:
     """Build and solve the charging-point / battery-sizing MILP."""
+    policy = config.battery_policy
+    if config.layover_reduction_minutes and not config.lock_entire_dwell:
+        raise ValueError("Layover reduction requires entire-dwell occupancy")
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in (config.session_connection_minutes, config.layover_reduction_minutes)):
+        raise ValueError("Session timing must use nonnegative integer minutes")
     t_start = time.time()
     logger.info('Building optimization model: objective=%s, mode=%s, buses=%d',
                 config.charging_objective, config.mode, len(buses))
@@ -586,16 +603,16 @@ def solve_optimization(
 
     def soc_init_rule(mdl, b):
         ps = float(pack_size[b]) * config.state_of_health
-        return mdl.soc[0, b] == (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(config.max_soc)
+        return mdl.soc[0, b] == (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(policy.max_soc)
     m.soc_init = Constraint(m.B, rule=soc_init_rule)
 
     def soc_min_rule(mdl, t, b):
         ps = float(pack_size[b]) * config.state_of_health
-        return mdl.soc[t, b] >= (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(config.min_soc)
+        return mdl.soc[t, b] >= (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(policy.min_soc)
 
     def soc_max_rule(mdl, t, b):
         ps = float(pack_size[b]) * config.state_of_health
-        return mdl.soc[t, b] <= (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(config.max_soc)
+        return mdl.soc[t, b] <= (mdl.n_packs[b] + mdl.n_excess_packs[b]) * ps * float(policy.max_soc)
 
     m.soc_min = Constraint(m.T1, m.B, rule=soc_min_rule)
     m.soc_max = Constraint(m.T1, m.B, rule=soc_max_rule)
@@ -704,11 +721,18 @@ def solve_optimization(
 
     # Connection buffer
     connection_buffer = config.session_connection_minutes
-    if connection_buffer > 0:
+    if connection_buffer > 0 or config.layover_reduction_minutes > 0:
         conn_idx: List[Tuple[int, int, int]] = []
         for b in range(num_buses):
             for start_t in range(num_steps):
-                for enforce_t in range(start_t, min(num_steps, start_t + connection_buffer)):
+                s_idx = int(station_at_minute[start_t, b])
+                if s_idx < 0:
+                    continue
+                reduction = 0 if stations[s_idx].is_depot else config.layover_reduction_minutes
+                for enforce_t in range(start_t, min(num_steps, start_t + connection_buffer + reduction)):
+                    # Never let a short stop buffer block a later independent stop.
+                    if not presence_mask[enforce_t, b] or station_at_minute[enforce_t, b] != s_idx:
+                        break
                     conn_idx.append((start_t, enforce_t, b))
         if conn_idx:
             m.ConnectionBufferIndex = Set(dimen=3, initialize=conn_idx)
@@ -985,7 +1009,8 @@ def solve_optimization(
             "base_kwh": base_kwh,
             "optimized_kwh": optimized_kwh,
             "selected_nominal_kwh": np_val * float(pack_size[b_idx]),
-            "selected_usable_kwh": np_val * float(pack_size[b_idx]) * config.state_of_health * (config.max_soc - config.min_soc),
+            "battery_energy": {**policy.as_dict(), **policy.energy(np_val * float(pack_size[b_idx]))},
+            "selected_usable_kwh": np_val * float(pack_size[b_idx]) * config.state_of_health * (policy.max_soc - policy.min_soc),
             "max_physical_kwh": physical_max_kwh,
             "physical_feasible": physical_feasible,
             "physical_limit_exceeded": total_required_packs > int(max_packs[b_idx]),
@@ -1036,6 +1061,10 @@ def solve_optimization(
                 and value(m.assign[start, b_idx, s, k]) > .5), None)
             end = session["end_minute"] - first_t
             session["connected_without_charging_minutes"] = int(np.sum(power_val[start:end, b_idx] < 1e-6))
+            session.update(session_timing(end-start, config.session_connection_minutes,
+                0 if stations[s_idx].is_depot else config.layover_reduction_minutes,
+                int(np.sum(power_val[start:end, b_idx] >= 1e-6))))
+            session["is_depot"] = stations[s_idx].is_depot
         per_bus_summary.append({
             "shift_id": bus.shift_id,
             "shift_name": bus.shift_name,

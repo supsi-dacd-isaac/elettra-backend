@@ -770,6 +770,8 @@ async def create_optimization_run(
     # `name` is a first-class column on optimization_runs; keep it out of
     # input_params (which is reserved for solver/technical inputs).
     input_params = request.model_dump(mode="json", exclude={"name"})
+    from simulation.battery_policy import operating_assumptions
+    input_params["operating_assumptions"] = operating_assumptions(input_params)
     input_params["gtfs_provenance"] = gtfs_provenance
     if request.evaluate_both_bases:
         input_params["consumption_basis"] = "mean"
@@ -956,9 +958,10 @@ async def create_basis_comparison(
     source, candidate = await _basis_comparison(db, current_user, run_id, basis)
     if candidate:
         return {"optimization_run_id": str(candidate.id), "status": candidate.status, "reused": True}
+    from simulation.battery_policy import historical_battery_params
     try:
         request = OptimizationRequest.model_validate({
-            **source.input_params, "name": f"{source.name or 'Evaluation'} · {'Q95' if basis == 'aggregate_q95' else 'Mean'}",
+            **historical_battery_params(source.input_params), "name": f"{source.name or 'Evaluation'} · {'Q95' if basis == 'aggregate_q95' else 'Mean'}",
             "prediction_run_ids": source.input_params.get("prediction_run_ids") or getattr(source, "prediction_run_ids", None),
             "consumption_basis": basis, "quantile_consumption": "mean",
             "evaluate_both_bases": False,

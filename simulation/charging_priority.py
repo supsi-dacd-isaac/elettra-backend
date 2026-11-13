@@ -6,6 +6,7 @@ SEGMENTS = 20
 
 
 def apply_reserve_objective(model, buses, config, first_minute):
+    policy = config.battery_policy
     # This objective must never influence battery or infrastructure sizing.
     if (config.fixed_battery_packs is None or config.fixed_station_slots is None
             or config.allow_excess_packs):
@@ -28,10 +29,10 @@ def apply_reserve_objective(model, buses, config, first_minute):
     objective = 0
     for t, i in points:
         capacity = value(model.n_packs[i]) * buses[i].pack_size_kwh * config.state_of_health
-        usable = capacity * (config.max_soc - config.min_soc)
+        usable = capacity * (policy.max_soc - policy.min_soc)
         if usable <= 0:
             raise ValueError("SOC reserve optimization requires positive usable capacity")
-        reserve = (model.soc[t, i] - capacity * config.min_soc) / usable
+        reserve = (model.soc[t, i] - capacity * policy.min_soc) / usable
         for j in range(SEGMENTS):
             lo, hi = j / SEGMENTS, (j + 1) / SEGMENTS
             slope = ((1 - hi) ** 2 - (1 - lo) ** 2) / (hi - lo)

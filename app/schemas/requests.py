@@ -582,7 +582,10 @@ class OptimizationRequest(BaseModel):
     # SOC limits
     min_soc: float = Field(default=0.4, ge=0.0, le=1.0, examples=[0.4])
     max_soc: float = Field(default=0.9, ge=0.0, le=1.0, examples=[0.9])
-    state_of_health: float = Field(default=1.0, ge=0.0, le=1.0, examples=[1.0])
+    state_of_health: float = Field(default=0.70, gt=0.0, le=1.0, allow_inf_nan=False, examples=[0.70])
+    battery_soc_policy: Literal["residual_soc", "constant_initial_usable"] = "residual_soc"
+    allowed_min_soc: float = Field(default=0.10, ge=0, le=1, allow_inf_nan=False)
+    allowed_max_soc: float = Field(default=0.95, ge=0, le=1, allow_inf_nan=False)
     quantile_consumption: str = Field(
         default="mean", examples=["mean"],
         description="Legacy per-trip basis: mean, median, or a numeric quantile. 0.95 is NOT aggregate Q95.",
@@ -629,7 +632,8 @@ class OptimizationRequest(BaseModel):
 
     # Session / timing constraints
     min_session_duration_minutes: int = Field(default=0, ge=0)
-    session_connection_minutes: int = Field(default=0, ge=0)
+    session_connection_minutes: StrictInt = Field(default=1, ge=0)
+    layover_reduction_minutes: StrictInt = Field(default=0, ge=0)
     lock_entire_dwell: bool = Field(default=True)
     cp_slack_minutes: int = Field(default=0, ge=0)
 
@@ -658,6 +662,10 @@ class OptimizationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_fields(self):
+        from simulation.battery_policy import policy_from_params
+        policy_from_params(self.model_dump())
+        if self.layover_reduction_minutes and not self.lock_entire_dwell:
+            raise ValueError("Layover reduction requires entire-dwell occupancy")
         if self.depot_peak_shaving and not self.daily_cycle:
             raise ValueError("Depot peak shaving requires a daily cycle")
         if self.daily_cycle and (not self.lock_entire_dwell or self.depot_dwell_minutes_after or self.cp_slack_minutes):
