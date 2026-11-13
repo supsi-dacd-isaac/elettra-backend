@@ -150,21 +150,13 @@ def create_shift(
 
 
 def get_shift_end_stops(client: TestClient, token: str, shift_id: str) -> list[str]:
-    """Get the end-stop IDs from the trips in a shift, for use as charging station candidates."""
-    r = client.get(f"{API_BASE}/shifts/{shift_id}", headers=auth_headers(token))
-    assert r.status_code == 200
-    structures = r.json().get("structures") or []
-    end_stop_ids = set()
-    for s in structures:
-        trip_id = s.get("trip_id")
-        if not trip_id:
-            continue
-        tr = client.get(f"{API_BASE}/trips/{trip_id}/schedule", headers=auth_headers(token))
-        if tr.status_code == 200:
-            stops = tr.json()
-            if stops:
-                end_stop_ids.add(stops[-1]["id"])
-    return list(end_stop_ids)
+    """Use the same owned terminal candidates as the application form."""
+    response = client.post(f"{SIM_BASE}/charging-stops/candidates",
+        json={"shift_ids": [shift_id]}, headers=auth_headers(token))
+    assert response.status_code == 200, response.text
+    stops = [row["stop_id"] for row in response.json()]
+    assert stops, "The real-duty integration fixture must exercise charging stations"
+    return stops
 
 
 def run_prediction_and_wait(
