@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.core.config import get_cached_settings
-from app.schemas.requests import OptimizationRequest
+from app.schemas.requests import OptimizationRequest, OptimizationRunUpdate
 
 __report_module__ = "optimization_run_name"
 
@@ -96,6 +96,57 @@ def _insert_legacy_run(
 
 def _delete_run(run_id: str) -> None:
     asyncio.run(_delete_run_async(run_id))
+
+
+async def _insert_paired_runs_async(user_id: str) -> tuple[str, str]:
+    import asyncpg
+
+    conn = await asyncpg.connect(_dsn_for_asyncpg())
+    try:
+        root_id = await conn.fetchval(
+            """
+            INSERT INTO optimization_runs (user_id, mode, status, input_params, name)
+            VALUES ($1::uuid, 'battery_only', 'completed', $2::jsonb, 'Original family')
+            RETURNING id
+            """,
+            uuid.UUID(user_id),
+            json.dumps({
+                "shift_ids": [],
+                "consumption_basis": "mean",
+                "paired_basis_role": "primary",
+            }),
+        )
+        comparison_id = await conn.fetchval(
+            """
+            INSERT INTO optimization_runs (user_id, mode, status, input_params, name)
+            VALUES ($1::uuid, 'battery_only', 'completed', $2::jsonb, 'Original family · Q95')
+            RETURNING id
+            """,
+            uuid.UUID(user_id),
+            json.dumps({
+                "shift_ids": [],
+                "consumption_basis": "aggregate_q95",
+                "paired_basis_role": "comparison",
+                "basis_source_run_id": str(root_id),
+            }),
+        )
+        basis_ids = {"mean": str(root_id), "aggregate_q95": str(comparison_id)}
+        await conn.execute(
+            """
+            UPDATE optimization_runs
+            SET input_params = input_params || $2::jsonb
+            WHERE id = ANY($1::uuid[])
+            """,
+            [root_id, comparison_id],
+            json.dumps({"basis_run_ids": basis_ids}),
+        )
+        return str(root_id), str(comparison_id)
+    finally:
+        await conn.close()
+
+
+def _insert_paired_runs(user_id: str) -> tuple[str, str]:
+    return asyncio.run(_insert_paired_runs_async(user_id))
 
 
 @pytest.fixture
@@ -200,6 +251,20 @@ def test_pydantic_name_excluded_from_input_params_dump(record):
     )
 
 
+def test_pydantic_update_name_is_trimmed_and_validated(record):
+    update = OptimizationRunUpdate.model_validate({"name": "  Renamed evaluation  "})
+    whitespace_rejected = False
+    try:
+        OptimizationRunUpdate.model_validate({"name": "   "})
+    except ValidationError:
+        whitespace_rejected = True
+    record(
+        "pydantic_update_name",
+        update.name == "Renamed evaluation" and whitespace_rejected,
+        f"name={update.name!r}, whitespace_rejected={whitespace_rejected}",
+    )
+
+
 # ---------------------------------------------------------------------------
 # HTTP request-validation tests (use the real /optimization-runs/ endpoint)
 # ---------------------------------------------------------------------------
@@ -231,6 +296,102 @@ def test_post_with_whitespace_name_returns_422(client: TestClient, auth_token, r
         r.status_code == 422,
         f"status={r.status_code} body={r.text[:200]}",
     )
+
+
+def test_patch_renames_single_owned_run(
+    client, auth_token, current_user_id, record
+):
+    run_id = _insert_legacy_run(current_user_id, "Original", None)
+    try:
+        response = client.patch(
+            f"{SIM_BASE}/optimization-runs/{run_id}",
+            json={"name": "  Renamed evaluation  "},
+            headers=_auth_headers(auth_token),
+        )
+        detail = client.get(
+            f"{SIM_BASE}/optimization-runs/{run_id}",
+            headers=_auth_headers(auth_token),
+        )
+        ok = (
+            response.status_code == 200
+            and response.json().get("name") == "Renamed evaluation"
+            and detail.status_code == 200
+            and detail.json().get("name") == "Renamed evaluation"
+        )
+        record(
+            "patch_single_run_name",
+            ok,
+            f"patch={response.status_code}, detail={detail.status_code}, "
+            f"name={detail.json().get('name') if detail.status_code == 200 else None!r}",
+        )
+    finally:
+        _delete_run(run_id)
+
+
+def test_patch_rejects_whitespace_without_changing_name(
+    client, auth_token, current_user_id, record
+):
+    run_id = _insert_legacy_run(current_user_id, "Original", None)
+    try:
+        response = client.patch(
+            f"{SIM_BASE}/optimization-runs/{run_id}",
+            json={"name": "   "},
+            headers=_auth_headers(auth_token),
+        )
+        detail = client.get(
+            f"{SIM_BASE}/optimization-runs/{run_id}",
+            headers=_auth_headers(auth_token),
+        )
+        ok = (
+            response.status_code == 422
+            and detail.status_code == 200
+            and detail.json().get("name") == "Original"
+        )
+        record(
+            "patch_whitespace_name",
+            ok,
+            f"patch={response.status_code}, name="
+            f"{detail.json().get('name') if detail.status_code == 200 else None!r}",
+        )
+    finally:
+        _delete_run(run_id)
+
+
+def test_patch_renames_mean_q95_family_atomically(
+    client, auth_token, current_user_id, record
+):
+    root_id, comparison_id = _insert_paired_runs(current_user_id)
+    try:
+        response = client.patch(
+            f"{SIM_BASE}/optimization-runs/{root_id}",
+            json={"name": "Winter service"},
+            headers=_auth_headers(auth_token),
+        )
+        root = client.get(
+            f"{SIM_BASE}/optimization-runs/{root_id}",
+            headers=_auth_headers(auth_token),
+        )
+        comparison = client.get(
+            f"{SIM_BASE}/optimization-runs/{comparison_id}",
+            headers=_auth_headers(auth_token),
+        )
+        ok = (
+            response.status_code == 200
+            and root.status_code == 200
+            and comparison.status_code == 200
+            and root.json().get("name") == "Winter service"
+            and comparison.json().get("name") == "Winter service · Q95"
+        )
+        record(
+            "patch_paired_run_names",
+            ok,
+            f"patch={response.status_code}, root="
+            f"{root.json().get('name') if root.status_code == 200 else None!r}, comparison="
+            f"{comparison.json().get('name') if comparison.status_code == 200 else None!r}",
+        )
+    finally:
+        _delete_run(comparison_id)
+        _delete_run(root_id)
 
 
 # ---------------------------------------------------------------------------

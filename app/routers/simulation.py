@@ -31,6 +31,7 @@ from app.schemas.requests import (
     PredictionRequest,
     YearlyPredictionRequest,
     OptimizationRequest,
+    OptimizationRunUpdate,
     _OPTIMIZATION_EXAMPLES,
 )
 from app.schemas.external_apis import (
@@ -217,6 +218,23 @@ def _serialize_optimization_run_list_item(
             float(objective_value) if isinstance(objective_value, (int, float)) else None
         ),
     )
+
+
+def _renamed_optimization_variant(
+    base_name: str,
+    run: OptimizationRuns,
+    root_id: UUID,
+) -> str:
+    """Return the display name for one member of a Mean/Q95 family."""
+    if run.id == root_id:
+        return base_name
+    params = run.input_params if isinstance(run.input_params, dict) else {}
+    basis = params.get("consumption_basis")
+    if basis == "aggregate_q95" or params.get("paired_basis_role") == "comparison":
+        return f"{base_name} · Q95"
+    if basis == "mean":
+        return f"{base_name} · Mean"
+    return base_name
 
 
 def _assert_yearly_prediction_stack_compatible(
@@ -908,6 +926,70 @@ async def get_optimization_run(
         result.basis_summaries = {basis: summaries.get(rid, {"status": "unavailable"})
                                   for basis, rid in ids.items()}
     return result
+
+
+@router.patch("/optimization-runs/{run_id}", response_model=OptimizationRunsRead)
+async def update_optimization_run(
+    run_id: UUID,
+    payload: OptimizationRunUpdate,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(require_analyst),
+):
+    """Rename an owned feasibility evaluation and its Mean/Q95 variants."""
+    target = await get_owned_optimization_run(db, run_id, current_user.id)
+    target_params = target.input_params if isinstance(target.input_params, dict) else {}
+
+    root = target
+    source_id = target_params.get("basis_source_run_id")
+    if source_id:
+        try:
+            root = await get_owned_optimization_run(db, UUID(str(source_id)), current_user.id)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="The evaluation has invalid Mean/Q95 relationship metadata",
+            ) from exc
+
+    family: dict[UUID, OptimizationRuns] = {root.id: root, target.id: target}
+    referenced_ids: set[UUID] = set()
+    for candidate in (root, target):
+        params = candidate.input_params if isinstance(candidate.input_params, dict) else {}
+        for value in (params.get("basis_run_ids") or {}).values():
+            try:
+                referenced_ids.add(UUID(str(value)))
+            except (TypeError, ValueError):
+                continue
+
+    if referenced_ids:
+        referenced = await db.execute(
+            select(OptimizationRuns).where(
+                OptimizationRuns.user_id == current_user.id,
+                OptimizationRuns.id.in_(referenced_ids),
+            )
+        )
+        family.update((run.id, run) for run in referenced.scalars().all())
+
+    variants = await db.execute(
+        select(OptimizationRuns).where(
+            OptimizationRuns.user_id == current_user.id,
+            OptimizationRuns.input_params["basis_source_run_id"].astext == str(root.id),
+        )
+    )
+    family.update((run.id, run) for run in variants.scalars().all())
+
+    try:
+        for run in family.values():
+            run.name = _renamed_optimization_variant(payload.name, run, root.id)
+        await db.commit()
+        await db.refresh(target)
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to rename optimization run",
+        ) from exc
+
+    return _serialize_optimization_run(target)
 
 
 async def _basis_comparison(db, current_user, run_id, basis):

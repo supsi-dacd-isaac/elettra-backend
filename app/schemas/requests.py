@@ -488,6 +488,24 @@ class ChargingStopCandidatesRequest(BaseModel):
     )
 
 
+class OptimizationRunUpdate(BaseModel):
+    """Mutable presentation fields of an existing optimization run."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=200,
+        description=(
+            "New base display name for the feasibility evaluation. Related "
+            "Mean/Q95 variants are renamed by the endpoint in the same transaction."
+        ),
+    )
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, value: Any) -> str:
+        return _trim_non_empty_bus_model_name(value)
+
+
 class OptimizationRequest(BaseModel):
     """Fleet charging and battery optimization request.
 

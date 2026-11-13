@@ -616,7 +616,7 @@ def test_update_yearly_analysis_success(client, record):
     headers = get_auth_headers(token)
     response = client.patch(
         f"{API_BASE}/{analysis_id}",
-        json={"name": "Updated Name"},
+        json={"name": "  Updated Name  "},
         headers=headers,
     )
 
@@ -624,6 +624,34 @@ def test_update_yearly_analysis_success(client, record):
     if response.status_code == 200:
         data = response.json()
         record("update_name_changed", data.get("name") == "Updated Name", f"name={data.get('name')}")
+
+    client.delete(f"{API_BASE}/{analysis_id}", headers=headers)
+
+
+def test_update_yearly_analysis_rejects_whitespace_name(client, record):
+    token = get_auth_token(client)
+    if not token:
+        record("update_whitespace_auth_failed", False, "Could not get auth token")
+        return
+
+    analysis_id = create_test_analysis(client, token, "Keep This Name")
+    if not analysis_id:
+        record("update_whitespace_create_failed", False, "Could not create test analysis")
+        return
+
+    headers = get_auth_headers(token)
+    response = client.patch(
+        f"{API_BASE}/{analysis_id}",
+        json={"name": "   "},
+        headers=headers,
+    )
+    detail = client.get(f"{API_BASE}/{analysis_id}", headers=headers)
+    unchanged = detail.status_code == 200 and detail.json().get("name") == "Keep This Name"
+    record(
+        "update_whitespace_name_rejected",
+        response.status_code == 422 and unchanged,
+        f"status={response.status_code}, unchanged={unchanged}",
+    )
 
     client.delete(f"{API_BASE}/{analysis_id}", headers=headers)
 

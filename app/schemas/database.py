@@ -241,8 +241,20 @@ class YearlyAnalysisUpdate(BaseModel):
     weather_cluster_k: Optional[int] = Field(default=None, ge=1)
     weather_cluster_start_time: Optional[str] = None
     weather_cluster_end_time: Optional[str] = None
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     features: Optional[dict] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("name must be a non-empty string")
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("name must not be empty or whitespace-only")
+        return trimmed
 
 class YearlyAnalysisRead(BaseModel):
     id: UUID

@@ -1016,6 +1016,7 @@ def test_foreign_updates_and_deletes_are_denied_without_changing_rows(
         ("put", f"{USER}/buses/{foreign['bus']}", {"name": "forbidden"}),
         ("put", f"{USER}/depots/{foreign['depot']}", {"name": "forbidden"}),
         ("put", f"{USER}/shifts/{foreign['shift']}", {"name": "forbidden"}),
+        ("patch", f"{SIM}/optimization-runs/{foreign['optimization']}", {"name": "forbidden"}),
         ("patch", f"{YEARLY}/{foreign['yearly']}", {"name": "forbidden"}),
         ("put", f"{GTFS}/gtfs-trips/{foreign['aux_trip']}", {"trip_headsign": "forbidden"}),
     )
