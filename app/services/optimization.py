@@ -31,6 +31,7 @@ from app.models import (
     ShiftsStructures,
     TripPredictions,
 )
+from simulation.battery_policy import historical_battery_params, operating_assumptions, policy_from_params
 from simulation.optimization_model import (
     BusData,
     OptimizationConfig,
@@ -518,7 +519,7 @@ async def prepare_optimization_input(
     *, reference_ids: dict[str, str] | None = None,
 ) -> tuple[list[BusData], list[StationData], OptimizationConfig]:
     """Load all data from DB and build structured inputs for the solver."""
-    params = optimization_run.input_params
+    params = historical_battery_params(optimization_run.input_params)
     quantile_consumption = params.get("quantile_consumption", "mean")
 
     _bus_model_cache: dict[UUID, dict] = {}
@@ -564,9 +565,12 @@ async def prepare_optimization_input(
         ))
     station_stop_id_to_idx = {s.stop_id: i for i, s in enumerate(station_list)}
     depot_stop_ids = set()
-    if params.get("daily_cycle"):
+    if station_list or params.get("daily_cycle"):
         depot_stop_ids = {str(sid) for sid in (await db.execute(select(Depots.stop_id).where(
             Depots.user_id == optimization_run.user_id))).scalars() if sid is not None}
+
+    for station in station_list:
+        station.is_depot = station.stop_id in depot_stop_ids
 
     prediction_runs: list[PredictionRuns] = []
     for pred_run_id in prediction_run_ids:
@@ -811,6 +815,9 @@ async def prepare_optimization_input(
         min_soc=params.get("min_soc", 0.4),
         max_soc=params.get("max_soc", 0.9),
         state_of_health=params.get("state_of_health", 1.0),
+        battery_soc_policy=params["battery_soc_policy"],
+        allowed_min_soc=params["allowed_min_soc"], allowed_max_soc=params["allowed_max_soc"],
+        layover_reduction_minutes=params["layover_reduction_minutes"],
         battery_cost_per_kwh=params.get("battery_cost_per_kwh") or 0.0,
         max_battery_penalty_per_kwh=params.get("max_battery_penalty_per_kwh", 1e6),
         battery_sizing_mode=params.get("battery_sizing_mode", "per_bus"),
@@ -857,7 +864,9 @@ async def run_optimization(
                             "mip_rel_gap": effective_mip_rel_gap(run.input_params)}
         await db.commit()
 
-        params = run.input_params
+        params = historical_battery_params(run.input_params)
+        run.input_params = {**params, "operating_assumptions": operating_assumptions(params)}
+        await db.commit()
         pipeline_started = time.monotonic()
         basis = params.get("consumption_basis") or (
             "mean" if params.get("quantile_consumption", "mean") == "mean" else "legacy_trip_quantile")
@@ -881,7 +890,7 @@ async def run_optimization(
                     pack_kwh = (model.specs or {}).get("battery_pack_size_kwh") if model else None
                     if pack_kwh:
                         sampling_options = replace(aggregate_options, capacity_step_kwh=float(pack_kwh) *
-                            params.get("state_of_health", 1) * (params.get("max_soc", .9)-params.get("min_soc", .4)))
+                            policy_from_params(params).usable_fraction_initial)
                 requests.append((prediction, sampling_options))
             if requests:
                 remaining = budget - (time.monotonic() - pipeline_started)
@@ -1052,6 +1061,7 @@ async def run_optimization(
             "selected_prediction_run_ids": selected_ids,
             "forecast_verification": verification,
             "consumption_analysis": analysis,
+            "operating_assumptions": operating_assumptions(params),
             "objective_value": result.objective_value,
             "solver_status": result.solver_status,
             "solve_time_seconds": result.solve_time_seconds,

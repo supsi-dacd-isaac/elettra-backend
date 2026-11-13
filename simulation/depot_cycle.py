@@ -9,6 +9,8 @@ import math
 import time
 from collections import defaultdict
 
+from simulation.battery_policy import session_timing
+
 from pyomo.environ import (Binary, ConcreteModel, ConstraintList, NonNegativeReals,
                            Objective, Set, SolverFactory, Var, value)
 
@@ -32,7 +34,7 @@ def add_daily_cycle(m, buses, stations, config, arrays):
         if not 0 <= bus.depot_station_idx < len(stations):
             raise ValueError(f'{bus.shift_name}: configure the actual start/end depot for the daily cycle')
         windows[b] = (start, end, bus.depot_station_idx)
-        edges.update((start % DAY, end % DAY))
+        edges.update((start % DAY, end % DAY, min(end, start + config.session_connection_minutes) % DAY))
     edges = sorted(edges)
     intervals = list(zip(edges, edges[1:]))
     active = {(j, b) for j, (lo, hi) in enumerate(intervals) for b, (start, end, _) in windows.items()
@@ -57,7 +59,7 @@ def add_daily_cycle(m, buses, stations, config, arrays):
         limit = min(buses[b].max_charging_power_kw, stations[s].max_power_per_slot_kw or buses[b].max_charging_power_kw)
         for j, bb in sorted(active):
             if bb == b:
-                # Respect the existing connection buffer, rounded up to a depot interval.
+                # The grid includes the exact end of the connection buffer.
                 absolute_start = start + ((intervals[j][0] - start) % DAY)
                 available = absolute_start >= start + config.session_connection_minutes
                 power_limits[j, b] = limit if available else 0
@@ -217,12 +219,15 @@ def daily_cycle_report(m, buses, stations, config, context, summaries, utilizati
         per_shift[bus.shift_id] = {
             'depot_stop_id': stations[s].stop_id, 'depot_name': stations[s].stop_name,
             'depot_arrival_minute': start - 1, 'charging_start_minute': start,
+            'available_charging_start_minute': min(end, start + config.session_connection_minutes),
             'next_departure_minute': end, 'target_soc_kwh': target,
             'departure_soc_kwh': final + energy, 'ready': abs(final + energy - target) < 1e-4 and value(m.n_excess_packs[b]) < .5,
             'during_shift_kwh': row['total_charged_kwh'], 'outside_shift_kwh': energy,
             'total_charged_kwh': row['total_charged_kwh'] + energy,
             'slot_number': next((k+1 for bb, k in m.DepotAssignIndex if bb == b and value(m.depot_assign[bb, k]) > .5), None),
             'charging_intervals': series,
+            **session_timing(end-start, config.session_connection_minutes, 0,
+                sum(item["end_minute"]-item["start_minute"] for item in series if item["power_kw_dc"] >= 1e-6)),
         }
     sites = {}
     depot_sites = {s for _, _, s in context['windows'].values()}

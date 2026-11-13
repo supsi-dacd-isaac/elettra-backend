@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.models import BusesModels, GtfsStopsTimes, PredictionRuns, Shifts, ShiftsStructures, TripPredictions
+from app.models import BusesModels, Depots, GtfsStops, GtfsStopsTimes, PredictionRuns, Shifts, ShiftsStructures, TripPredictions
 from app.services import optimization as service
 from app.routers.yearly_analysis import _require_verified_optimization
 from fastapi import HTTPException
@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 class Rows:
     def __init__(self, rows): self.rows = rows
+    def __iter__(self): return iter(self.rows)
     def scalars(self): return self
     def all(self): return self.rows
 
@@ -28,6 +29,8 @@ class DB:
             mass_sensitivity_kwh_per_kwh_batt=.05)]
         self.specs = {"battery_pack_size_kwh": 50, "min_battery_packs": 10, "max_battery_packs": 16}
         self.complete = True
+        self.depot_stop = uuid4()
+        self.terminal_stop = uuid4()
     async def get(self, entity, key):
         if entity is PredictionRuns: return next(p for p in self.predictions if p.id == key)
         if entity is BusesModels: return NS(specs=self.specs)
@@ -35,6 +38,9 @@ class DB:
         raise AssertionError(entity)
     async def execute(self, query):
         entity = query.column_descriptions[0]["entity"]
+        if entity is Depots: return Rows([self.depot_stop])
+        if entity is GtfsStops:
+            return Rows([(self.depot_stop, "Ordinary name"), (self.terminal_stop, "Depot")])
         if entity is TripPredictions: return Rows(self.trip_predictions)
         if entity is ShiftsStructures:
             return Rows([NS(sequence_number=0, trip_id=self.trip)] if self.complete else [])
@@ -61,6 +67,19 @@ async def test_service_groups_seven_references_and_keeps_one_full_trip_sequence(
     assert buses[0].reference_packs == 16
     assert buses[0].trips[0].base_energy_kwh == 30
     assert buses[0].trips[0].sensitivity == .05
+
+
+@pytest.mark.asyncio
+async def test_daytime_depots_use_application_identity_not_name_or_cost_model(context):
+    db, run = context
+    run.input_params.update(layover_reduction_minutes=2, charging_stations=[
+        {"stop_id": str(db.depot_stop), "num_slots": 1},
+        {"stop_id": str(db.terminal_stop), "num_slots": 1},
+    ])
+    _, stations, config = await service.prepare_optimization_input(db, run, [p.id for p in db.predictions])
+    assert not config.daily_cycle
+    assert stations[0].is_depot and stations[0].stop_name == "Ordinary name"
+    assert not stations[1].is_depot and stations[1].stop_name == "Depot"
 
 
 @pytest.mark.asyncio

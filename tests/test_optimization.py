@@ -30,6 +30,7 @@ BUS_MODEL_SPECS = {
     "min_battery_packs": 3,
     "max_battery_packs": 8,
     "battery_pack_weight_kg": 603,
+    "battery_pack_cost_chf": 26400,
     "max_passengers": 131,
     "empty_weight_kg": 16493,
     "max_charging_power_kw": 450,
@@ -149,21 +150,13 @@ def create_shift(
 
 
 def get_shift_end_stops(client: TestClient, token: str, shift_id: str) -> list[str]:
-    """Get the end-stop IDs from the trips in a shift, for use as charging station candidates."""
-    r = client.get(f"{API_BASE}/shifts/{shift_id}", headers=auth_headers(token))
-    assert r.status_code == 200
-    structures = r.json().get("structures") or []
-    end_stop_ids = set()
-    for s in structures:
-        trip_id = s.get("trip_id")
-        if not trip_id:
-            continue
-        tr = client.get(f"{API_BASE}/trips/{trip_id}/schedule", headers=auth_headers(token))
-        if tr.status_code == 200:
-            stops = tr.json()
-            if stops:
-                end_stop_ids.add(stops[-1]["id"])
-    return list(end_stop_ids)
+    """Use the same owned terminal candidates as the application form."""
+    response = client.post(f"{SIM_BASE}/charging-stops/candidates",
+        json={"shift_ids": [shift_id]}, headers=auth_headers(token))
+    assert response.status_code == 200, response.text
+    stops = [row["stop_id"] for row in response.json()]
+    assert stops, "The real-duty integration fixture must exercise charging stations"
+    return stops
 
 
 def run_prediction_and_wait(
@@ -682,25 +675,27 @@ def test_optimization_charging_only_missing_slot_costs(client: TestClient, opt_e
 
 @pytest.mark.skipif(_skip_cond, reason=_SKIP_REASON)
 def test_optimization_joint_missing_battery_cost(client: TestClient, opt_env, record):
-    """joint mode without battery_cost_per_kwh returns 422."""
+    """Joint sizing requires the physical pack price on its bus model."""
     token = opt_env["token"]
-    r = client.post(
-        f"{SIM_BASE}/optimization-runs/",
-        json={
-            "name": "Test optimization name",
-            "mode": "joint",
-            "shift_ids": [opt_env["shift_id"]],
-            "bus_model_id": opt_env["bus_model_id"],
-            "prediction_run_ids": opt_env["prediction_run_ids_a"],
-            "charging_stations": [{
-                "stop_id": opt_env["end_stop_ids"][0] if opt_env["end_stop_ids"] else str(uuid.uuid4()),
-                "slot_costs_chf": [350000, 150000],
-                "max_total_power_kw": 450,
-            }],
-        },
-        headers=auth_headers(token),
-    )
-    record("joint_missing_battery_cost", r.status_code == 422, f"status={r.status_code}")
+    specs = {key: value for key, value in BUS_MODEL_SPECS.items() if key != "battery_pack_cost_chf"}
+    model_id = create_bus_model_with_specs(client, token, opt_env["user_id"], specs, "NoPackPrice")
+    try:
+        r = client.post(
+            f"{SIM_BASE}/optimization-runs/",
+            json={
+                "name": "Missing physical pack price", "mode": "joint",
+                "shift_ids": [opt_env["shift_id"]], "bus_model_id": model_id,
+                "prediction_params": {"external_temp_celsius": 15},
+                "charging_stations": [{
+                    "stop_id": opt_env["end_stop_ids"][0],
+                    "slot_costs_chf": [350000, 150000], "max_total_power_kw": 450,
+                }],
+            }, headers=auth_headers(token),
+        )
+        record("joint_missing_battery_cost", r.status_code == 422 and "battery_pack_cost_chf" in r.text,
+               f"status={r.status_code}, detail={r.text}")
+    finally:
+        client.delete(f"{API_BASE}/bus-models/{model_id}", headers=auth_headers(token))
 
 
 # ---------------------------------------------------------------------------
@@ -914,9 +909,10 @@ def test_soc_bounds_respected(client: TestClient, opt_env, record):
         for bus in per_bus:
             shift_id = bus["shift_id"]
             batt_info = battery.get(shift_id, {})
-            opt_kwh = batt_info.get("optimized_kwh", max_packs * pack_size)
-            min_allowed = opt_kwh * min_soc_frac - 1.0  # small tolerance
-            max_allowed = opt_kwh * max_soc_frac + 1.0
+            nominal_kwh = batt_info.get("selected_nominal_kwh", batt_info.get("optimized_kwh", max_packs * pack_size))
+            residual_kwh = nominal_kwh * data["input_params"]["state_of_health"]
+            min_allowed = residual_kwh * min_soc_frac - 1.0  # small tolerance
+            max_allowed = residual_kwh * max_soc_frac + 1.0
             min_soc_kwh = bus["min_soc_kwh"]
             max_soc_kwh = bus["max_soc_kwh"]
             if min_soc_kwh < min_allowed:

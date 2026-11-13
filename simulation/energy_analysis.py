@@ -117,6 +117,7 @@ def replay_profile(bus, energies, timeline, *, nominal_kwh, min_soc, max_soc, st
 
 
 def build_energy_analysis(buses, result, profiles, config, *, basis, verified):
+    policy = config.battery_policy
     analysis = {
         "version": METHOD_VERSION, "optimization_basis": basis,
         "status": "available" if verified else "unverified",
@@ -136,7 +137,7 @@ def build_energy_analysis(buses, result, profiles, config, *, basis, verified):
         nominal = selected * bus.pack_size_kwh
         timeline = summaries[bus.shift_id]["energy_timeline"]
         cases = {key: replay_profile(bus, source[key], timeline,
-                     nominal_kwh=nominal, min_soc=config.min_soc, max_soc=config.max_soc,
+                     nominal_kwh=nominal, min_soc=policy.min_soc, max_soc=policy.max_soc,
                      state_of_health=config.state_of_health) for key in ("mean", "aggregate_q95")}
         # This guard prevents publishing a diagnostic based on the wrong mass,
         # trip order, or plan while calling it an exact verified result.
@@ -146,9 +147,10 @@ def build_energy_analysis(buses, result, profiles, config, *, basis, verified):
             "status": "available", "selected_packs": selected, "max_packs": bus.max_packs,
             "pack_size_kwh": bus.pack_size_kwh, "nominal_kwh": nominal,
             "effective_capacity_kwh": nominal*config.state_of_health,
-            "usable_kwh": nominal*config.state_of_health*(config.max_soc-config.min_soc),
-            "min_soc": config.min_soc, "max_soc": config.max_soc,
+            "usable_kwh": nominal*config.state_of_health*(policy.max_soc-policy.min_soc),
+            "min_soc": policy.min_soc, "max_soc": policy.max_soc,
             "state_of_health": config.state_of_health,
+            "battery_energy": {**policy.as_dict(), **policy.energy(nominal)},
             "reference": source["reference"], "statistics": source["statistics"],
             "occurrences": source["occurrences"],
             # Preserve the timetable used by this result for display-only
@@ -158,14 +160,14 @@ def build_energy_analysis(buses, result, profiles, config, *, basis, verified):
             "trip_profiles_kwh": {key: source[key] for key in cases}, "cases": cases,
             "verified_soc_kwh": timeline["soc_kwh"],
             "plan_fingerprint": hashlib.sha256(json.dumps({
-                "timeline": timeline, "packs": selected, "min_soc": config.min_soc,
-                "max_soc": config.max_soc, "soh": config.state_of_health,
+                "timeline": timeline, "packs": selected, "min_soc": policy.min_soc,
+                "max_soc": policy.max_soc, "soh": config.state_of_health,
             }, sort_keys=True).encode()).hexdigest(),
         }
         if source.get("_support") is not None:
             analysis["per_shift"][bus.shift_id]["trajectory_validation"] = simulate_plan_coverage(
                 bus, source["_support"], timeline,
-                usable_kwh=nominal*config.state_of_health*(config.max_soc-config.min_soc),
+                usable_kwh=nominal*config.state_of_health*(policy.max_soc-policy.min_soc),
                 samples=source["statistics"]["samples"],
                 seed=shift_seed(source["statistics"]["seed"], "fixed-plan-validation"))
     return analysis
