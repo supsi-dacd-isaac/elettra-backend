@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -128,6 +129,21 @@ class ReleaseWorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.jobs = yaml.safe_load((ROOT / ".github/workflows/container-release.yml").read_text())["jobs"]
+
+    def test_patched_installer_is_shared_by_builder_runtime_and_release_gate(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        base, builder, runtime = re.split(r"^FROM ", dockerfile, flags=re.MULTILINE)[1:]
+        self.assertTrue(base.startswith("python:3.12-slim AS python-base\n"))
+        pin = re.search(r'python -m pip install .*--upgrade "pip==([\d.]+)"', base)
+        self.assertIsNotNone(pin)
+        self.assertGreaterEqual(tuple(map(int, pin[1].split("."))), (26, 3))
+        self.assertTrue(builder.startswith("python-base AS builder\n"))
+        self.assertTrue(runtime.startswith("python-base AS runtime\n"))
+        self.assertIn("python -m pip install --no-cache-dir --user -r requirements.lock", builder)
+        smoke = next(step["run"] for step in self.jobs["build-image"]["steps"]
+                     if step["name"] == "Verify native image identity")
+        self.assertIn(f'assert version("pip") == "{pin[1]}"', smoke)
+        self.assertIn('[sys.executable, "-m", "pip", "check"], check=True', smoke)
 
     def test_release_uses_two_native_runners_and_candidate_keeps_amd64(self):
         selector = next(step["run"] for step in self.jobs["prepare-image"]["steps"]

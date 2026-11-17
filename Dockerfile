@@ -1,5 +1,9 @@
+# Both stages must use the patched installer, including the final runtime image.
+FROM python:3.12-slim AS python-base
+RUN python -m pip install --no-cache-dir --upgrade "pip==26.3"
+
 # Multi-stage build for production optimization
-FROM python:3.12-slim AS builder
+FROM python-base AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -14,10 +18,10 @@ WORKDIR /build
 
 # Copy the reviewed transitive lock and install reproducible dependencies.
 COPY requirements.lock .
-RUN pip install --no-cache-dir --user -r requirements.lock
+RUN python -m pip install --no-cache-dir --user -r requirements.lock
 
 # Production stage
-FROM python:3.12-slim
+FROM python-base AS runtime
 
 # The VECTO model contract pins the exact elettra-core source revision.  Keep
 # that identity in an image-owned file: a runtime environment variable alone

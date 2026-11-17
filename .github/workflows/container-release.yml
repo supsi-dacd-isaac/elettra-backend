@@ -259,9 +259,14 @@ jobs:
             -e EXPECTED_APP_VERSION -e EXPECTED_CORE_COMMIT -e EXPECTED_ARCH \
             "$image_ref" -c '
           from pathlib import Path
+          from importlib.metadata import version
           import os
           import platform
+          import subprocess
+          import sys
           from app.core.config import get_cached_settings
+          assert version("pip") == "26.3", "Unexpected runtime pip version"
+          subprocess.run([sys.executable, "-m", "pip", "check"], check=True)
           assert get_cached_settings().app_version == os.environ["EXPECTED_APP_VERSION"]
           assert Path("/etc/elettra-core-image-commit").read_text().strip() == os.environ["EXPECTED_CORE_COMMIT"]
           assert platform.machine() == {"amd64": "x86_64", "arm64": "aarch64"}[os.environ["EXPECTED_ARCH"]]

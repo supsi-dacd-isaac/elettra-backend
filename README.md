@@ -77,6 +77,12 @@ Python dependencies are pinned through `requirements.txt` and
 `requirements.lock`. The repository also contains the independently versioned
 `elettra_core` feature/VECTO contract package described by `pyproject.toml`.
 
+The Docker builder and runtime share a Python base with `pip==26.3`, replacing
+the installer bundled with the upstream image. Release image checks verify this
+version and run `pip check` on both native architectures. Keep this pin and the
+release check aligned when updating pip; the application dependency lock does
+not include this image-level build tool.
+
 ## Quick start with Docker Compose
 
 Create the ignored local configuration from the non-secret image baseline:
