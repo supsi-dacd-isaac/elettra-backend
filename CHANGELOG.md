@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.0-rc.2] - 2026-11-17
+
+- Pin pip 26.3 in the shared Docker base used by both builder and runtime stages.
+- Verify the installer version and dependency consistency in every native release image before publication.
+- Keep the frozen `elettra-core` package at `2.3.0`; prediction-model and HVAC release pins are unchanged.
+- No new database migration is required. TPL vehicle-block corrections are changes to installation data and are not distributed in the container image.
+- Pair with frontend `1.0.0-rc.2` and publish as a prerelease without moving stable container aliases.
+
 ## [1.7.0-rc.1] - 2026-11-17
 
 - Add authenticated renaming of feasibility evaluations while preserving their results, ownership and Mean/Q95 pairing.
