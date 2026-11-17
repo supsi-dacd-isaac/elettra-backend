@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.7.0-rc.1] - 2026-11-17
+
+- Add authenticated renaming of feasibility evaluations while preserving their results, ownership and Mean/Q95 pairing.
+- Resolve the configured legacy prediction release in opt-in fleet diagnostics instead of requesting a model name absent from the active registry.
+- Keep the frozen `elettra-core` package at `2.3.0`; prediction-model and HVAC release pins are unchanged.
+- No new database migration is required for this release. Existing analyses are preserved.
+- Pair with frontend `1.0.0-rc.1` and publish as a prerelease without moving stable container aliases.
+- Validation note: the 60-vehicle-block joint legacy diagnostic reached the configured 600-second solver limit. The tolerance benchmark was interrupted because of execution time and memory use; OSRM checks were intentionally excluded. Long diagnostics remain opt-in and are not part of the routine release gate.
+
 ## [1.6.0] - 2026-11-10
 
 - Promote the functionality validated in `1.6.0-rc.2`, with no functional changes.
