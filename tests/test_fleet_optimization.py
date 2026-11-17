@@ -307,12 +307,18 @@ def run_prediction_and_wait(
     client: TestClient, token: str, shift_ids: list[str],
     bus_model_id: str, max_wait: int = 180,
 ) -> list[str]:
+    from app.services.runtime_release import resolve_prediction_selection
+
+    # These diagnostics use the bus models' auxiliary curves (legacy stack).
+    # Resolve its deployed release instead of pinning a retired model name.
+    selection = resolve_prediction_selection(prediction_stack="legacy")
     r = client.post(
         f"{SIM_BASE}/prediction-runs/",
         json={
             "shift_ids": shift_ids,
             "bus_model_id": bus_model_id,
-            "model_name": "greybox_qrf_production_crps_optimized_3",
+            "model_name": selection.model_release,
+            "prediction_stack": selection.stack.value,
             "external_temp_celsius": -5.0,
             "occupancy_percent": 50.0,
             "quantiles": [0.05, 0.5, 0.95],
