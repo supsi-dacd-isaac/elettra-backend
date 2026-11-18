@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.7.0] - 2026-11-18
+
+- Promote the functionality validated in `1.7.0-rc.2`, with no functional changes.
+- Add authenticated feasibility-evaluation renaming while preserving ownership, results and Mean/Q95 pairing.
+- Pin pip 26.3 in both Docker build and runtime stages and verify dependency consistency in native release images.
+- Preserve the frozen `elettra-core` package at `2.3.0` and the existing model, HVAC and optimization settings.
+- No new database migration is required. Existing saved analyses and installation-specific vehicle-block data are preserved.
+- Keep long fleet diagnostics and tolerance benchmarks opt-in. Pair with frontend `1.0.0`.
+
 ## [1.7.0-rc.2] - 2026-11-17
 
 - Pin pip 26.3 in the shared Docker base used by both builder and runtime stages.
