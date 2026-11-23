@@ -796,6 +796,13 @@ async def _store_prediction(db, prepared, results, quantiles, *, commit=True) ->
     results["summary"] = summary
 
     # Store contextual parameters
+    assessment_metadata = {
+        key: specs[key] for key in (
+            "bus_lifetime", "bus_lifetime_years", "battery_pack_lifetime",
+            "battery_pack_lifetime_years", "lifetime_diesel_bus",
+        ) if specs.get(key) is not None
+    }
+    assessment_metadata["battery_chemistry"] = specs.get("battery_chemistry") or specs.get("batteryChemistry") or "NMC"
     run.contextual_parameters = _sanitize_json({
         **{key: value for key, value in (run.contextual_parameters or {}).items()
            if key in ('auxiliary_policy_id', 'auxiliary_policy', 'hvac_inputs', 'hvac_input_fingerprint')},
@@ -805,13 +812,7 @@ async def _store_prediction(db, prepared, results, quantiles, *, commit=True) ->
         "bus_length_m": bus_length_m,
         "num_battery_packs": packs,
         # Assessment-only metadata: never used by the predictor or solver.
-        "assessment_metadata": {
-            key: specs[key] for key in (
-                "battery_chemistry", "batteryChemistry", "bus_lifetime",
-                "bus_lifetime_years", "battery_pack_lifetime",
-                "battery_pack_lifetime_years", "lifetime_diesel_bus",
-            ) if specs.get(key) is not None
-        },
+        "assessment_metadata": assessment_metadata,
         "total_weight_kg": total_weight_kg,
         "physical_mass": {
             "empty_weight_kg": mass.empty_weight_kg,

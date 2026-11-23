@@ -216,7 +216,7 @@ def test_create_endpoint_serializes_validated_specs_and_extras():
         )
     )
 
-    assert created.specs == {**VALID_SPECS, "purchase_cost_chf": 640_000}
+    assert created.specs == {**VALID_SPECS, "purchase_cost_chf": 640_000, "size": "13m", "battery_chemistry": "LFP"}
     assert session.commit_count == 1
 
 
@@ -308,5 +308,20 @@ def test_complete_specs_update_replaces_legacy_object():
         )
     )
 
-    assert updated.specs == replacement
+    assert updated.specs == {**replacement, "size": "13m", "battery_chemistry": "NMC"}
     assert session.commit_count == 1
+
+@pytest.mark.parametrize("length", [8.99, 13.01, 15, 16.99, 19.01])
+def test_lengths_without_hvac_templates_rejected_on_write(length):
+    with pytest.raises(ValidationError, match="unsupported bus_length"):
+        BusModelPhysicalSpecs.model_validate({**VALID_SPECS, "bus_length_m": length})
+
+
+@pytest.mark.parametrize(("length", "size"), [(9, "9m"), (10, "9m"), (10.75, "13m"), (13, "13m"), (17, "18m"), (19, "18m")])
+def test_api_bus_defaults_and_real_length(length, size):
+    from app.routers.user import _bus_specs_for_write
+
+    specs = _bus_specs_for_write({**VALID_SPECS, "bus_length_m": length})
+    assert specs["bus_length_m"] == length
+    assert specs["size"] == size
+    assert specs["battery_chemistry"] == "LFP"

@@ -12,7 +12,18 @@
   "annual_consumption_kwh": 120000,
   "energy_price_per_kwh": 0.20,
   "fuel_cost_per_l": 1.85,
-  "battery_cost_per_kwh": 350.0,
+  "battery_cost_per_kwh": 330.0,
+  "battery_chemistry_default": "LFP",
+  "battery_chemistries": {
+    "LFP": {"kg_per_kwh": 6.85, "cost_per_kwh": 330.0},
+    "NMC": {"kg_per_kwh": 5.128205128205129, "cost_per_kwh": 450.0}
+  },
+  "bus_body_price_points": [
+    {"length_m": 9, "cost_chf": 360000},
+    {"length_m": 10, "cost_chf": 460000},
+    {"length_m": 12, "cost_chf": 490000},
+    {"length_m": 18, "cost_chf": 570000}
+  ],
   "bus_no_batt_quad_coeff": 2916.7,
   "bus_no_batt_lin_coeff": -45833.0,
   "bus_no_batt_const": 570000.0,

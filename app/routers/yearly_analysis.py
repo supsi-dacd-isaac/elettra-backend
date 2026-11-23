@@ -82,21 +82,15 @@ from app.services.diesel_heating import (
     resolve_diesel_heating_quantity,
 )
 from app.services.charging_energy import energy_boundary, grid_from_dc
+from app.services.economic_defaults import electric_bus_body_cost, load_economic_defaults
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Economic-defaults loader (same config file used by the economic router)
+# Emission defaults and economic parameter resolution
 # ---------------------------------------------------------------------------
 
-_ECON_CONFIG = Path(__file__).resolve().parents[2] / "config" / "economic_defaults.json"
 _EMISSION_CONFIG = Path(__file__).resolve().parents[2] / "config" / "emission_defaults.json"
-
-
-@lru_cache(maxsize=1)
-def _load_econ_defaults() -> dict:
-    with open(_ECON_CONFIG) as fh:
-        return json.load(fh)
 
 
 @lru_cache(maxsize=1)
@@ -106,7 +100,7 @@ def _load_emission_defaults() -> dict:
 
 
 def _econ(key: str):
-    return _load_econ_defaults()[key]
+    return load_economic_defaults()[key]
 
 
 def _econ_or(value, key: str):
@@ -147,6 +141,43 @@ def _annualize(investment: float, lifetime: int, interest_rate: float) -> float:
     return investment * _capital_recovery_factor(interest_rate, lifetime)
 
 
+async def _load_yearly_vehicle_prices(db: AsyncSession, yearly_analysis_id: UUID):
+    result = await db.execute(
+        select(
+            PredictionRuns.shift_id,
+            PredictionRuns.bus_model_id,
+            PredictionRuns.contextual_parameters["assessment_metadata"],
+            BusesModels.specs,
+        )
+        .join(BusesModels, BusesModels.id == PredictionRuns.bus_model_id)
+        .where(PredictionRuns.yearly_analysis_id == yearly_analysis_id)
+        .distinct()
+    )
+    return result.all()
+
+
+def _chemistry_price(specs: dict, assessment: dict | None) -> float:
+    assessment = assessment if isinstance(assessment, dict) else {}
+    chemistry = (
+        assessment.get("battery_chemistry")
+        or assessment.get("batteryChemistry")
+        or specs.get("battery_chemistry")
+        or specs.get("batteryChemistry")
+    )
+    defaults = _econ("battery_chemistries").get(str(chemistry).strip().upper())
+    return defaults["cost_per_kwh"] if defaults else _econ("battery_cost_per_kwh")
+
+
+def _optional_model_price(value) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        price = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return price if math.isfinite(price) and price >= 0 else None
+
+
 def _require_number(value, field_name: str, *, positive: bool = False) -> float:
     """Validate numeric optimization-result fields from free-form JSONB."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -168,8 +199,15 @@ def _require_number(value, field_name: str, *, positive: bool = False) -> float:
     return number
 
 
-def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
-    """Extract full battery capacity and charger investment from optimizer results.
+def _extract_optimization_capex_inputs(
+    results: dict,
+    *,
+    body_estimate_chf: float,
+    use_body_quotes: bool = True,
+    battery_cost_per_kwh: float | None = None,
+    vehicle_prices=(),
+) -> dict[str, float]:
+    """Extract vehicle and charging investments from optimizer results.
 
     The optimizer stores results in versionless JSONB, so this helper is strict:
     it prefers per-bus rows and fails rather than undercounting collapsed
@@ -197,7 +235,9 @@ def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
             detail="Linked optimization run results do not include battery_results.",
         )
 
-    optimized_battery_capacity_kwh = 0.0
+    battery_investment_chf = 0.0
+    body_investment_chf = 0.0
+    has_body_quote = False
     for idx, bus_summary in enumerate(per_bus_summary):
         if not isinstance(bus_summary, dict):
             raise HTTPException(
@@ -219,11 +259,57 @@ def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
                     f"per-bus shift_id {shift_id}."
                 ),
             )
-        optimized_battery_capacity_kwh += _require_number(
+        optimized_kwh = _require_number(
             battery_row.get("optimized_kwh"),
             f"battery_results[{shift_id}].optimized_kwh",
             positive=True,
         )
+        model_id = bus_summary.get("bus_model_id") or battery_row.get("bus_model_id")
+        body_quote = next(
+            (
+                row[key]
+                for row in (bus_summary, battery_row)
+                for key in ("bus_cost_chf", "bus_body_cost_chf")
+                if row.get(key) is not None
+            ),
+            None,
+        )
+        has_body_quote |= body_quote is not None
+        body_investment_chf += (
+            _require_number(body_quote, "bus_cost_chf")
+            if use_body_quotes and body_quote is not None
+            else body_estimate_chf
+        )
+
+        selected_cost = bus_summary.get("selected_battery_cost_chf")
+        if selected_cost is None:
+            selected_cost = battery_row.get("selected_battery_cost_chf")
+        if selected_cost is not None:
+            battery_investment_chf += _require_number(selected_cost, "selected_battery_cost_chf")
+            continue
+
+        pack_price = bus_summary.get("battery_pack_cost_chf")
+        if pack_price is None:
+            pack_price = battery_row.get("battery_pack_cost_chf")
+        pack_count = bus_summary.get("optimized_packs")
+        if pack_count is None:
+            pack_count = battery_row.get("optimized_packs")
+        if pack_price is not None and pack_count is not None:
+            battery_investment_chf += (
+                _require_number(pack_price, "battery_pack_cost_chf")
+                * _require_number(pack_count, "optimized_packs", positive=True)
+            )
+            continue
+
+        fallback_rate = battery_cost_per_kwh
+        if fallback_rate is None:
+            rates = {
+                _chemistry_price(specs, assessment)
+                for shift, model, assessment, specs in vehicle_prices
+                if str(shift) == str(shift_id) and (model_id is None or str(model) == str(model_id))
+            }
+            fallback_rate = rates.pop() if len(rates) == 1 else _econ("battery_cost_per_kwh")
+        battery_investment_chf += optimized_kwh * fallback_rate
 
     installed_chargers = results.get("installed_chargers")
     total_installation_raw = results.get("total_installation_cost_chf")
@@ -274,9 +360,6 @@ def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
         )
 
     extra = {}
-    battery_rows = [battery_results[str(row["shift_id"])] for row in per_bus_summary]
-    if all(row.get("selected_battery_cost_chf") is not None for row in battery_rows):
-        extra["battery_investment_chf"] = sum(_require_number(row["selected_battery_cost_chf"], "selected_battery_cost_chf") for row in battery_rows)
     charger_rows = list((installed_chargers or {}).values())
     if charger_rows and all(isinstance(row.get("cost_breakdown"), dict) for row in charger_rows):
         point_total = common_total = 0.0
@@ -290,7 +373,9 @@ def _extract_optimization_capex_inputs(results: dict) -> dict[str, float]:
             common_total += common
         extra.update(charging_points_cost_chf=point_total, site_infrastructure_cost_chf=common_total)
     return {
-        "optimized_battery_capacity_kwh": optimized_battery_capacity_kwh,
+        "body_investment_chf": body_investment_chf if has_body_quote else body_estimate_chf,
+        "battery_investment_chf": battery_investment_chf,
+        "vehicle_count": len(per_bus_summary) if has_body_quote else 1,
         "installation_cost_chf": installation_cost_chf,
         **extra,
     }
@@ -1243,10 +1328,11 @@ async def get_yearly_costs(
     capex_source: Literal["manual", "optimization"] = Query(
         "manual",
         description=(
-            "CAPEX source when include_capex=true. 'manual' preserves existing "
-            "behavior and uses battery_capacity_kwh/charger_power_kw query "
-            "inputs. 'optimization' derives battery and charging-infrastructure "
-            "CAPEX from yearly_analysis.optimization_run_id and its completed "
+            "CAPEX source when include_capex=true. 'manual' uses the "
+            "battery_capacity_kwh/charger_power_kw query inputs and defaults "
+            "to linked model prices when a single model is known. 'optimization' "
+            "uses vehicle prices and charging infrastructure CAPEX from "
+            "yearly_analysis.optimization_run_id and its completed "
             "feasible optimization results. Ignored when include_capex=false."
         ),
     ),
@@ -1299,16 +1385,21 @@ async def get_yearly_costs(
     ),
     # --- Optional CAPEX coefficients ---
     battery_cost_per_kwh: Optional[float] = Query(
-        None, gt=0, description="Battery unit cost [CHF/kWh]."
+        None,
+        gt=0,
+        description=(
+            "Battery unit cost [CHF/kWh]. For optimized CAPEX, applies to "
+            "batteries without saved investment prices."
+        ),
     ),
     bus_no_batt_quad_coeff: Optional[float] = Query(
-        None, description="Electric bus body quadratic coeff (a)."
+        None, description="Legacy electric bus body quadratic coefficient (a)."
     ),
     bus_no_batt_lin_coeff: Optional[float] = Query(
-        None, description="Electric bus body linear coeff (b)."
+        None, description="Legacy electric bus body linear coefficient (b)."
     ),
     bus_no_batt_const: Optional[float] = Query(
-        None, description="Electric bus body constant (c) [CHF]."
+        None, description="Legacy electric bus body constant (c) [CHF]."
     ),
     charger_cost_per_kw: Optional[float] = Query(
         None, description="Charger cost slope [CHF/kW]."
@@ -1353,6 +1444,8 @@ async def get_yearly_costs(
     await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
     # -- Validate CAPEX prerequisites -----------------------------------
     optimization_capex_inputs: dict[str, float] | None = None
+    body_coefficients = (bus_no_batt_quad_coeff, bus_no_batt_lin_coeff, bus_no_batt_const)
+    use_body_quotes = all(coefficient is None for coefficient in body_coefficients)
     if include_capex and capex_source == "manual":
         if battery_capacity_kwh is None:
             raise HTTPException(
@@ -1370,7 +1463,18 @@ async def get_yearly_costs(
             yearly_analysis_id=yearly_analysis_id,
             current_user=current_user,
         )
-        optimization_capex_inputs = _extract_optimization_capex_inputs(opt_run.results)
+        vehicle_prices = (
+            await _load_yearly_vehicle_prices(db, yearly_analysis_id)
+            if battery_cost_per_kwh is None
+            else ()
+        )
+        optimization_capex_inputs = _extract_optimization_capex_inputs(
+            opt_run.results,
+            body_estimate_chf=electric_bus_body_cost(bus_length_m, *body_coefficients),
+            use_body_quotes=use_body_quotes,
+            battery_cost_per_kwh=battery_cost_per_kwh,
+            vehicle_prices=vehicle_prices,
+        )
 
     # -- 1. Fresh energy summary ----------------------------------------
     energy = await get_fresh_energy_summary(db, yearly_analysis_id)
@@ -1462,10 +1566,6 @@ async def get_yearly_costs(
         lt_conn = _econ_or_int(lifetime_connection, "lifetime_connection")
         lt_diesel = _econ_or_int(lifetime_diesel_bus, "lifetime_diesel_bus")
 
-        batt_cpk = _econ_or(battery_cost_per_kwh, "battery_cost_per_kwh")
-        eb_a = _econ_or(bus_no_batt_quad_coeff, "bus_no_batt_quad_coeff")
-        eb_b = _econ_or(bus_no_batt_lin_coeff, "bus_no_batt_lin_coeff")
-        eb_c = _econ_or(bus_no_batt_const, "bus_no_batt_const")
         ch_a = _econ_or(charger_cost_per_kw, "charger_cost_per_kw")
         ch_b = _econ_or(charger_cost_const, "charger_cost_const")
         gc_a = _econ_or(grid_connection_fee_per_kw, "grid_connection_fee_per_kw")
@@ -1474,15 +1574,12 @@ async def get_yearly_costs(
         db_b = _econ_or(diesel_bus_lin_coeff, "diesel_bus_lin_coeff")
         db_c = _econ_or(diesel_bus_const, "diesel_bus_const")
 
-        inv_bus_body = eb_a * bus_length_m ** 2 + eb_b * bus_length_m + eb_c
+        vehicle_count = 1
 
-        if capex_source == "optimization":
-            if optimization_capex_inputs is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Optimization CAPEX inputs were not prepared.",
-                )
-            inv_battery = optimization_capex_inputs.get("battery_investment_chf", batt_cpk * optimization_capex_inputs["optimized_battery_capacity_kwh"])
+        if optimization_capex_inputs is not None:
+            inv_bus_body = optimization_capex_inputs["body_investment_chf"]
+            inv_battery = optimization_capex_inputs["battery_investment_chf"]
+            vehicle_count = optimization_capex_inputs["vehicle_count"]
             inv_charging_infrastructure = optimization_capex_inputs["installation_cost_chf"]
             ebus_capex = [
                 CapexLineItem(
@@ -1514,6 +1611,31 @@ async def get_yearly_costs(
                         lifetime_years=lt_conn, annualized_chf_per_year=round(_annualize(optimization_capex_inputs["site_infrastructure_cost_chf"], lt_conn, ir), 2)),
                 ]
         else:
+            inv_bus_body = electric_bus_body_cost(bus_length_m, *body_coefficients)
+            batt_cpk = _econ_or(battery_cost_per_kwh, "battery_cost_per_kwh")
+            vehicle_prices = (
+                await _load_yearly_vehicle_prices(db, yearly_analysis_id)
+                if use_body_quotes or battery_cost_per_kwh is None
+                else ()
+            )
+            if battery_cost_per_kwh is None:
+                rates = {
+                    _chemistry_price(specs, assessment)
+                    for _, _, assessment, specs in vehicle_prices
+                }
+                if len(rates) == 1:
+                    batt_cpk = rates.pop()
+            model_specs = {model_id: specs for _, model_id, _, specs in vehicle_prices}
+            if len(model_specs) == 1:
+                specs = next(iter(model_specs.values()))
+                body_quote = _optional_model_price(specs.get("cost"))
+                if use_body_quotes and body_quote is not None:
+                    inv_bus_body = body_quote
+                if battery_cost_per_kwh is None:
+                    pack_size_kwh = _optional_model_price(specs.get("battery_pack_size_kwh"))
+                    pack_price_chf = _optional_model_price(specs.get("battery_pack_cost_chf"))
+                    if pack_size_kwh and pack_price_chf is not None:
+                        batt_cpk = pack_price_chf / pack_size_kwh
             inv_battery = batt_cpk * battery_capacity_kwh
             inv_charger = ch_a * charger_power_kw + ch_b
             inv_grid = max(gc_a * grid_from_dc(charger_power_kw) + gc_b, 0.0)
@@ -1546,7 +1668,7 @@ async def get_yearly_costs(
             ]
         ebus_total_capex = sum(c.annualized_chf_per_year for c in ebus_capex)
 
-        inv_diesel = db_a * bus_length_m ** 2 + db_b * bus_length_m + db_c
+        inv_diesel = vehicle_count * (db_a * bus_length_m ** 2 + db_b * bus_length_m + db_c)
         diesel_capex = [
             CapexLineItem(
                 name="Diesel bus",

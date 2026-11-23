@@ -11,6 +11,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from elettra_core.vecto_templates import template_length_for_bus
 from app.schemas.trip_status import TripStatus
 from app.services.runtime_release import (
     RuntimeReleaseConfigurationError,
@@ -84,6 +85,12 @@ class BusModelPhysicalSpecs(BaseModel):
     min_battery_packs: PositiveStrictInt
     max_battery_packs: PositiveStrictInt
     max_passengers: PositiveStrictInt
+
+    @field_validator("bus_length_m")
+    @classmethod
+    def supported_bus_length(cls, value: float) -> float:
+        template_length_for_bus(value)
+        return value
 
     @model_validator(mode="after")
     def validate_battery_pack_bounds(self):

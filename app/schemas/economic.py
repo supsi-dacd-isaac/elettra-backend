@@ -7,7 +7,7 @@ and a full electric-vs-diesel comparison for public transport buses.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -16,6 +16,16 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 # Default parameters
 # ---------------------------------------------------------------------------
+
+class BusBodyPricePoint(BaseModel):
+    length_m: float = Field(..., description="Reference bus length [m].")
+    cost_chf: float = Field(..., description="Reference bus body cost without battery [CHF].")
+
+
+class BatteryChemistryDefaults(BaseModel):
+    kg_per_kwh: float = Field(..., description="Battery mass per unit of capacity [kg/kWh].")
+    cost_per_kwh: float = Field(..., description="Battery unit cost [CHF/kWh].")
+
 
 class EconomicDefaultsResponse(BaseModel):
     """All default economic parameters loaded from ``config/economic_defaults.json``."""
@@ -37,13 +47,19 @@ class EconomicDefaultsResponse(BaseModel):
     lifetime_connection: int = Field(..., description="Grid connection lifetime [years].")
     lifetime_diesel_bus: int = Field(..., description="Diesel bus lifetime [years].")
 
-    # Equation coefficients — Battery
-    battery_cost_per_kwh: float = Field(..., description="Battery unit cost coefficient [CHF/kWh].")
+    # Battery defaults
+    battery_cost_per_kwh: float = Field(..., description="Unit cost of the default battery chemistry [CHF/kWh].")
+    battery_chemistry_default: Literal["LFP", "NMC"]
+    battery_chemistries: dict[Literal["LFP", "NMC"], BatteryChemistryDefaults]
 
-    # Equation coefficients — Electric bus body (a·m² + b·m + c)
-    bus_no_batt_quad_coeff: float = Field(..., description="Electric bus body quadratic coeff (a).")
-    bus_no_batt_lin_coeff: float = Field(..., description="Electric bus body linear coeff (b).")
-    bus_no_batt_const: float = Field(..., description="Electric bus body constant (c) [CHF].")
+    # Electric bus body price points and legacy coefficients
+    bus_body_price_points: list[BusBodyPricePoint] = Field(
+        ...,
+        description="Price points for linear interpolation. The final segment extends to 19 m.",
+    )
+    bus_no_batt_quad_coeff: float = Field(..., description="Legacy electric bus body quadratic coefficient (a).")
+    bus_no_batt_lin_coeff: float = Field(..., description="Legacy electric bus body linear coefficient (b).")
+    bus_no_batt_const: float = Field(..., description="Legacy electric bus body constant (c) [CHF].")
 
     # Equation coefficients — Charger (a·kW + b)
     charger_cost_per_kw: float = Field(..., description="Charger cost slope [CHF/kW].")

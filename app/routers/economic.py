@@ -10,11 +10,8 @@ Equation coefficients and configuration parameters are **optional**; when
 omitted the defaults from the JSON configuration file are used.
 """
 
-import json
 import logging
 import math
-from functools import lru_cache
-from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
@@ -26,6 +23,8 @@ from app.core.shift_distance import RecurrenceType, compute_shift_yearly_distanc
 from app.database import get_async_session
 from app.models import Users
 from app.services.charging_energy import energy_boundary, grid_from_dc, connection_estimate
+from app.services.economic_defaults import electric_bus_body_cost, load_economic_defaults
+from elettra_core.vecto_templates import template_length_for_bus
 from app.schemas.economic import (
     AnnualizedCostResponse,
     BatteryCostResponse,
@@ -53,19 +52,9 @@ router = APIRouter()
 # Default-value loader
 # ---------------------------------------------------------------------------
 
-_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "economic_defaults.json"
-
-
-@lru_cache(maxsize=1)
-def _load_defaults() -> dict:
-    """Read and cache ``config/economic_defaults.json``."""
-    with open(_CONFIG_PATH) as fh:
-        return json.load(fh)
-
-
 def _d(key: str):
     """Shorthand: return one default value by key."""
-    return _load_defaults()[key]
+    return load_economic_defaults()[key]
 
 
 def _or(value: Optional[float], key: str) -> float:
@@ -83,10 +72,6 @@ def _or_int(value: Optional[int], key: str) -> int:
 
 def _battery_cost(capacity_kwh: float, cost_per_kwh: float) -> float:
     return cost_per_kwh * capacity_kwh
-
-
-def _bus_no_batt_cost(length_m: float, a: float, b: float, c: float) -> float:
-    return a * length_m ** 2 + b * length_m + c
 
 
 def _charger_cost(power_kw: float, a: float, b: float) -> float:
@@ -147,15 +132,14 @@ def _diesel_consumption_l_per_km(length_m: float, a: float, b: float) -> float:
     summary="Default economic parameters",
     description=(
         "Returns every default value stored in "
-        "``config/economic_defaults.json``.  These are used as fall-back "
-        "whenever an optional coefficient / configuration parameter is "
-        "omitted from any other endpoint in this section."
+        "``config/economic_defaults.json``, including the electric bus body "
+        "price points and battery chemistry assumptions."
     ),
 )
 async def get_default_economic_parameters(
     current_user: Users = Depends(get_current_user),
 ):
-    return EconomicDefaultsResponse(**_load_defaults())
+    return EconomicDefaultsResponse(**load_economic_defaults())
 
 
 # ========================================================================== #
@@ -184,33 +168,44 @@ async def get_battery_cost(
     )
 
 
+def _validate_new_body_estimate(length_m, *coefficients):
+    if all(value is None for value in coefficients):
+        try:
+            template_length_for_bus(length_m)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+
 @router.get(
     "/investment/electric-bus-body",
     response_model=ElectricBusBodyCostResponse,
     summary="Electric bus body investment cost (without battery)",
-    description="``cost [CHF] = quad_coeff·m² + lin_coeff·m + const_coeff``",
+    description=(
+        "Interpolates the default price points by length, extending the final "
+        "segment to 19 m. Supported lengths are 9–13 m and 17–19 m. When any "
+        "coefficient is provided, uses ``quad_coeff·m² + lin_coeff·m + const_coeff`` "
+        "with the legacy defaults for omitted coefficients."
+    ),
 )
 async def get_electric_bus_body_cost(
     length_m: float = Query(
         ..., gt=0, description="Bus length [m] (required)."
     ),
     quad_coeff: Optional[float] = Query(
-        None, description="Quadratic coefficient (a). Default from config."
+        None, description="Legacy quadratic coefficient (a)."
     ),
     lin_coeff: Optional[float] = Query(
-        None, description="Linear coefficient (b). Default from config."
+        None, description="Legacy linear coefficient (b)."
     ),
     const_coeff: Optional[float] = Query(
-        None, description="Constant term (c) [CHF]. Default from config."
+        None, description="Legacy constant term (c) [CHF]."
     ),
     current_user: Users = Depends(get_current_user),
 ):
-    a = _or(quad_coeff, "bus_no_batt_quad_coeff")
-    b = _or(lin_coeff, "bus_no_batt_lin_coeff")
-    c = _or(const_coeff, "bus_no_batt_const")
+    _validate_new_body_estimate(length_m, quad_coeff, lin_coeff, const_coeff)
     return ElectricBusBodyCostResponse(
         length_m=length_m,
-        cost_chf=round(_bus_no_batt_cost(length_m, a, b, c), 2),
+        cost_chf=round(electric_bus_body_cost(length_m, quad_coeff, lin_coeff, const_coeff), 2),
     )
 
 
@@ -534,7 +529,8 @@ async def get_diesel_fuel_cost(
         "diesel bus, then returns the side-by-side breakdown together with the "
         "yearly saving (positive = electric is cheaper).  Physical inputs are "
         "mandatory; all equation coefficients and configuration parameters are "
-        "optional and fall back to the values from ``/defaults``."
+        "optional. The electric bus body estimate uses the price points from "
+        "``/defaults`` unless a legacy body coefficient is supplied."
     ),
 )
 async def get_full_comparison(
@@ -604,15 +600,15 @@ async def get_full_comparison(
     battery_cost_per_kwh: Optional[float] = Query(
         None, gt=0, description="Battery unit cost [CHF/kWh]."
     ),
-    # --- Optional equation coefficients: electric bus body (a·m² + b·m + c) ---
+    # --- Optional legacy equation coefficients: electric bus body (a·m² + b·m + c) ---
     bus_no_batt_quad_coeff: Optional[float] = Query(
-        None, description="Electric bus body quadratic coeff (a)."
+        None, description="Legacy electric bus body quadratic coefficient (a)."
     ),
     bus_no_batt_lin_coeff: Optional[float] = Query(
-        None, description="Electric bus body linear coeff (b)."
+        None, description="Legacy electric bus body linear coefficient (b)."
     ),
     bus_no_batt_const: Optional[float] = Query(
-        None, description="Electric bus body constant (c) [CHF]."
+        None, description="Legacy electric bus body constant (c) [CHF]."
     ),
     # --- Optional equation coefficients: charger (a·kW + b) ---
     charger_cost_per_kw: Optional[float] = Query(
@@ -663,6 +659,7 @@ async def get_full_comparison(
     current_user: Users = Depends(get_current_user),
 ):
     if include_capex:
+        _validate_new_body_estimate(bus_length_m, bus_no_batt_quad_coeff, bus_no_batt_lin_coeff, bus_no_batt_const)
         if battery_capacity_kwh is None:
             raise HTTPException(
                 status_code=422,
@@ -722,9 +719,6 @@ async def get_full_comparison(
         lt_diesel = _or_int(lifetime_diesel_bus, "lifetime_diesel_bus")
 
         batt_cpk = _or(battery_cost_per_kwh, "battery_cost_per_kwh")
-        eb_a = _or(bus_no_batt_quad_coeff, "bus_no_batt_quad_coeff")
-        eb_b = _or(bus_no_batt_lin_coeff, "bus_no_batt_lin_coeff")
-        eb_c = _or(bus_no_batt_const, "bus_no_batt_const")
         ch_a = _or(charger_cost_per_kw, "charger_cost_per_kw")
         ch_b = _or(charger_cost_const, "charger_cost_const")
         gc_a = _or(grid_connection_fee_per_kw, "grid_connection_fee_per_kw")
@@ -735,7 +729,9 @@ async def get_full_comparison(
 
         # --- Electric CAPEX ---
         inv_battery = _battery_cost(battery_capacity_kwh, batt_cpk)
-        inv_bus_body = _bus_no_batt_cost(bus_length_m, eb_a, eb_b, eb_c)
+        inv_bus_body = electric_bus_body_cost(
+            bus_length_m, bus_no_batt_quad_coeff, bus_no_batt_lin_coeff, bus_no_batt_const
+        )
         inv_charger = _charger_cost(charger_power_kw, ch_a, ch_b)
         inv_grid = _fee_connection(grid_from_dc(charger_power_kw), gc_a, gc_b)
 

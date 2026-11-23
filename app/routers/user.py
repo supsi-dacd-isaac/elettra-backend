@@ -49,6 +49,8 @@ from app.schemas.lca import (
     ShiftTripDistance,
     ShiftYearlyDistanceResponse,
 )
+from app.services.economic_defaults import load_economic_defaults
+from app.services.lca_size import bus_length_to_lca_size_prefix
 from app.services.deletion_integrity import (
     auxiliary_stop_time_exists,
     blocker,
@@ -141,11 +143,41 @@ async def read_bus_model(model_id: UUID, db: AsyncSession = Depends(get_async_se
     return await get_owned_bus_model(db, model_id, current_user.id)
 
 
+def _bus_specs_for_write(specs: dict, previous: dict | None = None) -> dict:
+    """Keep legacy assessment provenance when physical specs are replaced."""
+    is_new = previous is None
+    previous = previous or {}
+    previous_chemistry = previous.get("battery_chemistry") or previous.get("batteryChemistry") or "NMC"
+    chemistry = specs.get("battery_chemistry") or specs.get("batteryChemistry")
+    if not chemistry:
+        chemistry = load_economic_defaults()["battery_chemistry_default"] if is_new else previous_chemistry
+    if chemistry not in ("LFP", "NMC", "LTO", "NCA"):
+        raise HTTPException(422, "Unsupported battery chemistry")
+    specs["battery_chemistry"] = chemistry
+    if "batteryChemistry" in specs:
+        specs["batteryChemistry"] = chemistry
+    # Older predictions could lack a chemistry snapshot. Keep their original
+    # fallback when the vehicle is edited after adoption of explicit chemistry.
+    specs.pop("legacy_lca_battery_chemistry", None)
+    if "legacy_lca_battery_chemistry" in previous or (not is_new and previous_chemistry != chemistry):
+        specs["legacy_lca_battery_chemistry"] = previous.get("legacy_lca_battery_chemistry", previous_chemistry)
+    length = specs["bus_length_m"]
+    keep_legacy_size = (length == previous.get("bus_length_m") == 12
+                        and str(previous.get("size", "")).startswith("12")
+                        and specs.get("size") == previous["size"])
+    if not keep_legacy_size:
+        specs["size"] = bus_length_to_lca_size_prefix(length)
+    if "length_m" in specs:
+        specs["length_m"] = length
+    return specs
+
+
 @router.post("/bus-models/", response_model=BusesModelsRead)
 async def create_bus_model(bus_model: BusModelCreateRequest, db: AsyncSession = Depends(get_async_session), current_user: Users = Depends(require_analyst)):
     require_current_user_id(bus_model.user_id, current_user.id)
     create_data = bus_model.model_dump(exclude_unset=True)
     create_data["user_id"] = current_user.id
+    create_data["specs"] = _bus_specs_for_write(create_data["specs"])
     db_bus_model = BusesModels(**create_data)
     db.add(db_bus_model)
     await db.commit()
@@ -160,6 +192,8 @@ async def update_bus_model(model_id: UUID, bus_model_update: BusModelUpdateReque
     if 'user_id' in update_data:
         require_current_user_id(update_data['user_id'], current_user.id)
         update_data.pop('user_id')
+    if "specs" in update_data:
+        update_data["specs"] = _bus_specs_for_write(update_data["specs"], db_bus_model.specs)
     for field, value in update_data.items():
         setattr(db_bus_model, field, value)
 

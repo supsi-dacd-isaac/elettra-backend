@@ -375,6 +375,11 @@ async def ensure_predictions(
         existing = None
         for candidate in result.scalars().all():
             context = candidate.contextual_parameters or {}
+            assessment = context.get("assessment_metadata") or {}
+            saved_chemistry = assessment.get("battery_chemistry") or assessment.get("batteryChemistry") or "NMC"
+            model_chemistry = specs.get("battery_chemistry") or specs.get("batteryChemistry") or "NMC"
+            if saved_chemistry != model_chemistry:
+                continue
             if run_policy(candidate) != policy:
                 continue
             if policy != LEGACY_POLICY and context.get('hvac_input_fingerprint') != fingerprint(expected_inputs[str(shift_id)]):

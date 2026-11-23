@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.core.auth import get_current_user
 from app.database import get_async_session
-from app.models import OptimizationRuns, YearlyAnalysis
+from app.models import OptimizationRuns, PredictionRuns, YearlyAnalysis
 from app.routers import yearly_analysis
 from main import app
 
@@ -83,6 +83,7 @@ class FakeDb:
         self.optimization_status = optimization_status
         self.optimization_results = optimization_results
         self.optimization_missing = False
+        self.vehicle_prices = []
 
     def _yearly_analysis(self):
         return SimpleNamespace(
@@ -111,6 +112,8 @@ class FakeDb:
             value = self._yearly_analysis()
         elif entity is OptimizationRuns:
             value = self._optimization_run()
+        elif entity is PredictionRuns:
+            return SimpleNamespace(all=lambda: self.vehicle_prices)
         else:
             raise AssertionError(f"unexpected ownership query: {statement!s}")
 
@@ -214,6 +217,9 @@ def test_yearly_costs_manual_capex_flow_is_unchanged(
         battery_capacity_kwh=500.0,
         charger_power_kw=300.0,
         battery_cost_per_kwh=100.0,
+        bus_no_batt_quad_coeff=0.0,
+        bus_no_batt_lin_coeff=0.0,
+        bus_no_batt_const=640_000,
         charger_cost_per_kw=2.0,
         charger_cost_const=10.0,
         grid_connection_fee_per_kw=3.0,
@@ -224,6 +230,7 @@ def test_yearly_costs_manual_capex_flow_is_unchanged(
     assert response.status_code == 200, response.text
     items = {item["name"]: item for item in response.json()["ebus"]["capex_items"]}
     assert items["Battery"]["investment_chf"] == 50_000.0
+    assert items["Bus body (w/o battery)"]["investment_chf"] == 640_000
     assert items["Charger"]["investment_chf"] == 610.0
     assert items["Grid connection"]["investment_chf"] == round(3 * 300 / .94 + 20, 2)
     assert "Optimized charging infrastructure" not in items
@@ -245,23 +252,30 @@ def test_yearly_costs_manual_capex_source_still_requires_charger_power(
     assert "charger_power_kw is required" in response.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    ("battery_price", "battery_investment"),
+    [({}, 264_000), ({"battery_cost_per_kwh": 100.0}, 80_000)],
+)
 def test_yearly_costs_optimization_capex_uses_linked_run_without_manual_inputs(
     client: TestClient,
     fake_yearly_costs,
+    battery_price,
+    battery_investment,
 ):
     response = _get_costs(
         client,
         fake_yearly_costs.yearly_analysis_id,
         include_capex=True,
         capex_source="optimization",
-        battery_cost_per_kwh=100.0,
         energy_price_per_kwh=0.5,
+        **battery_price,
     )
 
     assert response.status_code == 200, response.text
     payload = response.json()
     items = {item["name"]: item for item in payload["ebus"]["capex_items"]}
-    assert items["Battery"]["investment_chf"] == 80_000.0
+    assert items["Battery"]["investment_chf"] == battery_investment
+    assert items["Bus body (w/o battery)"]["investment_chf"] == 490_000
     assert items["Optimized charging infrastructure"]["investment_chf"] == 12_345.0
     assert "Charger" not in items
     assert "Grid connection" not in items
@@ -291,6 +305,71 @@ def test_yearly_costs_preserve_pack_price_and_split_site_investment(client, fake
     assert items["Site connection and shared infrastructure"]["investment_chf"] == 4345
     assert items["Site connection and shared infrastructure"]["lifetime_years"] == 30
     assert "Optimized charging infrastructure" not in items
+
+
+@pytest.mark.parametrize(
+    ("body_overrides", "body_investment"),
+    [({}, 1_290_000), ({"bus_no_batt_quad_coeff": 0, "bus_no_batt_lin_coeff": 0,
+                        "bus_no_batt_const": 610_000}, 1_220_000)],
+)
+def test_yearly_optimization_capex_uses_saved_fleet_quotes(
+    client, fake_yearly_costs, body_overrides, body_investment,
+):
+    results = fake_yearly_costs.db.optimization_results
+    rows = results["battery_results"]
+    rows["shift-1"].update(bus_cost_chf=640_000, battery_pack_cost_chf=25_000)
+    results["per_bus_summary"][1].update(bus_body_cost_chf=650_000, battery_pack_cost_chf=26_000)
+    # Some optimizer versions already include the combined investment.
+    rows["shift-1"]["selected_vehicle_cost_chf"] = 890_000
+    response = _get_costs(
+        client, fake_yearly_costs.yearly_analysis_id, include_capex=True,
+        capex_source="optimization", **body_overrides,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    items = {item["name"]: item for item in payload["ebus"]["capex_items"]}
+    assert items["Bus body (w/o battery)"]["investment_chf"] == body_investment
+    assert items["Battery"]["investment_chf"] == 510_000
+    diesel_body = 625 * 12 ** 2 + 6250 * 12 + 185_000
+    assert payload["diesel_comparator"]["capex_items"][0]["investment_chf"] == 2 * diesel_body
+
+
+def test_yearly_optimization_uses_chemistry_for_unquoted_battery_only(client, fake_yearly_costs):
+    db = fake_yearly_costs.db
+    model_id = uuid.uuid4()
+    db.vehicle_prices = [
+        ("shift-2", model_id, {"battery_chemistry": "NMC"}, {"battery_chemistry": "LFP"}),
+    ]
+    results = db.optimization_results
+    results["per_bus_summary"][1]["shift_id"] = "shift-2"
+    results["battery_results"]["shift-1"]["selected_battery_cost_chf"] = 60_000
+    results["battery_results"]["shift-2"] = {"optimized_kwh": 300, "bus_model_id": str(model_id)}
+    response = _get_costs(
+        client, fake_yearly_costs.yearly_analysis_id, include_capex=True,
+        capex_source="optimization",
+    )
+    assert response.status_code == 200, response.text
+    items = {item["name"]: item for item in response.json()["ebus"]["capex_items"]}
+    assert items["Battery"]["investment_chf"] == 60_000 + 300 * 450
+
+
+def test_yearly_manual_capex_uses_linked_model_quote_and_preserves_explicit_rate(
+    client, fake_yearly_costs,
+):
+    fake_yearly_costs.db.vehicle_prices = [
+        ("shift-1", uuid.uuid4(), {}, {
+            "cost": 645_000, "battery_pack_cost_chf": 28_000, "battery_pack_size_kwh": 40,
+        }),
+    ]
+    base_params = {"include_capex": True, "battery_capacity_kwh": 200, "charger_power_kw": 150}
+    for price_params, expected_battery in [({}, 140_000), ({"battery_cost_per_kwh": 450}, 90_000)]:
+        response = _get_costs(
+            client, fake_yearly_costs.yearly_analysis_id, **base_params, **price_params,
+        )
+        assert response.status_code == 200, response.text
+        items = {item["name"]: item for item in response.json()["ebus"]["capex_items"]}
+        assert items["Bus body (w/o battery)"]["investment_chf"] == 645_000
+        assert items["Battery"]["investment_chf"] == expected_battery
 
 
 @pytest.mark.parametrize(
@@ -381,6 +460,6 @@ def test_extract_optimization_capex_rejects_inconsistent_charger_costs():
     results["total_installation_cost_chf"] = 1.0
 
     with pytest.raises(Exception) as exc_info:
-        yearly_analysis._extract_optimization_capex_inputs(results)
+        yearly_analysis._extract_optimization_capex_inputs(results, body_estimate_chf=490_000)
 
     assert "inconsistent" in str(exc_info.value)

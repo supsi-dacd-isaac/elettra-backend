@@ -143,7 +143,7 @@ def test_create_read_update_delete_bus_model(client: TestClient, record):
     unchanged = (
         r.status_code == 200
         and r.json()["name"] == "Test Model 1"
-        and r.json()["specs"] == {**VALID_BUS_MODEL_SPECS, "battery_kwh": 250}
+        and r.json()["specs"] == model["specs"]
     )
     record("bm_invalid_specs_update_atomic", unchanged, f"status={r.status_code}")
 

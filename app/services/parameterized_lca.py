@@ -180,7 +180,7 @@ def build_vehicles(runs, energy, features, specs_by_model, overrides=None):
                     if data.get(alias) is not None:
                         return data[alias], source
             return default, "declared_default"
-        chemistry, chem_source = resolve("battery_chemistry", ("battery_chemistry", "batteryChemistry"), "NMC")
+        chemistry, chem_source = resolve("battery_chemistry", ("legacy_lca_battery_chemistry", "battery_chemistry", "batteryChemistry"), "NMC")
         life, life_source = resolve("lifetime_bus", ("bus_lifetime", "bus_lifetime_years"), economic_defaults()["lifetime_bus"])
         batt_life, batt_source = resolve("lifetime_battery", ("battery_pack_lifetime", "battery_pack_lifetime_years"), economic_defaults()["lifetime_battery"])
         diesel_life, diesel_source = resolve("lifetime_diesel_bus", ("lifetime_diesel_bus",), economic_defaults()["lifetime_diesel_bus"])

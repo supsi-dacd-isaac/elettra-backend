@@ -44,8 +44,12 @@ async def test_ensure_predictions_batches_missing_duties_and_reuses_completed(mo
         bus_length_m=12, empty_weight_kg=10000, battery_pack_weight_kg=300, max_passengers=80))
     existing = NS(id=uuid4(), contextual_parameters=dict(quantiles=[.05,.5,.95],
         num_battery_packs=14, battery_capacity_kwh=700, total_weight_kg=17000, bus_length_m=12))
+    # A chemistry change can leave a manufacturer-supplied pack mass identical.
+    other_chemistry = NS(id=uuid4(), contextual_parameters={
+        **existing.contextual_parameters, "assessment_metadata": {"battery_chemistry": "LFP"}
+    })
     results = [NS(scalars=lambda: NS(all=lambda: [])),
-               NS(scalars=lambda: NS(all=lambda: [existing])), NS(scalars=lambda: NS(all=lambda: []))]
+               NS(scalars=lambda: NS(all=lambda: [other_chemistry, existing])), NS(scalars=lambda: NS(all=lambda: []))]
     db = NS(get=AsyncMock(return_value=model), execute=AsyncMock(side_effect=results),
             add=Mock(), flush=AsyncMock(), commit=AsyncMock())
     async def flush(): db.add.call_args.args[0].id = uuid4()

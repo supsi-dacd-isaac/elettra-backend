@@ -248,3 +248,14 @@ async def test_timeout_is_incomplete_not_fabricated_zero():
     client = MobitoolClient(catalog()["base_url"], transport=httpx.MockTransport(timeout))
     with pytest.raises(LcaIncomplete, match="timeout"):
         await client.impact("id", {})
+
+def test_historical_chemistry_survives_edit_and_new_predictions_use_their_snapshot():
+    from app.routers.user import _bus_specs_for_write
+
+    previous = {"bus_length_m": 12}
+    changed = _bus_specs_for_write({**previous, "battery_chemistry": "LFP"}, previous)
+    runs, energy, features = inputs()
+    assert all(v["battery_chemistry"] == "NMC" for v in build_vehicles(runs, energy, features, {"bus": changed}))
+    for run in runs:
+        run.contextual_parameters["assessment_metadata"] = {"battery_chemistry": "LFP"}
+    assert all(v["battery_chemistry"] == "LFP" for v in build_vehicles(runs, energy, features, {"bus": changed}))
