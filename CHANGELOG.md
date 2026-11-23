@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.8.0-rc.1] - 2026-11-23
+
+- Price electric bus bodies by physical length and expose LFP/NMC pack mass and price defaults. Preserve chemistry for annual assessments and historical results.
+- Value electric and diesel investments over a common project horizon, including replacements and terminal residuals. The annual cost API supports the previous annualization with `tco_method=asset_lifetime`.
+- Add read-only TCO previews for the annual dashboard and exports using the same financial calculation. Pair with frontend 1.3.0-rc.2.
+
 ## [1.7.0] - 2026-11-18
 
 - Promote the functionality validated in `1.7.0-rc.2`, with no functional changes.
