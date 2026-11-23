@@ -605,3 +605,33 @@ Planned future additions (not yet present here):
 ---
 
 **Last Updated:** 2026-03-20
+
+## Annual project TCO
+
+`GET /api/v1/yearly-analysis/{id}/costs` returns operating costs by default.
+Request `include_capex=true&capex_source=optimization&bus_length_m=10.75`
+to price the selected design. The default method, `project_horizon`, values
+electric and diesel on the same horizon. Each asset is purchased at year zero
+and replaced at its initial real price when its life expires before the horizon.
+The remaining straight-line value is credited at the final year. End-of-year
+operating costs and all capital cash flows use the same discount rate.
+The equivalent annual cost is the present value divided by the annuity factor.
+Totals are rounded after aggregation, so displayed line items can differ by one cent.
+
+Saved project assumptions supply the horizon, lifetimes, operating prices,
+maintenance budget and mileage per duty. In project TCO the heater maintenance
+fraction applies to annual heater fuel expense. In OPEX-only and legacy
+asset-lifetime calculations it applies to electric vehicle maintenance expense.
+Explicit query parameters take
+precedence. `project_horizon_years` accepts 1–60 years. With no saved horizon,
+the electric bus lifetime sets the evaluation period. Use
+`tco_method=asset_lifetime` to reproduce the previous per-asset annualization
+and its operating-cost conventions. The response identifies the method and horizon
+in `assumptions`. `annual_saving_chf` is diesel annual cost minus electric annual cost.
+
+The dashboard calls `POST /api/v1/yearly-analysis/{id}/costs/project` with the
+current project horizon, discount rate and fleet/group investments and annual
+operating line items. This read-only preview returns unrounded discounted cash
+flows, residuals, annual equivalent costs and costs per km for each scope.
+It uses the same project valuation as the GET endpoint. Authentication and
+ownership apply to both endpoints.

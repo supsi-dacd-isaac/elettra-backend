@@ -84,12 +84,13 @@ class FakeDb:
         self.optimization_results = optimization_results
         self.optimization_missing = False
         self.vehicle_prices = []
+        self.features = {}
 
     def _yearly_analysis(self):
         return SimpleNamespace(
             id=self.yearly_analysis_id,
             optimization_run_id=self.optimization_run_id,
-            features={},
+            features=self.features,
         )
 
     def _optimization_run(self):
@@ -154,7 +155,7 @@ def fake_yearly_costs(monkeypatch):
     async def override_user():
         return SimpleNamespace(id=user_id)
 
-    async def fake_energy_summary(db, requested_yearly_analysis_id):
+    async def fake_energy_summary(db, requested_yearly_analysis_id, **options):
         assert requested_yearly_analysis_id == yearly_analysis_id
         return _energy_summary(yearly_analysis_id)
 
@@ -275,7 +276,7 @@ def test_yearly_costs_optimization_capex_uses_linked_run_without_manual_inputs(
     payload = response.json()
     items = {item["name"]: item for item in payload["ebus"]["capex_items"]}
     assert items["Battery"]["investment_chf"] == battery_investment
-    assert items["Bus body (w/o battery)"]["investment_chf"] == 490_000
+    assert items["Bus body (w/o battery)"]["investment_chf"] == 2 * 490_000
     assert items["Optimized charging infrastructure"]["investment_chf"] == 12_345.0
     assert "Charger" not in items
     assert "Grid connection" not in items
@@ -463,3 +464,75 @@ def test_extract_optimization_capex_rejects_inconsistent_charger_costs():
         yearly_analysis._extract_optimization_capex_inputs(results, body_estimate_chf=490_000)
 
     assert "inconsistent" in str(exc_info.value)
+
+
+def test_project_and_legacy_get_costs_reconcile_tpl_quote(client, fake_yearly_costs, monkeypatch):
+    async def annual_activity(*args, **options):
+        energy = _energy_summary(fake_yearly_costs.yearly_analysis_id)
+        energy["yearly_totals"].update(distance_km=17996.39584399179, electric_kwh=23090.608383)
+        return energy
+
+    monkeypatch.setattr(yearly_analysis, "get_fresh_energy_summary", annual_activity)
+    params = dict(include_capex=True, bus_length_m=10.75, battery_capacity_kwh=400,
+                  charger_power_kw=80, battery_cost_per_kwh=330)
+    project = _get_costs(client, fake_yearly_costs.yearly_analysis_id, **params).json()
+    legacy = _get_costs(client, fake_yearly_costs.yearly_analysis_id, **params, tco_method="asset_lifetime").json()
+    assert project["assumptions"]["project_horizon_years"] == 12
+    assert project["ebus"]["total_annual_cost_chf_per_year"] == 81066.22
+    assert project["annual_saving_chf"] == -28542.46
+    assert legacy["ebus"]["total_annual_cost_chf_per_year"] == 80500.61
+    assert legacy["assumptions"]["project_horizon_years"] is None
+
+
+def test_project_overrides_saved_horizon_and_infrastructure_budget(client, fake_yearly_costs):
+    fake_yearly_costs.db.features = {"assessment_assumptions": {"tco": {
+        "horizon": 10, "rate": 0, "bodyLife": 15, "dieselCapex": 123456,
+        "maintenancePerKm": 0.4, "energyPrice": 0.5,
+        "infrastructureMaintenanceMode": "fixed", "infrastructureMaintenance": 2300,
+    }}}
+    params = dict(include_capex=True, capex_source="optimization")
+    def get(**extra):
+        reply = _get_costs(client, fake_yearly_costs.yearly_analysis_id, **params, **extra)
+        assert reply.status_code == 200, reply.text
+        return reply.json()
+    saved = get()
+    assert saved["assumptions"]["project_horizon_years"] == 10
+    assert saved["assumptions"]["interest_rate"] == 0
+    assert saved["diesel_comparator"]["capex_items"][0]["investment_chf"] == 246912
+    assert saved["ebus"]["total_opex_chf_per_year"] == round(1000 / .94 * .5 + 100 * .4 + 2300, 2)
+    overrides = get(project_horizon_years=4, infrastructure_maintenance_chf_per_year=0)
+    assert overrides["assumptions"]["project_horizon_years"] == 4
+    assert saved["ebus"]["total_opex_chf_per_year"] - overrides["ebus"]["total_opex_chf_per_year"] == 2300
+    free_energy = get(energy_price_per_kwh=0, fuel_cost_per_l=0)
+    assert free_energy["ebus"]["total_opex_chf_per_year"] == 2340
+    legacy = get(tco_method="asset_lifetime")
+    assert legacy["assumptions"]["interest_rate"] == .03
+    assert legacy["ebus"]["total_opex_chf_per_year"] < overrides["ebus"]["total_opex_chf_per_year"]
+
+
+def test_project_heater_and_site_maintenance_follow_dashboard_rates(client, fake_yearly_costs, monkeypatch):
+    async def annual_heating(*args, **options):
+        energy = _energy_summary(fake_yearly_costs.yearly_analysis_id)
+        energy["auxiliary_heating_type"] = "diesel"
+        energy["diesel_heating_data"] = {"data_status": "available"}
+        energy["yearly_totals"]["diesel_liters"] = 50
+        energy["scenarios"][0]["annual_diesel_liters"] = 50
+        return energy
+
+    monkeypatch.setattr(yearly_analysis, "get_fresh_energy_summary", annual_heating)
+    fake_yearly_costs.db.features = {"assessment_assumptions": {"tco": {
+        "infrastructureMaintenanceMode": "rate", "infrastructureMaintenanceRate": 0.03,
+    }}}
+    def query(method):
+        r = _get_costs(client, fake_yearly_costs.yearly_analysis_id, include_capex=True,
+                       capex_source="optimization", tco_method=method, fuel_cost_per_l=2)
+        assert r.status_code == 200
+        data = r.json()
+        return {item["name"]: item["cost_chf_per_year"] for item in data["ebus"]["opex_items"]}, data["scenarios"][0]
+
+    project, scenario = query("project_horizon")
+    assert project["Infrastructure maintenance"] == round(12345 * .03, 2)
+    assert project["Diesel heating fuel"] == 100
+    assert project["Diesel heating maintenance"] == scenario["annual_diesel_heating_maint_cost_chf"] == 10
+    legacy, _ = query("asset_lifetime")
+    assert legacy["Diesel heating maintenance"] == round(legacy["Maintenance"] * .1, 2)

@@ -119,3 +119,21 @@ async def test_yearly_summary_rejects_unfinished_prediction_runs():
     with pytest.raises(HTTPException) as exc_info:
         await _build_energy_summary(analysis, [run])
     assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_project_mileage_scales_each_duty_without_changing_the_technical_baseline():
+    runs = [_run(), _run()]
+    for run in runs:
+        run.shift_id = uuid4()
+    runs[1].summary["total_consumption_kwh"] = 24
+    analysis = SimpleNamespace(id=uuid4(), features={"config": {"auxiliary_heating_type": "diesel"},
+                                                     "scenarios": [{"temperature": -5, "occurrences": 10}]})
+    targets = {str(runs[0].shift_id): 200, str(runs[1].shift_id): 50}
+    baseline = await _build_energy_summary(analysis, runs)
+    projected = await _build_energy_summary(analysis, runs, targets, full_precision=True)
+    assert projected["yearly_totals"]["distance_km"] == 250
+    assert projected["yearly_totals"]["electric_kwh"] == 360
+    assert projected["yearly_totals"]["diesel_liters"] == pytest.approx(baseline["yearly_totals"]["diesel_liters"] * 1.25, abs=1e-4)
+    assert baseline["yearly_totals"]["distance_km"] == 200
+    assert projected["scenarios"][1]["annual_electric_kwh"] == 120

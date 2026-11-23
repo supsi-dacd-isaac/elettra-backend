@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.database import get_async_session
+from app.routers.project_tco import router as project_tco_router
 from app.schemas.database import YearlyAnalysisCreate, YearlyAnalysisUpdate, YearlyAnalysisRead
 from app.schemas.pagination import (
     PaginatedResponse, PaginationParams, build_paginated_response,
@@ -81,6 +82,7 @@ from app.services.diesel_heating import (
     diesel_heating_fuel_profile,
     resolve_diesel_heating_quantity,
 )
+from app.services.project_tco import project_design
 from app.services.charging_energy import energy_boundary, grid_from_dc
 from app.services.economic_defaults import electric_bus_body_cost, load_economic_defaults
 
@@ -107,10 +109,6 @@ def _econ_or(value, key: str):
     return value if value is not None else _econ(key)
 
 
-def _econ_or_int(value, key: str) -> int:
-    return value if value is not None else int(_econ(key))
-
-
 # ---------------------------------------------------------------------------
 # Pure economic calculation helpers (mirror economic.py, kept local to avoid
 # cross-router imports)
@@ -127,18 +125,29 @@ def _consumption_l_per_km(length_m: float, a: float, b: float) -> float:
 def _capital_recovery_factor(interest_rate: float, lifetime: int) -> float:
     if interest_rate == 0.0:
         return 1.0 / lifetime
-    q = 1.0 + interest_rate
-    try:
-        q_t = q ** lifetime
-    except OverflowError:
-        return interest_rate
-    if math.isinf(q_t):
-        return interest_rate
-    return (q_t * interest_rate) / (q_t - 1.0)
+    return interest_rate / -math.expm1(-lifetime * math.log1p(interest_rate))
 
 
 def _annualize(investment: float, lifetime: int, interest_rate: float) -> float:
     return investment * _capital_recovery_factor(interest_rate, lifetime)
+
+
+def _annual_cost_totals(investments, operating, legacy_opex, km, horizon, rate):
+    if horizon is not None:
+        try:
+            design = project_design(investments, operating, km, horizon, rate)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        annualized = [c["presentValue"] / design["annuityFactor"] for c in design["components"]]
+    else:
+        annualized = [_annualize(cost, life, rate) for _, cost, life in investments]
+    items = [CapexLineItem(name=name, investment_chf=round(cost, 2), lifetime_years=life,
+                           annualized_chf_per_year=round(annual, 2))
+             for (name, cost, life), annual in zip(investments, annualized)]
+    if horizon is not None:
+        return items, sum(annualized), design["annualOpex"], round(design["annualEquivalent"], 2)
+    capex = sum(item.annualized_chf_per_year for item in items)
+    return items, capex, legacy_opex, round(capex + legacy_opex, 2)
 
 
 async def _load_yearly_vehicle_prices(db: AsyncSession, yearly_analysis_id: UUID):
@@ -204,6 +213,7 @@ def _extract_optimization_capex_inputs(
     *,
     body_estimate_chf: float,
     use_body_quotes: bool = True,
+    legacy_unquoted_vehicle: bool = False,
     battery_cost_per_kwh: float | None = None,
     vehicle_prices=(),
 ) -> dict[str, float]:
@@ -372,10 +382,11 @@ def _extract_optimization_capex_inputs(
             point_total += points
             common_total += common
         extra.update(charging_points_cost_chf=point_total, site_infrastructure_cost_chf=common_total)
+    single_estimate = legacy_unquoted_vehicle and not has_body_quote
     return {
-        "body_investment_chf": body_investment_chf if has_body_quote else body_estimate_chf,
+        "body_investment_chf": body_estimate_chf if single_estimate else body_investment_chf,
         "battery_investment_chf": battery_investment_chf,
-        "vehicle_count": len(per_bus_summary) if has_body_quote else 1,
+        "vehicle_count": 1 if single_estimate else len(per_bus_summary),
         "installation_cost_chf": installation_cost_chf,
         **extra,
     }
@@ -630,6 +641,7 @@ def _allocate_phases_by_share(
 from app.services.gtfs_datasets import inherit_provenance, validate_source_analysis_gtfs
 
 router = APIRouter()
+router.include_router(project_tco_router)
 
 
 @router.get('/{analysis_id}/auxiliary-assumptions')
@@ -873,6 +885,8 @@ async def delete_yearly_analysis(
 async def _build_energy_summary(
     ya: YearlyAnalysis,
     pred_runs: list,
+    annual_km_by_shift: dict | None = None,
+    *, full_precision: bool = False,
 ) -> dict:
     """Pure aggregation logic shared by GET and POST endpoints.
 
@@ -932,6 +946,21 @@ async def _build_energy_summary(
             ),
         )
 
+    utilization = {}
+    if annual_km_by_shift:
+        if not isinstance(annual_km_by_shift, dict):
+            raise HTTPException(422, "Invalid annualKmByShift.")
+        distances = {}
+        for run in pred_runs:
+            key = str(run.shift_id)
+            days = occ_by_temp[round(float(run.external_temp_celsius), 2)]
+            distances[key] = distances.get(key, 0.0) + days * float((run.summary or {}).get("total_distance_km", 0))
+        for key, km in annual_km_by_shift.items():
+            if (not distances.get(key) or isinstance(km, bool) or not isinstance(km, (int, float))
+                    or not math.isfinite(km) or km <= 0):
+                raise HTTPException(422, "Invalid mileage or unknown shift in annualKmByShift.")
+            utilization[key] = km / distances[key]
+
     scenario_summaries: list[dict] = []
     yearly_electric_kwh = 0.0
     yearly_distance_km = 0.0
@@ -964,6 +993,7 @@ async def _build_energy_summary(
         temp_c = float(pr.external_temp_celsius)
         occurrences = occ_by_temp.get(round(temp_c, 2), 0)
 
+        equivalent_days = occurrences * utilization.get(str(getattr(pr, "shift_id", "")), 1.0)
         daily_electric = float(summary.get("total_consumption_kwh", 0))
         daily_distance = float(summary.get("total_distance_km", 0))
         daily_aux = float(summary.get("total_auxiliary_kwh", 0))
@@ -974,7 +1004,7 @@ async def _build_energy_summary(
             if summary.get(source) is not None
         }
         annual_components = {
-            key: value * occurrences for key, value in daily_components.items()
+            key: value * equivalent_days for key, value in daily_components.items()
         }
 
         diesel_expected = global_aux_type == "diesel"
@@ -1003,17 +1033,17 @@ async def _build_energy_summary(
                 **quantity.metadata(),
             }
 
-        annual_electric = daily_electric * occurrences
-        annual_distance = daily_distance * occurrences
-        annual_aux = daily_aux * occurrences
-        annual_dt = daily_dt * occurrences
+        annual_electric = daily_electric * equivalent_days
+        annual_distance = daily_distance * equivalent_days
+        annual_aux = daily_aux * equivalent_days
+        annual_dt = daily_dt * equivalent_days
         annual_diesel_fuel = (
-            daily_diesel_fuel * occurrences
+            daily_diesel_fuel * equivalent_days
             if daily_diesel_fuel is not None
             else None
         )
         annual_diesel_liters = (
-            daily_diesel_liters * occurrences
+            daily_diesel_liters * equivalent_days
             if daily_diesel_liters is not None
             else None
         )
@@ -1068,9 +1098,12 @@ async def _build_energy_summary(
         for key, value in annual_components.items():
             yearly_components[key] = yearly_components.get(key, 0.0) + value
 
+    def reported(value):
+        return value if full_precision else round(value, 4)
+
     yearly_totals: dict = {
-        "distance_km": round(yearly_distance_km, 4),
-        "electric_kwh": round(yearly_electric_kwh, 4),
+        "distance_km": reported(yearly_distance_km),
+        "electric_kwh": reported(yearly_electric_kwh),
         "auxiliary_kwh": round(yearly_auxiliary_kwh, 4),
         "drivetrain_kwh": round(yearly_drivetrain_kwh, 4),
     }
@@ -1088,7 +1121,7 @@ async def _build_energy_summary(
             else None
         )
         yearly_totals["diesel_liters"] = (
-            round(yearly_diesel_liters, 4)
+            reported(yearly_diesel_liters)
             if diesel_data_status == "available"
             else None
         )
@@ -1156,6 +1189,7 @@ async def _load_prediction_runs(
 async def get_fresh_energy_summary(
     db: AsyncSession,
     yearly_analysis_id: UUID,
+    *, annual_km_by_shift: dict | None = None, full_precision: bool = False,
 ) -> dict:
     """Return a freshly-computed energy summary — never reads the cached blob.
 
@@ -1178,7 +1212,7 @@ async def get_fresh_energy_summary(
             detail="No prediction runs found for this yearly analysis.",
         )
 
-    return await _build_energy_summary(ya, pred_runs)
+    return await _build_energy_summary(ya, pred_runs, annual_km_by_shift, full_precision=full_precision)
 
 
 @router.get(
@@ -1309,6 +1343,14 @@ async def compute_and_store_yearly_energy_summary(
 )
 async def get_yearly_costs(
     yearly_analysis_id: UUID,
+    tco_method: Literal["project_horizon", "asset_lifetime"] = Query(
+        "project_horizon", description="With CAPEX, use the common project horizon or reproduce the legacy per-asset annuities."
+    ),
+    project_horizon_years: Optional[int] = Query(
+        None, ge=1, le=60, description="Common evaluation horizon. Defaults to the saved project horizon or electric bus lifetime."
+    ),
+    infrastructure_maintenance_chf_per_year: Optional[float] = Query(None, ge=0, allow_inf_nan=False),
+    diesel_vehicle_price_chf: Optional[float] = Query(None, ge=0, allow_inf_nan=False),
     # --- Physical inputs ---
     bus_length_m: float = Query(
         ..., gt=0, description="Bus length [m] (required)."
@@ -1338,10 +1380,10 @@ async def get_yearly_costs(
     ),
     # --- Optional economic parameters (fall back to config defaults) ---
     energy_price_per_kwh: Optional[float] = Query(
-        None, gt=0, description="Electricity price [CHF/kWh]."
+        None, ge=0, allow_inf_nan=False, description="Electricity price [CHF/kWh]."
     ),
     fuel_cost_per_l: Optional[float] = Query(
-        None, gt=0, description="Diesel fuel price [CHF/l]."
+        None, ge=0, allow_inf_nan=False, description="Diesel fuel price [CHF/l]."
     ),
     interest_rate: Optional[float] = Query(
         None, ge=0, le=1.0, description="Discount / interest rate (0–1)."
@@ -1349,8 +1391,9 @@ async def get_yearly_costs(
     diesel_heating_maintenance_factor: Optional[float] = Query(
         None, ge=0, le=1.0,
         description=(
-            "Fraction of electric maintenance OPEX applied as "
-            "diesel-heating maintenance surcharge (default 0.10 = 10 %%)."
+            "Diesel-heater maintenance fraction (default 0.10). Project TCO "
+            "applies it to heater fuel expense. OPEX-only and asset_lifetime "
+            "apply it to electric vehicle maintenance expense."
         ),
     ),
     # --- Electric maintenance model (a·m + b) [CHF/km] ---
@@ -1441,7 +1484,36 @@ async def get_yearly_costs(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(get_current_user),
 ):
-    await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
+    analysis = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
+    project = include_capex and tco_method == "project_horizon"
+    features = analysis.features or {}
+    assessment = features.get("assessment_assumptions") or {}
+    saved = (assessment.get("tco") or {}) if project else {}
+    snapshot = (features.get("config") or {}).get("bus_model_snapshot") or {}
+    if isinstance(snapshot, str):
+        try:
+            snapshot = json.loads(snapshot)
+        except ValueError:
+            snapshot = {}
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    if not isinstance(saved, dict):
+        raise HTTPException(422, "Invalid saved TCO assumptions.")
+    # Saved UI assumptions live in free-form JSON. Explicit API inputs take precedence.
+    def assumption(explicit, key, fallback, *, minimum=0, maximum=math.inf, integer=False):
+        value = explicit if explicit is not None else saved.get(key, fallback)
+        if value is None:
+            value = fallback
+        if isinstance(value, str):
+            try:
+                value = float(value)
+            except ValueError:
+                raise HTTPException(422, f"Invalid project cost assumption: {key}.")
+        if (isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value)
+                or not minimum <= value <= maximum or (integer and int(value) != value)):
+            raise HTTPException(422, f"Invalid project cost assumption: {key}.")
+        return int(value) if integer else float(value)
+
     # -- Validate CAPEX prerequisites -----------------------------------
     optimization_capex_inputs: dict[str, float] | None = None
     body_coefficients = (bus_no_batt_quad_coeff, bus_no_batt_lin_coeff, bus_no_batt_const)
@@ -1472,12 +1544,17 @@ async def get_yearly_costs(
             opt_run.results,
             body_estimate_chf=electric_bus_body_cost(bus_length_m, *body_coefficients),
             use_body_quotes=use_body_quotes,
+            legacy_unquoted_vehicle=not project,
             battery_cost_per_kwh=battery_cost_per_kwh,
             vehicle_prices=vehicle_prices,
         )
 
     # -- 1. Fresh energy summary ----------------------------------------
-    energy = await get_fresh_energy_summary(db, yearly_analysis_id)
+    mileages = saved.get("annualKmByShift")
+    if project:
+        energy = await get_fresh_energy_summary(db, yearly_analysis_id, annual_km_by_shift=mileages, full_precision=True)
+    else:
+        energy = await get_fresh_energy_summary(db, yearly_analysis_id)
     yt = energy["yearly_totals"]
     aux_type: str = energy["auxiliary_heating_type"]
 
@@ -1499,13 +1576,10 @@ async def get_yearly_costs(
     yearly_diesel_fuel_kwh = float(yt.get("diesel_fuel_kwh") or 0)
 
     # -- 2. Resolve economic parameters ---------------------------------
-    epk = _econ_or(energy_price_per_kwh, "energy_price_per_kwh")
-    fpl = _econ_or(fuel_cost_per_l, "fuel_cost_per_l")
-    ir = _econ_or(interest_rate, "interest_rate")
-    dhmf = _econ_or(
-        diesel_heating_maintenance_factor,
-        "diesel_heating_maintenance_factor",
-    )
+    epk = assumption(energy_price_per_kwh, "energyPrice", _econ("energy_price_per_kwh"))
+    fpl = assumption(fuel_cost_per_l, "fuelPrice", _econ("fuel_cost_per_l"))
+    ir = assumption(interest_rate, "rate", _econ("interest_rate"), maximum=1)
+    dhmf = assumption(diesel_heating_maintenance_factor, "heaterMaintenanceFactor", _econ("diesel_heating_maintenance_factor"))
 
     em_a = _econ_or(electric_maint_cost_per_m, "electric_maint_cost_per_m")
     em_b = _econ_or(electric_maint_cost_const, "electric_maint_cost_const")
@@ -1518,6 +1592,19 @@ async def get_yearly_costs(
     d_maint_cpk = _maint_per_km(bus_length_m, dm_a, dm_b)
     d_cons_lpk = _consumption_l_per_km(bus_length_m, dc_a, dc_b)
 
+    if project:
+        fixed_config = (features.get("config") or {}).get("fixedConfiguration") or {}
+        ui_fleet = bool((fixed_config.get("investment") or {}).get("rows"))
+        if electric_maint_cost_per_m is None and electric_maint_cost_const is None:
+            default = {9: .30, 18: .40}.get(bus_length_m, .35) if ui_fleet else e_maint_cpk
+            e_maint_cpk = assumption(None, "maintenancePerKm", default)
+        if diesel_maint_cost_per_m is None and diesel_maint_cost_const is None:
+            default = {9: .30, 18: .45}.get(bus_length_m, .37) if ui_fleet else d_maint_cpk
+            d_maint_cpk = assumption(None, "dieselMaintenance", default)
+        if diesel_consumption_per_m is None and diesel_consumption_const is None:
+            default_consumption = assessment.get("diesel_consumption_l_per_km")
+            d_cons_lpk = assumption(None, "dieselConsumption", d_cons_lpk if default_consumption is None else default_consumption)
+
     # -- 3. Mixed e-bus OPEX --------------------------------------------
     e_energy_year = epk * grid_from_dc(yearly_electric_kwh)
     e_maint_year = e_maint_cpk * yearly_km
@@ -1526,7 +1613,7 @@ async def get_yearly_costs(
     dh_maint_year = 0.0
     if aux_type == "diesel":
         dh_fuel_year = fpl * yearly_diesel_liters
-        dh_maint_year = e_maint_year * dhmf
+        dh_maint_year = (dh_fuel_year if project else e_maint_year) * dhmf
 
     ebus_opex = [
         OpexLineItem(name="Energy", cost_chf_per_year=round(e_energy_year, 2)),
@@ -1560,11 +1647,20 @@ async def get_yearly_costs(
     diesel_total_capex: float | None = None
 
     if include_capex:
-        lt_bus = _econ_or_int(lifetime_bus, "lifetime_bus")
-        lt_batt = _econ_or_int(lifetime_battery, "lifetime_battery")
-        lt_chg = _econ_or_int(lifetime_charger, "lifetime_charger")
-        lt_conn = _econ_or_int(lifetime_connection, "lifetime_connection")
-        lt_diesel = _econ_or_int(lifetime_diesel_bus, "lifetime_diesel_bus")
+        def lifetime(explicit, saved_key, config_key, snapshot_key=None):
+            fallback = _econ(config_key)
+            if project and snapshot_key:
+                fallback = snapshot.get(snapshot_key) or snapshot.get(snapshot_key + "_years") or fallback
+            return assumption(explicit, saved_key, fallback, minimum=1, maximum=200, integer=True)
+
+        lt_bus = lifetime(lifetime_bus, "bodyLife", "lifetime_bus", "bus_lifetime")
+        lt_batt = lifetime(lifetime_battery, "batteryLife", "lifetime_battery", "battery_pack_lifetime")
+        lt_chg = lifetime(lifetime_charger, "pointLife", "lifetime_charger")
+        lt_conn = lifetime(lifetime_connection, "siteLife", "lifetime_connection")
+        diesel_life_default = (assessment.get("lifetime_diesel_bus") or snapshot.get("lifetime_diesel_bus")) if project else None
+        lt_diesel = assumption(lifetime_diesel_bus, "dieselLife", diesel_life_default or _econ("lifetime_diesel_bus"),
+                               minimum=1, maximum=200, integer=True)
+        horizon = assumption(project_horizon_years, "horizon", lt_bus, minimum=1, maximum=60, integer=True) if project else None
 
         ch_a = _econ_or(charger_cost_per_kw, "charger_cost_per_kw")
         ch_b = _econ_or(charger_cost_const, "charger_cost_const")
@@ -1581,35 +1677,14 @@ async def get_yearly_costs(
             inv_battery = optimization_capex_inputs["battery_investment_chf"]
             vehicle_count = optimization_capex_inputs["vehicle_count"]
             inv_charging_infrastructure = optimization_capex_inputs["installation_cost_chf"]
-            ebus_capex = [
-                CapexLineItem(
-                    name="Battery",
-                    investment_chf=round(inv_battery, 2),
-                    lifetime_years=lt_batt,
-                    annualized_chf_per_year=round(_annualize(inv_battery, lt_batt, ir), 2),
-                ),
-                CapexLineItem(
-                    name="Bus body (w/o battery)",
-                    investment_chf=round(inv_bus_body, 2),
-                    lifetime_years=lt_bus,
-                    annualized_chf_per_year=round(_annualize(inv_bus_body, lt_bus, ir), 2),
-                ),
-                CapexLineItem(
-                    name="Optimized charging infrastructure",
-                    investment_chf=round(inv_charging_infrastructure, 2),
-                    lifetime_years=lt_chg,
-                    annualized_chf_per_year=round(
-                        _annualize(inv_charging_infrastructure, lt_chg, ir), 2
-                    ),
-                ),
-            ]
+            assets = [("Battery", inv_battery, lt_batt), ("Bus body (w/o battery)", inv_bus_body, lt_bus)]
             if "charging_points_cost_chf" in optimization_capex_inputs:
-                ebus_capex = ebus_capex[:2] + [
-                    CapexLineItem(name="Charging points", investment_chf=round(optimization_capex_inputs["charging_points_cost_chf"], 2),
-                        lifetime_years=lt_chg, annualized_chf_per_year=round(_annualize(optimization_capex_inputs["charging_points_cost_chf"], lt_chg, ir), 2)),
-                    CapexLineItem(name="Site connection and shared infrastructure", investment_chf=round(optimization_capex_inputs["site_infrastructure_cost_chf"], 2),
-                        lifetime_years=lt_conn, annualized_chf_per_year=round(_annualize(optimization_capex_inputs["site_infrastructure_cost_chf"], lt_conn, ir), 2)),
-                ]
+                assets.extend([
+                    ("Charging points", optimization_capex_inputs["charging_points_cost_chf"], lt_chg),
+                    ("Site connection and shared infrastructure", optimization_capex_inputs["site_infrastructure_cost_chf"], lt_conn),
+                ])
+            else:
+                assets.append(("Optimized charging infrastructure", inv_charging_infrastructure, lt_chg))
         else:
             inv_bus_body = electric_bus_body_cost(bus_length_m, *body_coefficients)
             batt_cpk = _econ_or(battery_cost_per_kwh, "battery_cost_per_kwh")
@@ -1640,52 +1715,42 @@ async def get_yearly_costs(
             inv_charger = ch_a * charger_power_kw + ch_b
             inv_grid = max(gc_a * grid_from_dc(charger_power_kw) + gc_b, 0.0)
 
-            ebus_capex = [
-                CapexLineItem(
-                    name="Battery",
-                    investment_chf=round(inv_battery, 2),
-                    lifetime_years=lt_batt,
-                    annualized_chf_per_year=round(_annualize(inv_battery, lt_batt, ir), 2),
-                ),
-                CapexLineItem(
-                    name="Bus body (w/o battery)",
-                    investment_chf=round(inv_bus_body, 2),
-                    lifetime_years=lt_bus,
-                    annualized_chf_per_year=round(_annualize(inv_bus_body, lt_bus, ir), 2),
-                ),
-                CapexLineItem(
-                    name="Charger",
-                    investment_chf=round(inv_charger, 2),
-                    lifetime_years=lt_chg,
-                    annualized_chf_per_year=round(_annualize(inv_charger, lt_chg, ir), 2),
-                ),
-                CapexLineItem(
-                    name="Grid connection",
-                    investment_chf=round(inv_grid, 2),
-                    lifetime_years=lt_conn,
-                    annualized_chf_per_year=round(_annualize(inv_grid, lt_conn, ir), 2),
-                ),
-            ]
-        ebus_total_capex = sum(c.annualized_chf_per_year for c in ebus_capex)
+            assets = [("Battery", inv_battery, lt_batt), ("Bus body (w/o battery)", inv_bus_body, lt_bus),
+                      ("Charger", inv_charger, lt_chg), ("Grid connection", inv_grid, lt_conn)]
+            inv_charging_infrastructure = inv_charger + inv_grid
 
-        inv_diesel = vehicle_count * (db_a * bus_length_m ** 2 + db_b * bus_length_m + db_c)
-        diesel_capex = [
-            CapexLineItem(
-                name="Diesel bus",
-                investment_chf=round(inv_diesel, 2),
-                lifetime_years=lt_diesel,
-                annualized_chf_per_year=round(
-                    _annualize(inv_diesel, lt_diesel, ir), 2
-                ),
-            ),
-        ]
-        diesel_total_capex = sum(c.annualized_chf_per_year for c in diesel_capex)
+        diesel_unit = db_a * bus_length_m ** 2 + db_b * bus_length_m + db_c
+        if project and all(v is None for v in (diesel_bus_quad_coeff, diesel_bus_lin_coeff, diesel_bus_const)):
+            if ui_fleet and ((9 <= bus_length_m <= 13) or (17 <= bus_length_m <= 19)):
+                anchors = [(9, 280000), (12, 350000), (13, 385000), (18, 500000)]
+                lo, hi = next(((a, b) for a, b in zip(anchors, anchors[1:]) if bus_length_m <= b[0]), anchors[-2:])
+                diesel_unit = round(lo[1] + (bus_length_m - lo[0]) * (hi[1] - lo[1]) / (hi[0] - lo[0]), 2)
+            diesel_unit = assumption(None, "dieselCapex", diesel_unit)
+        if project and diesel_vehicle_price_chf is not None:
+            diesel_unit = diesel_vehicle_price_chf
+        diesel_assets = [("Diesel bus", vehicle_count * diesel_unit, lt_diesel)]
 
-    # -- 6. Total annual costs ------------------------------------------
-    ebus_annual = round(ebus_total_opex + (ebus_total_capex or 0), 2)
-    diesel_annual = round(diesel_total_opex + (diesel_total_capex or 0), 2)
-    ebus_cpk = round(ebus_annual / yearly_km, 6) if yearly_km > 0 else 0.0
-    diesel_cpk = round(diesel_annual / yearly_km, 6) if yearly_km > 0 else 0.0
+        if project:
+            mode = saved.get("infrastructureMaintenanceMode")
+            fixed_maintenance = assumption(None, "infrastructureMaintenance", 0)
+            use_rate = mode == "rate" or (mode is None and ui_fleet and fixed_maintenance == 0)
+            infra_maint = infrastructure_maintenance_chf_per_year
+            if infra_maint is None:
+                infra_maint = (inv_charging_infrastructure * assumption(None, "infrastructureMaintenanceRate", .02)
+                               if use_rate else fixed_maintenance)
+            ebus_opex.append(OpexLineItem(name="Infrastructure maintenance", cost_chf_per_year=round(infra_maint, 2)))
+
+        electric_operating = [("electricity", e_energy_year), ("maintenance", e_maint_year),
+                              ("infraMaintenance", infra_maint if project else 0), ("heater", dh_fuel_year + dh_maint_year)]
+        diesel_operating = [("fuel", d_fuel_year), ("maintenance", d_maint_year)]
+        ebus_capex, ebus_total_capex, ebus_total_opex, ebus_annual = _annual_cost_totals(
+            assets, electric_operating, ebus_total_opex, yearly_km, horizon, ir,
+        )
+        diesel_capex, diesel_total_capex, diesel_total_opex, diesel_annual = _annual_cost_totals(
+            diesel_assets, diesel_operating, diesel_total_opex, yearly_km, horizon, ir,
+        )
+    else:
+        ebus_annual, diesel_annual = round(ebus_total_opex, 2), round(diesel_total_opex, 2)
 
     ebus_summary = CostSummary(
         capex_items=ebus_capex,
@@ -1721,7 +1786,7 @@ async def get_yearly_costs(
         sc_e_energy_cost = epk * grid_from_dc(sc_annual_electric)
         sc_e_maint_cost = e_maint_cpk * sc_annual_km
         sc_dh_fuel_cost = fpl * sc_annual_dh_liters if aux_type == "diesel" else 0.0
-        sc_dh_maint_cost = sc_e_maint_cost * dhmf if aux_type == "diesel" else 0.0
+        sc_dh_maint_cost = (sc_dh_fuel_cost if project else sc_e_maint_cost) * dhmf if aux_type == "diesel" else 0.0
 
         scenario_costs.append(YearlyCostScenario(
             temperature_celsius=sc["temperature_celsius"],
@@ -1748,6 +1813,8 @@ async def get_yearly_costs(
         diesel_comparator=diesel_summary,
         annual_saving_chf=round(diesel_annual - ebus_annual, 2),
         assumptions=YearlyCostAssumptions(
+            tco_method=tco_method if include_capex else None,
+            project_horizon_years=horizon if project else None,
             energy_price_per_kwh=epk,
             prediction_stacks=energy.get("prediction_stacks", []),
             model_releases=energy.get("model_releases", []),

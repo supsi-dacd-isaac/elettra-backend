@@ -325,6 +325,8 @@ class YearlyCostScenario(BaseModel):
 
 class YearlyCostAssumptions(BaseModel):
     """Economic assumptions used for a yearly cost calculation."""
+    tco_method: Optional[Literal["project_horizon", "asset_lifetime"]] = None
+    project_horizon_years: Optional[int] = None
     energy_boundary: dict = Field(default_factory=dict)
 
     energy_price_per_kwh: float
@@ -343,8 +345,9 @@ class YearlyCostAssumptions(BaseModel):
     diesel_heating_liters_sources: list[str] = Field(default_factory=list)
     diesel_heating_maintenance_factor: float = Field(
         description=(
-            "Fraction of electric maintenance OPEX applied as diesel-heating "
-            "maintenance surcharge (e.g. 0.10 = 10 %%)."
+            "Diesel-heater maintenance fraction. The project method applies "
+            "it to heater fuel expense. OPEX-only and asset_lifetime apply it "
+            "to electric vehicle maintenance expense."
         ),
     )
     electric_maint_cost_per_km_chf: float
@@ -360,8 +363,8 @@ class YearlyCostResponse(BaseModel):
     electric costs and diesel-heating costs.  For ``"default"`` the diesel-
     heating items are zero.
 
-    The ``diesel_comparator`` branch is a legacy full-diesel-bus reference
-    and is always computed from distance-based regression formulas.
+    The ``diesel_comparator`` branch prices an equivalent fleet of diesel buses
+    using the economic assumptions of the selected method.
     """
 
     yearly_analysis_id: UUID
