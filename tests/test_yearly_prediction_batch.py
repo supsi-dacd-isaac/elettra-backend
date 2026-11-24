@@ -163,6 +163,8 @@ async def test_yearly_statistics_are_reused_and_failures_are_terminal(monkeypatc
     monkeypatch.setattr(service, '_store_prediction', AsyncMock())
     monkeypatch.setattr(service, '_predict_combined', Mock(
         side_effect=RuntimeError('inference failed') if fail else None, return_value=[{}, {}, {}]))
+    add_intervals = Mock()
+    monkeypatch.setattr('app.services.yearly_uncertainty.add_yearly_intervals', add_intervals)
     jobs = [(run.id, 10) for run in runs]
     if fail:
         with pytest.raises(RuntimeError, match='inference failed'):
@@ -172,5 +174,49 @@ async def test_yearly_statistics_are_reused_and_failures_are_terminal(monkeypatc
     else:
         await service.predict_yearly_consumption(db, jobs, [.5])
         assert service._store_prediction.await_count == 3
+        add_intervals.assert_called_once()
     assert service.load_shift_trip_statistics.await_count == 1
     assert service._predict_combined.call_count == 1
+
+
+def test_annual_intervals_pool_trip_draws_and_add_terminal_energy_once():
+    from app.services.yearly_uncertainty import add_yearly_intervals, scenario_intervals, DutySupport
+    from simulation.aggregate_consumption import aggregate_profile, AggregateOptions, shift_seed
+    cases = prepared_cases(True)
+    for index, case in enumerate(cases):
+        case.run.id = uuid4()
+        case.run.contextual_parameters = {'yearly_scenario_id': str(case.run.external_temp_celsius)}
+        case.terminal_intervals = ({'hvac_electrical_kwh': 10 + index},)
+    results = service._predict_combined(cases, [.05, .50, .95])
+    add_yearly_intervals(cases, results)
+    cold, warm, other_cold = [r['summary']['energy_uncertainty'] for r in results]
+    assert set(cold['scenario_prediction_run_ids']) == {str(cases[i].run.id) for i in (0, 2)}
+    assert cold['scenario_daily_kwh'] == other_cold['scenario_daily_kwh']
+    assert warm['scenario_daily_kwh'] == warm['daily_kwh']
+    assert warm['daily_kwh']['q05'] >= 11
+
+    # Two independent physical duties each with one uniform-energy trip.
+    support = np.arange(101).reshape(1, -1)
+    duties = [DutySupport('r1', 's1', support, 7), DutySupport('r2', 's2', support, 8)]
+    options = AggregateOptions(samples=100_000, max_samples=100_000)
+    fleet = scenario_intervals(duties, options)
+    standalone = aggregate_profile(support, options=options, seed=shift_seed(options.seed, 's1'))
+    assert fleet['r1']['daily_kwh']['q95'] == standalone['statistics']['q95_total_kwh'] + 7
+    qs = fleet['r1']['scenario_daily_kwh']
+    assert 44 <= qs['q05'] <= 48 and 181 <= qs['q95'] <= 186
+    assert scenario_intervals(duties[::-1], options) == fleet
+
+
+def test_saved_annual_scenario_uses_prediction_ids_even_when_temperatures_match():
+    from app.services.yearly_uncertainty import scenario_members
+    from simulation.aggregate_consumption import PredictiveDistributionUnavailable
+    a, b = [SimpleNamespace(id=uuid4(), shift_id='duty', external_temp_celsius=3,
+                            status='completed', contextual_parameters={}) for _ in range(2)]
+    rows = [{'predRunIds': [str(run.id)]} for run in (a, b)]
+    analysis = SimpleNamespace(features={'scenarios': [{'temperature': 3}]*2,
+                                         'results': {'scenarioResults': rows}})
+    assert scenario_members(analysis, [b, a], a.id) == [a]
+    assert scenario_members(analysis, [b, a], uuid4()) == []
+    rows.clear()
+    with pytest.raises(PredictiveDistributionUnavailable):
+        scenario_members(analysis, [b, a], a.id)

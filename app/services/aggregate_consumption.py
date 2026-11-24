@@ -24,7 +24,7 @@ from simulation.aggregate_consumption import (
 from simulation.optimization_contract import pack_count
 
 
-async def _prepare_aggregate_profile(db, prediction, *, options=AggregateOptions(), statistics_cache=None, trip_cache=None, hvac_cache=None):
+async def _prepare_aggregate_profile(db, prediction, *, options=AggregateOptions(), statistics_cache=None, trip_cache=None, hvac_cache=None, support_only=False):
     """Use the same features, physical mass and auxiliary estimator as prediction.
 
     The cache is scoped to one optimization request; no user/model/context can
@@ -96,8 +96,11 @@ async def _prepare_aggregate_profile(db, prediction, *, options=AggregateOptions
             raise PredictiveDistributionUnavailable(
                 "Current model/features do not reproduce the reference forecast; recalculate predictions"
             )
-        result = aggregate_profile(support, options=options, seed=shift_seed(options.seed, sid))
         terminal_total = float((getattr(prediction, 'summary', None) or {}).get('total_hvac_terminal_electrical_kwh', 0))
+        if support_only:
+            from app.services.yearly_uncertainty import DutySupport
+            return DutySupport(str(prediction.id), sid, support, terminal_total)
+        result = aggregate_profile(support, options=options, seed=shift_seed(options.seed, sid))
         if terminal_total:
             stats = result['statistics']
             stats['deterministic_terminal_hvac_kwh'] = terminal_total
@@ -138,7 +141,7 @@ async def _prepare_aggregate_profile(db, prediction, *, options=AggregateOptions
     return prepared, finish
 
 
-async def load_aggregate_profiles(db, requests, *, statistics_cache=None, trip_cache=None, hvac_cache=None):
+async def load_aggregate_profiles(db, requests, *, statistics_cache=None, trip_cache=None, hvac_cache=None, support_only=False):
     """Recover QRF support for all known references in one call per model contract."""
     cache = statistics_cache if statistics_cache is not None else {}
     trips = trip_cache if trip_cache is not None else {}
@@ -148,7 +151,7 @@ async def load_aggregate_profiles(db, requests, *, statistics_cache=None, trip_c
     await prepare_hvac_contexts(db, [prediction for prediction, _ in requests], hvac_cache)
     for prediction, options in requests:
         prepared, finish = await _prepare_aggregate_profile(db, prediction, options=options,
-            statistics_cache=cache, trip_cache=trips, hvac_cache=hvac_cache)
+            statistics_cache=cache, trip_cache=trips, hvac_cache=hvac_cache, support_only=support_only)
         key = (prediction.model_name, prediction.prediction_stack, prepared.aux_fn is not None)
         groups.setdefault(key, []).append((prepared, finish))
 

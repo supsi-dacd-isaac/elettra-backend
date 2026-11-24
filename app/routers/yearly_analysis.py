@@ -787,6 +787,37 @@ async def get_yearly_analysis(
     return await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
 
 
+@router.get("/{yearly_analysis_id}/energy-uncertainty")
+async def yearly_energy_uncertainty(
+    yearly_analysis_id: UUID, prediction_run_id: UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: Users = Depends(get_current_user),
+):
+    """Retrieve or faithfully reconstruct the predictive interval of one saved typical day."""
+    import asyncio
+    from app.services.aggregate_consumption import load_aggregate_profiles
+    from app.services.yearly_uncertainty import scenario_intervals, scenario_members
+    from simulation.aggregate_consumption import AggregateOptions, METHOD_VERSION
+
+    analysis = await get_owned_yearly_analysis(db, yearly_analysis_id, current_user.id)
+    result = await db.execute(select(PredictionRuns).where(
+        PredictionRuns.yearly_analysis_id == analysis.id, PredictionRuns.user_id == current_user.id))
+    try:
+        runs = scenario_members(analysis, result.scalars().all(), prediction_run_id)
+        if not runs:
+            raise HTTPException(status_code=404, detail="Prediction not found in this analysis")
+        ids = {str(r.id) for r in runs}
+        saved = {str(r.id): (r.summary or {}).get("energy_uncertainty") for r in runs}
+        if all(record and record.get("method") == METHOD_VERSION
+               and set(record.get("scenario_prediction_run_ids", [])) == ids for record in saved.values()):
+            return {"by_prediction_run": saved}
+        supports = await load_aggregate_profiles(db, [(r, AggregateOptions()) for r in runs], support_only=True)
+        intervals = await asyncio.to_thread(scenario_intervals, list(supports.values()))
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=409, detail="The original daily prediction distribution cannot be reproduced.") from exc
+    return {"by_prediction_run": intervals}
+
+
 @router.patch("/{yearly_analysis_id}", response_model=YearlyAnalysisRead)
 async def update_yearly_analysis(
     yearly_analysis_id: UUID,

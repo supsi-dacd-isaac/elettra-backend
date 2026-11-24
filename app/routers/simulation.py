@@ -555,7 +555,7 @@ async def create_yearly_prediction_runs(
                 auxiliary_estimator_release=selected_stack.auxiliary_estimator,
                 external_temp_celsius=scenario.external_temp_celsius,
                 occupancy_percent=request.occupancy_percent,
-                contextual_parameters={'auxiliary_policy_id': policy},
+                contextual_parameters={'auxiliary_policy_id': policy, 'yearly_scenario_id': scenario.scenario_id},
                 auxiliary_heating_type=request.auxiliary_heating_type, status="pending",
             )
             db.add(run)

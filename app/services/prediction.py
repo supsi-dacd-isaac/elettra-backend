@@ -817,7 +817,7 @@ async def _store_prediction(db, prepared, results, quantiles, *, commit=True) ->
     assessment_metadata["battery_chemistry"] = specs.get("battery_chemistry") or specs.get("batteryChemistry") or "NMC"
     run.contextual_parameters = _sanitize_json({
         **{key: value for key, value in (run.contextual_parameters or {}).items()
-           if key in ('auxiliary_policy_id', 'auxiliary_policy', 'hvac_inputs', 'hvac_input_fingerprint')
+           if key in ('auxiliary_policy_id', 'auxiliary_policy', 'hvac_inputs', 'hvac_input_fingerprint', 'yearly_scenario_id')
            or (key == TRIP_OCCUPANCY_KEY and value is not None)},
         **({'hvac_terminal_intervals': list(prepared.terminal_intervals)}
            if run_policy(run) != LEGACY_POLICY else {}),
@@ -1012,7 +1012,7 @@ def _predict_combined(prepared: list[PreparedPrediction], quantiles: list[float]
 
 async def predict_consumption_jobs(
     db: AsyncSession, jobs: list[tuple[UUID, Optional[int]]], quantiles: list[float],
-    *, statistics_cache=None, trip_cache=None, hvac_cache=None,
+    *, statistics_cache=None, trip_cache=None, hvac_cache=None, yearly_intervals=False,
 ) -> None:
     """Share statistics and infer all known forecasts together, across duties and masses.
 
@@ -1064,6 +1064,13 @@ async def predict_consumption_jobs(
             outputs = await asyncio.to_thread(_predict_combined, [item for _, item in group], quantiles)
             for (index, _), result in zip(group, outputs, strict=True):
                 results[index] = result
+        if yearly_intervals:
+            from app.services.yearly_uncertainty import add_yearly_intervals
+            from simulation.aggregate_consumption import PredictiveDistributionUnavailable
+            try:
+                await asyncio.to_thread(add_yearly_intervals, prepared, results)
+            except PredictiveDistributionUnavailable as exc:
+                logger.warning("Annual predictive intervals unavailable: %s", exc)
         predicted_at = time.perf_counter()
         for item, result in zip(prepared, results, strict=True):
             result.setdefault('summary', {})['inference_batch'] = {
@@ -1091,7 +1098,7 @@ async def predict_consumption_jobs(
 
 async def predict_yearly_consumption(db, jobs, quantiles):
     """Annual matrix entry point, sharing the common inference pipeline."""
-    await predict_consumption_jobs(db, jobs, quantiles)
+    await predict_consumption_jobs(db, jobs, quantiles, yearly_intervals=True)
 
 
 async def run_prediction_jobs_background(jobs, quantiles):

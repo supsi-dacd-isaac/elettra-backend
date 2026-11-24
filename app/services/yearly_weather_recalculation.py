@@ -23,7 +23,6 @@ from app.models import (
     OptimizationRuns,
     PredictionRuns,
     ShiftsStructures,
-    TripPredictions,
     Users,
     WeatherTemperatureClusters,
     WeatherTemperatureSeries,
@@ -357,7 +356,7 @@ async def binding_for_series_id(
     return AnalysisWeatherBinding(series, k, start_time, end_time, clusters, "explicit-series")
 
 
-async def _prediction_kpis(db: AsyncSession, run: PredictionRuns) -> dict[str, Any]:
+async def _prediction_kpis(db: AsyncSession, run: PredictionRuns, *, verify_historical=False) -> dict[str, Any]:
     summary = run.summary or {}
     total_energy = float(summary.get("total_consumption_kwh", 0.0))
     distance = float(summary.get("total_distance_km", 0.0))
@@ -377,24 +376,19 @@ async def _prediction_kpis(db: AsyncSession, run: PredictionRuns) -> dict[str, A
         for output_key, source_key in component_keys.items()
         if summary.get(source_key) is not None
     }
-    result = await db.execute(
-        select(TripPredictions)
-        .where(TripPredictions.prediction_run_id == run.id)
-        .order_by(TripPredictions.sequence_number)
-    )
-    trip_rows = list(result.scalars().all())
-    quantile_totals: dict[str, float] = {}
-    for row in trip_rows:
-        for key, value in (row.quantiles or {}).items():
-            if value is not None:
-                quantile_totals[key] = quantile_totals.get(key, 0.0) + float(value)
-    terminal = float(summary.get('total_hvac_terminal_electrical_kwh', 0))
-    quantile_totals = {key: value + terminal for key, value in quantile_totals.items()}
-
-    def q_label(raw: str) -> str:
-        return f"q{round(float(raw) * 100):02d}"
-
-    quantiles = {q_label(key): value for key, value in sorted(quantile_totals.items())}
+    uncertainty = summary.get('energy_uncertainty')
+    quantiles = (uncertainty or {}).get('daily_kwh') or {}
+    # Verify pre-Monte-Carlo snapshots using their original definition before a weather migration.
+    if verify_historical and uncertainty is None:
+        from app.models import TripPredictions
+        rows = await db.scalars(select(TripPredictions.quantiles).where(
+            TripPredictions.prediction_run_id == run.id).order_by(TripPredictions.sequence_number))
+        terminal = float(summary.get('total_hvac_terminal_electrical_kwh', 0))
+        for marginal in rows:
+            for level, value in (marginal or {}).items():
+                if value is not None:
+                    key = f'q{round(100 * float(level)):02d}'
+                    quantiles[key] = quantiles.get(key, terminal) + float(value)
     drivetrain_quantiles = {
         key: value - auxiliary for key, value in quantiles.items()
     }
@@ -405,6 +399,7 @@ async def _prediction_kpis(db: AsyncSession, run: PredictionRuns) -> dict[str, A
         "distanceKm": distance,
         "energyPerKm": total_energy / safe_distance,
         "solverStatus": "prediction-only",
+        "energyUncertainty": uncertainty,
         "totalEnergyKwh": total_energy,
         "auxiliaryPerKmKwh": auxiliary / safe_distance,
         "auxiliaryEnergyKwh": auxiliary,
@@ -434,6 +429,7 @@ async def build_yearly_results(
     previous_results: Mapping[str, Any],
     scenarios: list[dict[str, Any]],
     runs: list[PredictionRuns],
+    *, verify_historical=False,
 ) -> dict[str, Any]:
     if len(scenarios) != len(runs):
         raise ValueError("one completed prediction run is required per weather scenario")
@@ -447,7 +443,7 @@ async def build_yearly_results(
     yearly_distance = 0.0
     yearly_components: dict[str, float] = {}
     for scenario, run in zip(scenarios, runs, strict=True):
-        kpis = await _prediction_kpis(db, run)
+        kpis = await _prediction_kpis(db, run, verify_historical=verify_historical)
         occurrences = int(scenario["occurrences"])
         scenario_results.append(
             {
@@ -772,7 +768,7 @@ async def recalculate_yearly_analysis(
 
         previous_results = (analysis.features or {}).get("results") or {}
         rebuilt_previous = await build_yearly_results(
-            db, previous_results, old_scenarios, old_runs
+            db, previous_results, old_scenarios, old_runs, verify_historical=True
         )
         for validated_key in ("scenarioResults", "yearlyTotals"):
             if validated_key in previous_results:
@@ -863,7 +859,7 @@ async def recalculate_yearly_analysis(
             statistics_cache, trip_cache = {}, {}
             for quantiles, jobs in groups.items():
                 await predict_consumption_jobs(prediction_db, jobs, list(quantiles),
-                    statistics_cache=statistics_cache, trip_cache=trip_cache)
+                    statistics_cache=statistics_cache, trip_cache=trip_cache, yearly_intervals=True)
     except BaseException as exc:
         async with AsyncSessionLocal() as db:
             revision = await db.get(YearlyAnalysisWeatherRevisions, revision_id)

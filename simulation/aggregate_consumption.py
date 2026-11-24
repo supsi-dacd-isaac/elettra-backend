@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import numpy as np
@@ -84,9 +85,21 @@ def empirical_qrf_support(predictor, features, **prediction_kwargs):
     return support, mean, {"distribution": "exact_equal_weight_qrf_leaves", "support_points": count}
 
 
-def aggregate_profile(support, *, options=AggregateOptions(), seed=None):
-    """Two-pass bounded-memory Monte Carlo, with deterministic precision refinement."""
-    started = time.monotonic()
+@dataclass
+class _ShiftSamples:
+    values: np.ndarray
+    seed: int
+    draws: Callable[[int], Iterator[tuple[int, np.ndarray]]]
+    totals: np.ndarray
+    ordered: np.ndarray
+    q95: float
+    interval: np.ndarray
+    halfwidth: float
+    threshold_resolved: bool | None
+    refinement: list[dict]
+
+
+def _sample_shift(support, options, seed):
     values = np.asarray(support, dtype=float)
     if values.ndim != 2 or not all(values.shape) or not np.isfinite(values).all():
         raise ValueError("A finite non-empty occurrence-by-support matrix is required")
@@ -124,10 +137,37 @@ def aggregate_profile(support, *, options=AggregateOptions(), seed=None):
             break
         n = min(2*n, options.max_samples)
 
-    low, high = np.quantile(ordered, [.945, .955])
+    return _ShiftSamples(
+        values=values,
+        seed=actual_seed,
+        draws=draws,
+        totals=totals,
+        ordered=ordered,
+        q95=q95,
+        interval=interval,
+        halfwidth=halfwidth,
+        threshold_resolved=threshold_resolved,
+        refinement=refinement,
+    )
+
+
+def sample_shift_totals(support, *, options=AggregateOptions(), seed=None) -> np.ndarray:
+    """Return the final, unsorted sample of shift totals after precision refinement."""
+    return _sample_shift(support, options, seed).totals
+
+
+def aggregate_profile(support, *, options=AggregateOptions(), seed=None):
+    """Two-pass bounded-memory Monte Carlo, with deterministic precision refinement."""
+    started = time.monotonic()
+    sample = _sample_shift(support, options, seed)
+    values = sample.values
+    n_trips, n_atoms = values.shape
+    n = len(sample.totals)
+    q95 = sample.q95
+    low, high = np.quantile(sample.ordered, [.945, .955])
     profile_sum = np.zeros(n_trips)
     conditional_count = 0
-    for _, energies in draws(n):
+    for _, energies in sample.draws(n):
         total = energies.sum(axis=1)
         keep = (total >= low) & (total <= high)
         profile_sum += energies[keep].sum(axis=0)
@@ -142,22 +182,24 @@ def aggregate_profile(support, *, options=AggregateOptions(), seed=None):
     mean = values.mean(axis=1)
     # Reuse the final Monte Carlo sample: no new draws or optimization are
     # needed to persist the distribution shown for this exact battery mass.
-    counts, edges = np.histogram(totals, bins=1 if ordered[0] == ordered[-1] else 60)
+    bins = 1 if sample.ordered[0] == sample.ordered[-1] else 60
+    counts, edges = np.histogram(sample.totals, bins=bins)
     return {
         "mean": mean.tolist(), "aggregate_q95": profile.tolist(),
         "statistics": {
             "method_version": METHOD_VERSION, "quantile": .95,
             "independence_assumption": "independent_conditional_errors_per_trip_occurrence",
             "samples": n, "requested_samples": options.samples, "max_samples": options.max_samples,
-            "seed": actual_seed, "request_seed": options.seed,
+            "seed": sample.seed, "request_seed": options.seed,
             "trip_occurrences": n_trips, "support_points": n_atoms,
             "mean_total_kwh": float(mean.sum()), "q95_total_kwh": q95,
             "total_energy_histogram": {"bin_edges_kwh": edges.tolist(), "counts": counts.tolist()},
-            "q95_monte_carlo_ci95_kwh": interval.tolist(),
+            "q95_monte_carlo_ci95_kwh": sample.interval.tolist(),
             "precision_target_kwh": options.precision_kwh,
-            "precision_met": halfwidth <= options.precision_kwh,
-            "capacity_step_kwh": step, "capacity_threshold_resolved": threshold_resolved,
-            "refinement": refinement, "conditional_percentiles": [.945, .955],
+            "precision_met": sample.halfwidth <= options.precision_kwh,
+            "capacity_step_kwh": options.capacity_step_kwh,
+            "capacity_threshold_resolved": sample.threshold_resolved,
+            "refinement": sample.refinement, "conditional_percentiles": [.945, .955],
             "conditional_band_kwh": [float(low), float(high)],
             "conditional_samples": conditional_count,
             "profile_total_before_reconciliation_kwh": before,
