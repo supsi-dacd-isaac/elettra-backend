@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0-rc.1] - 2026-11-24
+
+- Add a weekday-based vehicle block planner for scheduled trips, empty transfers and depot stays. Save the ordered programme and its movements together and validate the return to the starting depot.
+- Group equivalent GTFS calendar entries in the trip catalogue and expose the trip number and stop count for timetable variants.
+- Use service weekdays in feasibility studies and calculate passenger loads separately for scheduled trips and empty movements.
+- Apply `db/migrations/011_shift_programme.sql` to existing databases before starting the new API. It adds nullable programme and service weekday columns to existing vehicle blocks. Pair with frontend 1.4.0-rc.1.
+
 ## [1.8.0] - 2026-11-24
 
 - Price bus bodies by physical length, provide LFP and NMC pack defaults and preserve battery chemistry in annual assessments.
