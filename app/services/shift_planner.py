@@ -90,7 +90,9 @@ def compile_programme(programme, services, places):
     base = places[programme.depot_id]
     current, parent, available = base, None, programme.start_time
     at_special_stop = True
-    route_id = services[selected[0]]["route_id"]
+    # Empty movements belong to the next scheduled service, or the last one on the return home.
+    service_routes = iter(services[trip_id]["route_id"] for trip_id in selected)
+    route_id = next(service_routes)
     result = []
 
     def connect(stop, dep, arr, status, route):
@@ -108,7 +110,6 @@ def compile_programme(programme, services, places):
     for index, step in enumerate(programme.steps):
         if isinstance(step, Service):
             t = services[step.trip_id]
-            route_id = t["route_id"]
             start, end = t["departure_time"], t["arrival_time"]
             same = current == t["from_stop_id"] or (parent and parent == t["from_parent"])
             if seconds(start) < seconds(available) or seconds(end) < seconds(start):
@@ -128,6 +129,7 @@ def compile_programme(programme, services, places):
             at_special_stop = False
             result.append(step.trip_id)
             current, parent, available = t["to_stop_id"], t["to_parent"], end
+            route_id = next(service_routes, route_id)
         else:
             target = places[step.depot_id] if isinstance(step, Stay) else base
             connect(target, step.transfer_departure, step.arrival, "depot", route_id)

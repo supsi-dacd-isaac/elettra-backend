@@ -50,6 +50,28 @@ def test_operating_arrival_platform_continuity_and_midnight():
         compile_case()
 
 
+def test_empty_movements_around_a_stay_belong_to_the_next_scheduled_line():
+    depot, base, parking, bay, terminus, first, second, line16, line15 = [uuid4() for _ in range(9)]
+    services = {
+        first: dict(route_id=line16, from_stop_id=terminus, to_stop_id=terminus, from_parent=None,
+                    to_parent=None, departure_time="20:00", arrival_time="20:31", first_arrival=None),
+        second: dict(route_id=line15, from_stop_id=terminus, to_stop_id=terminus, from_parent=None,
+                     to_parent=None, departure_time="21:00", arrival_time="24:31", first_arrival=None),
+    }
+    programme = Programme(version=1, weekday="monday", depot_id=depot, start_time="19:50", steps=[
+        dict(kind="service", trip_id=first),
+        dict(kind="stay", depot_id=parking, transfer_departure="20:31", arrival="20:32", departure="20:58"),
+        dict(kind="service", trip_id=second),
+        dict(kind="return", transfer_departure="24:31", arrival="24:43"),
+    ])
+    assert compile_programme(programme, services, {depot: base, parking: bay}) == [
+        Movement("depot", base, terminus, "19:50:00", "20:00:00", line16), first,
+        Movement("depot", terminus, bay, "20:31:00", "20:32:00", line15),
+        Movement("depot", bay, terminus, "20:58:00", "21:00:00", line15), second,
+        Movement("depot", terminus, base, "24:31:00", "24:43:00", line15),
+    ]
+
+
 async def seed_programme(db):
     agency = GtfsAgencies(id=uuid4(), gtfs_agency_id=str(uuid4()), agency_name="Planner QA",
                           agency_url="https://example.invalid", agency_timezone="Europe/Zurich")
