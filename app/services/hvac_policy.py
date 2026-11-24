@@ -260,10 +260,14 @@ def integral(prefix: np.ndarray, start: float, end: float):
 
 def calculate_operational_hvac(*, policy_id, schedule, length, passengers, temperature,
                                heating_type, weather=None, dates=None, cache=None,
-                               weather_sha256=None, saved_origins=None):
+                               weather_sha256=None, saved_origins=None, empty_trips=None):
     if policy_id not in (FEASIBILITY_POLICY, ANNUAL_POLICY):
         raise ValueError('Operational HVAC requires an explicit operational policy')
     validate_schedule(schedule)
+    if empty_trips is not None and len(empty_trips) != len(schedule):
+        raise ValueError('Trip occupancy and HVAC timetable occurrences do not match')
+    trip_passengers = (np.full(len(schedule), float(passengers)) if empty_trips is None
+                       else np.where(empty_trips, 0., float(passengers)))
     cache = cache if cache is not None else {}
     last = max(int(math.ceil(max(r['end_minute'] for r in schedule))), cache.get('hvac_last_minute', 0))
     zone = schedule[0]['timezone']
@@ -280,7 +284,7 @@ def calculate_operational_hvac(*, policy_id, schedule, length, passengers, tempe
     prefixes = {}
     if 'vecto_template_release' not in cache:
         cache['vecto_template_release'] = load_template_release()
-    for count in dict.fromkeys([float(passengers), 0.]):
+    for count in dict.fromkeys([*trip_passengers, 0.]):
         response_key = ('response', length, count, temperature, heating_type)
         if response_key not in cache:
             cache[response_key] = SolarResponse(length, count, temperature, heating_type,
@@ -293,8 +297,8 @@ def calculate_operational_hvac(*, policy_id, schedule, length, passengers, tempe
                 power = cache[response_key].values(ghi).mean(axis=0)
             cache[key] = np.vstack([np.zeros(3), np.cumsum(power / 60, axis=0)])
         prefixes[count] = cache[key]
-    trips = np.array([integral(prefixes[float(passengers)], r['start_minute'], r['end_minute'])
-                      for r in schedule])
+    trips = np.array([integral(prefixes[count], row['start_minute'], row['end_minute'])
+                      for count, row in zip(trip_passengers, schedule, strict=True)])
     terminals = []
     for stop in terminal_intervals(schedule):
         start, end = stop['start_minute'], stop['end_minute']

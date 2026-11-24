@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import textwrap
-from app.routers import agency, auth, economic, environmental, gtfs, simulation, user as user_router, yearly_analysis
+from app.routers import shift_planner, agency, auth, economic, environmental, gtfs, simulation, user as user_router, yearly_analysis
 from app.core.auth import require_admin
 from app.core.config import get_cached_settings, validate_runtime_secrets
 from app.core.request_limits import MaxRequestSizeMiddleware
@@ -551,6 +551,7 @@ app.add_middleware(
 # Include authentication and API routers
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(agency.router, prefix="/api/v1/agency", tags=["Agency"])
+app.include_router(shift_planner.router, prefix="/api/v1/user/shift-planner", tags=["Shift planner"])
 app.include_router(user_router.router, prefix="/api/v1/user", tags=["User"])
 app.include_router(gtfs.router, prefix="/api/v1/gtfs", tags=["GTFS"])
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])

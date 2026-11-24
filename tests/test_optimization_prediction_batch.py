@@ -10,6 +10,7 @@ from app.models import PredictionRuns
 from app.schemas.requests import PredictionRequest
 from app.routers import simulation as router
 from app.services import prediction, optimization, aggregate_consumption
+from app.services.trip_occupancy import PROGRAMME_OCCUPANCY_POLICY, TRIP_OCCUPANCY_KEY
 from simulation.aggregate_consumption import AggregateOptions, empirical_qrf_support
 from test_yearly_prediction_batch import prepared_cases
 
@@ -107,6 +108,10 @@ async def test_exact_verification_collects_all_chosen_masses_before_inference(mo
         status='completed', model_name='same', prediction_stack='legacy', auxiliary_estimator_release=None, yearly_analysis_id=None,
         external_temp_celsius=-5, occupancy_percent=50, auxiliary_heating_type='default',
         contextual_parameters={'num_battery_packs':16, 'battery_capacity_kwh':800}) for _ in range(2)]
+    initial[0].contextual_parameters[TRIP_OCCUPANCY_KEY] = {
+        'policy_id': PROGRAMME_OCCUPANCY_POLICY,
+        'occurrences': [{'sequence_number': 1, 'trip_id': str(uuid4()), 'status': 'depot'}],
+    }
     rows = {row.id: row for row in initial}
     run = NS(id=uuid4(), user_id=owner, bus_model_id=model, mode=mode, status='pending',
         prediction_run_ids=[str(row.id) for row in initial],
@@ -118,6 +123,8 @@ async def test_exact_verification_collects_all_chosen_masses_before_inference(mo
         return [NS(shift_id=str(rows[id].shift_id)) for id in ids], [], NS()
     async def ensure(db, user, shifts, bus_model_id, params, *, pending_jobs, hvac_cache):
         assert params['auxiliary_policy_id'] == 'legacy-fixed-100-v1'
+        source = next(row for row in initial if row.shift_id == shifts[0])
+        assert params[TRIP_OCCUPANCY_KEY] == source.contextual_parameters.get(TRIP_OCCUPANCY_KEY)
         row = NS(id=uuid4(), shift_id=shifts[0], contextual_parameters={})
         rows[row.id] = row
         pending_jobs.append((row.id, params['num_battery_packs']))

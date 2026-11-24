@@ -12,6 +12,7 @@ from pydantic import (
     model_validator,
 )
 from elettra_core.vecto_templates import template_length_for_bus
+from app.schemas.service_weekday import ServiceWeekday
 from app.schemas.trip_status import TripStatus
 from app.services.runtime_release import (
     RuntimeReleaseConfigurationError,
@@ -564,6 +565,10 @@ class OptimizationRequest(BaseModel):
         examples=["default", "diesel"],
     )
     shift_ids: list[UUID] = Field(min_length=1, max_length=MAX_SHIFT_IDS)
+    service_weekday: ServiceWeekday | None = Field(
+        default=None,
+        description="Recurring service weekday shared by the selected blocks. Older clients may omit it.",
+    )
     bus_model_id: Optional[UUID] = Field(
         default=None,
         description=(

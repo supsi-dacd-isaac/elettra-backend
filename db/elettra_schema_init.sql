@@ -326,7 +326,9 @@ CREATE TABLE public.gtfs_trips (
 CREATE TABLE public.shifts (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
-    bus_id uuid
+    bus_id uuid,
+    service_weekday text,
+    programme jsonb
 );
 
 

@@ -28,7 +28,7 @@ from app.schemas.requests import (
 from app.models import (
     Users, BusesModels, Buses, Depots, GtfsStops,
     Shifts, ShiftsStructures, GtfsTrips, GtfsRoutes, GtfsCalendar,
-    GtfsStopsTimes, PredictionRuns, YearlyAnalysis,
+    GtfsStopsTimes, PredictionRuns, YearlyAnalysis, ElevationProfileJobs,
     BusesManufacturers, BusesModelsRefs,
 )
 from app.core.auth import get_current_user, require_analyst
@@ -51,6 +51,7 @@ from app.schemas.lca import (
 )
 from app.services.economic_defaults import load_economic_defaults
 from app.services.lca_size import bus_length_to_lca_size_prefix
+from app.services.shift_weekdays import weekdays_for_shifts
 from app.services.deletion_integrity import (
     auxiliary_stop_time_exists,
     blocker,
@@ -644,26 +645,35 @@ async def list_shifts(
 
     shift_ids = [s.id for s in rows]
     trip_counts: dict[UUID, int] = {sid: 0 for sid in shift_ids}
+    profiles_in_progress: dict[UUID, int] = {}
     if shift_ids:
         count_rows = await db.execute(
             select(
                 ShiftsStructures.shift_id,
                 func.count(ShiftsStructures.id),
+                func.count(ElevationProfileJobs.id).filter(ElevationProfileJobs.status.in_(("pending", "processing"))),
             )
+            .outerjoin(ElevationProfileJobs, ElevationProfileJobs.trip_id == ShiftsStructures.trip_id)
             .where(ShiftsStructures.shift_id.in_(shift_ids))
             .group_by(ShiftsStructures.shift_id)
         )
-        for sid, c in count_rows.all():
-            trip_counts[sid] = int(c)
+        for sid, count, pending in count_rows.all():
+            trip_counts[sid] = int(count)
+            profiles_in_progress[sid] = int(pending)
 
     dataset_map = await datasets_for_shifts(db, shift_ids, current_user.company_id)
+    weekday_map = await weekdays_for_shifts(db, rows)
     items = [
         ShiftListItemRead(
             id=s.id,
             name=s.name,
             bus_id=s.bus_id,
             trip_count=trip_counts.get(s.id, 0),
+            pending_elevation_profiles=profiles_in_progress.get(s.id, 0),
             gtfs_datasets=dataset_map[s.id],
+            planner_version=weekday_map[s.id].planner_version,
+            service_weekday=weekday_map[s.id].service_weekday,
+            compatible_weekdays=weekday_map[s.id].compatible_weekdays,
         )
         for s in rows
     ]
@@ -788,6 +798,8 @@ async def update_shift(shift_id: UUID, payload: ShiftUpdateRequest, db: AsyncSes
     await db.execute(select(Shifts.id).where(Shifts.id == shift.id).with_for_update())
 
     update_data = payload.model_dump(exclude_unset=True)
+    if shift.programme:
+        raise HTTPException(status_code=409, detail="Edit this block in the sequential planner")
 
     previous = (await datasets_for_shifts(db, [shift.id], current_user.company_id))[shift.id]
     if 'trip_ids' not in update_data and payload.gtfs_dataset is not None:

@@ -47,6 +47,9 @@ from app.services.vecto_auxiliary import build_vecto_auxiliary_binding
 from app.services.hvac_policy import LEGACY_POLICY, run_policy
 from app.services.hvac_context import prepare_hvac_contexts
 from app.services.diesel_heating import diesel_liters_from_kwh
+from app.services.trip_occupancy import (
+    TRIP_OCCUPANCY_KEY, empty_trip_mask, load_shift_trip_occupancy, trip_mass_kg,
+)
 from elettra_core import AuxiliaryEnergyComponents, PASSENGER_MASS_KG, RAW_TRIP_FEATURE_COLUMNS
 from simulation.consumption_prediction import ConsumptionPredictor
 
@@ -616,7 +619,6 @@ async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None, *, hv
         passenger_mass_kg=passenger_mass_kg,
     )
     packs = mass.battery_packs
-    total_weight_kg = mass.total_weight_kg
 
     # Load trip statistics from DB
     if trip_stats is None:
@@ -624,15 +626,26 @@ async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None, *, hv
     if not trip_stats:
         raise ValueError(f"No valid trip statistics for shift {run.shift_id}")
 
+    hvac_cache = hvac_cache if hvac_cache is not None else {}
+    context = run.contextual_parameters or {}
+    trip_occupancy = context.get(TRIP_OCCUPANCY_KEY)
+    if TRIP_OCCUPANCY_KEY not in context:
+        trip_occupancy = await load_shift_trip_occupancy(db, run.shift_id, hvac_cache)
+    empty_trips = empty_trip_mask(trip_occupancy, trip_stats)
+    capture_occupancy = TRIP_OCCUPANCY_KEY not in context and trip_occupancy is not None
+    if capture_occupancy:
+        run.contextual_parameters = {**context, TRIP_OCCUPANCY_KEY: trip_occupancy}
+
     auxiliary_context: dict[str, object] | None = None
     terminal_intervals = ()
     if stack_release.stack is PredictionStack.LEGACY:
         aux_fn = build_aux_energy_fn(specs, run.auxiliary_heating_type)
+        if capture_occupancy:
+            await db.commit()
     else:
-        hvac_cache = hvac_cache if hvac_cache is not None else {}
         capture_needed = not (run.contextual_parameters or {}).get('hvac_inputs')
         await prepare_hvac_contexts(db, [run], hvac_cache)
-        if capture_needed and run_policy(run) != LEGACY_POLICY:
+        if capture_occupancy or (capture_needed and run_policy(run) != LEGACY_POLICY):
             await db.commit()  # resolved inputs survive inference failures
         hvac_inputs = (run.contextual_parameters or {}).get('hvac_inputs')
         if hvac_inputs:
@@ -647,6 +660,7 @@ async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None, *, hv
             external_temp_celsius=float(run.external_temp_celsius),
             auxiliary_heating_type=run.auxiliary_heating_type,
             hvac_inputs=hvac_inputs,
+            empty_trips=empty_trips,
             weather_snapshot=hvac_cache.get(('weather', (hvac_inputs or {}).get('weather_snapshot_sha256'))),
             hvac_cache=hvac_cache,
         )
@@ -654,10 +668,8 @@ async def _prepare_prediction(db, run, num_battery_packs, trip_stats=None, *, hv
         auxiliary_context = vecto_binding.metadata()
         terminal_intervals = vecto_binding.terminal_intervals
 
-    # Get predictor (cached) and bind it to the same stack contract.
-    # Build override_mass array (same mass for all trips)
     n_trips = len(trip_stats)
-    override_mass = np.full(n_trips, total_weight_kg)
+    override_mass = trip_mass_kg(mass, n_trips, empty_trips)
     qrf_reference_occupancy_percent = getattr(
         predictor.model,
         "qrf_reference_occupancy_percent",
@@ -805,7 +817,8 @@ async def _store_prediction(db, prepared, results, quantiles, *, commit=True) ->
     assessment_metadata["battery_chemistry"] = specs.get("battery_chemistry") or specs.get("batteryChemistry") or "NMC"
     run.contextual_parameters = _sanitize_json({
         **{key: value for key, value in (run.contextual_parameters or {}).items()
-           if key in ('auxiliary_policy_id', 'auxiliary_policy', 'hvac_inputs', 'hvac_input_fingerprint')},
+           if key in ('auxiliary_policy_id', 'auxiliary_policy', 'hvac_inputs', 'hvac_input_fingerprint')
+           or (key == TRIP_OCCUPANCY_KEY and value is not None)},
         **({'hvac_terminal_intervals': list(prepared.terminal_intervals)}
            if run_policy(run) != LEGACY_POLICY else {}),
         "battery_capacity_kwh": battery_capacity_kwh,

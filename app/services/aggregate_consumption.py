@@ -16,6 +16,7 @@ from app.services.prediction import (
     physical_bus_mass, resolve_prediction_selection, validate_model_stack_contract,
     PreparedPrediction, combined_prediction_inputs,
 )
+from app.services.trip_occupancy import TRIP_OCCUPANCY_KEY, empty_trip_mask, trip_mass_kg
 from simulation.aggregate_consumption import (
     AggregateOptions, PredictiveDistributionUnavailable, aggregate_profile,
     empirical_qrf_support, shift_seed,
@@ -57,6 +58,10 @@ async def _prepare_aggregate_profile(db, prediction, *, options=AggregateOptions
     occurrences = [(int(row["sequence_number"]), str(row["trip_id"])) for row in trip_statistics]
     if occurrences != [(row.sequence_number, str(row.trip_id)) for row in stored]:
         raise PredictiveDistributionUnavailable("Prediction no longer covers the complete ordered shift")
+    try:
+        empty_trips = empty_trip_mask(context.get(TRIP_OCCUPANCY_KEY), trip_statistics)
+    except ValueError as exc:
+        raise PredictiveDistributionUnavailable(str(exc)) from exc
 
     if stack.stack is PredictionStack.LEGACY:
         aux = build_aux_energy_fn(specs, prediction.auxiliary_heating_type)
@@ -70,7 +75,7 @@ async def _prepare_aggregate_profile(db, prediction, *, options=AggregateOptions
             occupancy_percent=float(prediction.occupancy_percent),
             external_temp_celsius=float(prediction.external_temp_celsius),
             auxiliary_heating_type=prediction.auxiliary_heating_type,
-            hvac_inputs=inputs, hvac_cache=hvac_cache,
+            hvac_inputs=inputs, hvac_cache=hvac_cache, empty_trips=empty_trips,
             weather_snapshot=hvac_cache.get(('weather', (inputs or {}).get('weather_snapshot_sha256'))),
         )
         aux = binding.energy_fn
@@ -84,7 +89,7 @@ async def _prepare_aggregate_profile(db, prediction, *, options=AggregateOptions
 
     prepared = PreparedPrediction(prediction, specs, stack, predictor, mass,
         _model_passenger_mass_kg(stack, predictor), trip_statistics, aux, None,
-        np.full(len(stored), mass.total_weight_kg), reference_mass, reference_occupancy)
+        trip_mass_kg(mass, len(stored), empty_trips), reference_mass, reference_occupancy)
 
     def finish(frame, support, mean, distribution):
         if not np.allclose(mean, np.asarray([row.prediction_kwh for row in stored], dtype=float), atol=1e-6, rtol=1e-7):

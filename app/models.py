@@ -578,6 +578,9 @@ class Shifts(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     bus_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid)
 
+    service_weekday: Mapped[Optional[str]] = mapped_column(Text)
+    programme: Mapped[Optional[dict]] = mapped_column(JSONB)
+
     bus: Mapped[Optional['Buses']] = relationship('Buses', back_populates='shifts')
     shifts_structures: Mapped[list['ShiftsStructures']] = relationship('ShiftsStructures', back_populates='shift')
     prediction_runs: Mapped[list['PredictionRuns']] = relationship('PredictionRuns', back_populates='shift', passive_deletes=True)

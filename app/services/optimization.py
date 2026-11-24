@@ -48,6 +48,7 @@ from simulation.energy_analysis import build_energy_analysis
 from app.services.aggregate_consumption import load_aggregate_profiles
 from app.services.runtime_release import PredictionStack, resolve_prediction_selection
 from app.services.optimization_process import run_workers, threads_per_worker
+from app.services.trip_occupancy import TRIP_OCCUPANCY_KEY, load_shift_trip_occupancy
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +318,9 @@ async def ensure_predictions(
 
     run_ids: list[UUID] = []
     for shift_id in shift_ids:
+        trip_occupancy = prediction_params.get(TRIP_OCCUPANCY_KEY)
+        if TRIP_OCCUPANCY_KEY not in prediction_params:
+            trip_occupancy = await load_shift_trip_occupancy(db, shift_id, hvac_cache)
         resolved_model_id = bus_model_id
         if resolved_model_id is None:
             resolved_model_id = await _resolve_bus_model_id(db, shift_id)
@@ -382,6 +386,8 @@ async def ensure_predictions(
                 continue
             if run_policy(candidate) != policy:
                 continue
+            if context.get(TRIP_OCCUPANCY_KEY) != trip_occupancy:
+                continue
             if policy != LEGACY_POLICY and context.get('hvac_input_fingerprint') != fingerprint(expected_inputs[str(shift_id)]):
                 continue
             context_quantiles = context.get("quantiles")
@@ -433,7 +439,7 @@ async def ensure_predictions(
             auxiliary_heating_type=prediction_params["auxiliary_heating_type"],
             occupancy_percent=prediction_params["occupancy_percent"],
             yearly_analysis_id=prediction_params.get('yearly_analysis_id'),
-            contextual_parameters={'auxiliary_policy_id': policy, **({
+            contextual_parameters={'auxiliary_policy_id': policy, TRIP_OCCUPANCY_KEY: trip_occupancy, **({
                 'hvac_inputs': expected_inputs[str(shift_id)],
                 'hvac_input_fingerprint': fingerprint(expected_inputs[str(shift_id)]),
             } if policy != LEGACY_POLICY else {})},
@@ -993,6 +999,7 @@ async def run_optimization(
                          "auxiliary_heating_type": ref.auxiliary_heating_type,
                          "auxiliary_policy_id": (ref.contextual_parameters or {}).get('auxiliary_policy_id', 'legacy-fixed-100-v1'),
                          "hvac_inputs": (ref.contextual_parameters or {}).get('hvac_inputs'),
+                         TRIP_OCCUPANCY_KEY: (ref.contextual_parameters or {}).get(TRIP_OCCUPANCY_KEY),
                          "yearly_analysis_id": getattr(ref, 'yearly_analysis_id', None),
                          "quantiles": (ref.contextual_parameters or {}).get("quantiles", [0.05, 0.5, 0.95]),
                          "num_battery_packs": count},

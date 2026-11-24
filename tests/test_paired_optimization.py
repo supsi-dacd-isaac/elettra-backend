@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 from pydantic import ValidationError
 
-from app.models import OptimizationRuns
+from app.models import OptimizationRuns, Shifts
 from app.routers import simulation as router
 from app.schemas.requests import OptimizationRequest
 
@@ -37,6 +37,7 @@ async def test_paired_creation_is_one_transaction_and_one_background_task(monkey
     checked=[]
     async def owned_shift(db,key,user,company):
         assert (key,user)==(sid,owner);checked.append('shift')
+        return Shifts(id=sid, programme={"version": 1}, service_weekday="tuesday")
     async def owned_prediction(db,key,user):
         assert (key,user)==(pid,owner);checked.append('prediction');return pred
     async def profiles(*args): checked.append('profiles')
@@ -81,6 +82,8 @@ async def test_paired_creation_is_one_transaction_and_one_background_task(monkey
     for row in db.rows:
         assert row.user_id==owner and row.mode==mode
         assert row.input_params['reference_prediction_run_ids']=={str(sid):str(pid)}
+        assert row.input_params['service_weekday'] == 'tuesday'
+        assert row.input_params['compatible_weekdays'] == ['tuesday']
 
 
 def test_explicit_single_basis_and_historical_inputs_remain_supported():

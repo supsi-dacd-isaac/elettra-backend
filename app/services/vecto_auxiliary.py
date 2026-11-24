@@ -33,6 +33,7 @@ class VectoAuxiliaryBinding:
     estimate: VectoTemplateEstimate
     operational: dict | None = None
     terminal_intervals: tuple = ()
+    empty_trip_estimate: VectoTemplateEstimate | None = None
 
     def metadata(self) -> dict[str, object]:
         result = self.estimate.result
@@ -71,6 +72,14 @@ class VectoAuxiliaryBinding:
             metadata['operational'] = self.operational
             metadata['power_mode'] = 'trip-time-weighted-mean'
             metadata['environmental_selection'] = 'per-physical-GHI-before-clouding-normalization'
+        if self.empty_trip_estimate is not None:
+            empty_result = self.empty_trip_estimate.result
+            metadata['power_mode'] = 'service-trip-reference'
+            metadata['zero_passenger_trip_power_kw'] = {
+                'hvac_electrical': empty_result.p_hvac_electrical_kw,
+                'diesel_fuel': empty_result.p_fuel_kw,
+                'uncovered_thermal': empty_result.unmet_thermal_demand_kw,
+            }
         return metadata
 
 
@@ -84,6 +93,7 @@ def build_vecto_auxiliary_binding(
     hvac_inputs: dict | None = None,
     weather_snapshot: dict | None = None,
     hvac_cache: dict | None = None,
+    empty_trips: np.ndarray | None = None,
 ) -> VectoAuxiliaryBinding:
     """Bind a VECTO stack to one bus/scenario, failing on implicit inputs."""
 
@@ -110,31 +120,37 @@ def build_vecto_auxiliary_binding(
     hvac_cache = hvac_cache if hvac_cache is not None else {}
     if 'vecto_template_release' not in hvac_cache:
         hvac_cache['vecto_template_release'] = load_template_release()
-    estimate_key = ('vecto_reference_estimate', float(bus_model_specs['bus_length_m']),
-                    max_passengers * occupancy / 100., float(external_temp_celsius),
-                    contract, auxiliary_heating_type)
-    if estimate_key not in hvac_cache:
-        hvac_cache[estimate_key] = vecto_template_auxiliary_power(
-            bus_length_m=estimate_key[1], number_of_passengers=estimate_key[2],
-            temperature_celsius=estimate_key[3], auxiliary_contract=contract,
-            auxiliary_heating_type=auxiliary_heating_type,
-            solar_irradiance_wm2=VECTO_DEFAULT_GHI_WM2,
-            release=hvac_cache['vecto_template_release'],
-        )
-    estimate = hvac_cache[estimate_key]
-    if estimate.release_id != VECTO_TEMPLATE_RELEASE:
-        raise ValueError("VECTO template release identity is not the runtime release")
+    def reference_estimate(passenger_count):
+        key = ('vecto_reference_estimate', float(bus_model_specs['bus_length_m']),
+               passenger_count, float(external_temp_celsius), contract, auxiliary_heating_type)
+        if key not in hvac_cache:
+            hvac_cache[key] = vecto_template_auxiliary_power(
+                bus_length_m=key[1], number_of_passengers=passenger_count,
+                temperature_celsius=key[3], auxiliary_contract=contract,
+                auxiliary_heating_type=auxiliary_heating_type,
+                solar_irradiance_wm2=VECTO_DEFAULT_GHI_WM2,
+                release=hvac_cache['vecto_template_release'],
+            )
+        estimate = hvac_cache[key]
+        if estimate.release_id != VECTO_TEMPLATE_RELEASE:
+            raise ValueError("VECTO template release identity is not the runtime release")
+        return estimate
+
+    passengers = max_passengers * occupancy / 100.
+    estimate = reference_estimate(passengers)
 
     operational = None
     intervals = []
     energies = None
+    empty_estimate = None
     if hvac_inputs is not None and hvac_inputs.get('policy_id') != LEGACY_POLICY:
         energies, intervals, operational = calculate_operational_hvac(
             policy_id=hvac_inputs['policy_id'], schedule=hvac_inputs['schedule'],
-            length=float(bus_model_specs['bus_length_m']), passengers=max_passengers * occupancy / 100,
+            length=float(bus_model_specs['bus_length_m']), passengers=passengers,
             temperature=float(external_temp_celsius), heating_type=auxiliary_heating_type,
             weather=weather_snapshot, dates=hvac_inputs.get('cluster_dates'), cache=hvac_cache,
-            weather_sha256=hvac_inputs.get('weather_snapshot_sha256'), saved_origins=hvac_inputs.get('service_origins_utc'))
+            weather_sha256=hvac_inputs.get('weather_snapshot_sha256'),
+            saved_origins=hvac_inputs.get('service_origins_utc'), empty_trips=empty_trips)
         hours = operational['trip_minutes'] / 60
         operational['occupancy_percent'] = occupancy
         operational['temperature_clustering'] = hvac_inputs.get('temperature_clustering')
@@ -144,6 +160,8 @@ def build_vecto_auxiliary_binding(
                          p_fuel_kw=float(mean[1]), unmet_thermal_demand_kw=float(mean[2]))
         estimate = replace(estimate, result=result, solar_irradiance_wm2=operational['ghi_trip_weighted_mean_wm2'],
                            unmet_thermal_demand_kw=float(mean[2]))
+    elif empty_trips is not None and empty_trips.any() and passengers:
+        empty_estimate = reference_estimate(0.)
 
     def energy_fn(frame: pd.DataFrame) -> AuxiliaryEnergyComponents:
         if "total_duration_minutes" not in frame:
@@ -155,26 +173,36 @@ def build_vecto_auxiliary_binding(
         ):
             raise ValueError("Trip durations must be finite and non-negative")
         result = estimate.result
+        trip_energies = energies
         if energies is not None:
             expected = np.array([(r['end_minute'] - r['start_minute']) / 60 for r in hvac_inputs['schedule']])
             if len(expected) != len(duration_hours) or not np.allclose(expected, duration_hours, atol=1e-6, rtol=0):
                 raise ValueError('HVAC timetable durations do not match prediction occurrences')
-        diesel_fuel_kwh = energies[:, 1] if energies is not None else result.p_fuel_kw * duration_hours
+        else:
+            power = np.array([result.p_hvac_electrical_kw, result.p_fuel_kw, estimate.unmet_thermal_demand_kw])
+            if empty_estimate is not None:
+                if len(empty_trips) != len(duration_hours):
+                    raise ValueError('Trip occupancy and HVAC feature occurrences do not match')
+                empty_result = empty_estimate.result
+                empty_power = [empty_result.p_hvac_electrical_kw, empty_result.p_fuel_kw,
+                               empty_estimate.unmet_thermal_demand_kw]
+                power = np.where(empty_trips[:, None], empty_power, power)
+            trip_energies = duration_hours[:, None] * power
+        diesel_fuel_kwh = trip_energies[:, 1]
         return AuxiliaryEnergyComponents(
-            hvac_electrical_kwh=energies[:, 0] if energies is not None else result.p_hvac_electrical_kw * duration_hours,
+            hvac_electrical_kwh=trip_energies[:, 0],
             fixed_auxiliary_kwh=result.p_baseline_kw * duration_hours,
             diesel_fuel_kwh=diesel_fuel_kwh,
             diesel_liters=np.asarray(
                 [diesel_liters_from_kwh(value) for value in diesel_fuel_kwh],
                 dtype=float,
             ),
-            uncovered_thermal_kwh=(
-                energies[:, 2] if energies is not None else estimate.unmet_thermal_demand_kw * duration_hours
-            ),
+            uncovered_thermal_kwh=trip_energies[:, 2],
         )
 
     return VectoAuxiliaryBinding(energy_fn=energy_fn, estimate=estimate,
-                                operational=operational, terminal_intervals=tuple(intervals))
+                                operational=operational, terminal_intervals=tuple(intervals),
+                                empty_trip_estimate=empty_estimate)
 
 
 __all__ = ["VectoAuxiliaryBinding", "build_vecto_auxiliary_binding"]

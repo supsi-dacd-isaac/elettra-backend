@@ -352,20 +352,48 @@ curl -X POST http://127.0.0.1:8002/api/v1/user/depots/ \
 | UPD | PUT    | /api/v1/user/shifts/{shift_id}         |
 | DEL | DELETE | /api/v1/user/shifts/{shift_id}         |
 
-Create:
-```bash
-curl -X POST http://127.0.0.1:8002/api/v1/user/shifts/ \
-  -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' \
-  -d '{
-    "user_id": "<user_uuid>",
-    "bus_id": "<bus_uuid>",
-    "depot_id": "<depot_uuid>",
-    "shift_name": "Morning Shift",
-    "start_time": "06:00:00",
-    "end_time": "14:00:00",
-    "day_of_week": "monday"
-  }'
-```
+List items include `planner_version`, `service_weekday`, `compatible_weekdays`,
+and the number of auxiliary elevation profiles still being prepared
+(`pending_elevation_profiles`).
+A version 1 programme exposes its recorded weekday as the sole compatible day.
+For historical shifts, the list reports the intersection of the recurring
+weekly calendars for GTFS line trips and for school or service trips with a
+specific calendar. Depot movements, transfers, other auxiliary trips, and the
+generic `auxiliary` calendar for school or service trips leave the intersection
+unchanged. `null` means the calendar data is insufficient. `[]` means there is
+no common recurring day. The weekday flags describe the weekly timetable.
+
+### Sequential programmes
+
+| Method | Path under `/api/v1/user/shift-planner` | Purpose |
+|---|---|---|
+| GET | `/catalog?route_id=…&weekday=monday` | Scheduled trips with their published times, first and last stop UUIDs, and parent stations |
+| GET | `/route?from_stop_id=…&to_stop_id=…` | Directional road distance in metres and driving time in seconds |
+| POST | `/programmes` | Compile and save an ordered programme, its auxiliary movements and their elevation jobs atomically |
+| GET | `/programmes/{id}` | Reopen the programme with its timetable and revision |
+| PUT | `/programmes/{id}` | Validate changes and update the specified revision |
+
+A creation request supplies `name`, `bus_id`, `gtfs_dataset` (year and file date)
+and `programme`. Version 1 programmes specify `version`, `weekday`,
+`depot_id`, `start_time` and ordered `steps`. All times refer to the same
+GTFS service day, including hours after midnight such as `24:43`.
+
+- A `service` step specifies the scheduled `trip_id`. Optional
+  `transfer_departure` and `transfer_arrival` describe the operating
+  connection. Platforms with a common parent connect directly by default.
+  Set `force_transfer` to schedule a timed movement between them.
+- A `stay` step specifies the custom stop's `depot_id`, `transfer_departure`,
+  `arrival` and the subsequent `departure`.
+- The final `return` step specifies `transfer_departure` and `arrival`.
+  The server resolves the destination to the starting depot.
+
+Include a client-generated UUID in `request_id` when creating. A retry of
+the same request reopens the saved block. Reusing the UUID with different
+content returns HTTP 409. An edit requires the current `revision`; a stale
+revision also returns HTTP 409. A creation request with `copy_from` can reuse
+unchanged auxiliary trips from an owned source programme in the same edition.
+Historical blocks use the existing shifts API.
+
 
 ---
 
@@ -412,13 +440,25 @@ rejected synchronously with `422`; no failed prediction row is scheduled.
 | LST | GET    | /api/v1/simulation/optimization-runs/               |
 | RD  | GET    | /api/v1/simulation/optimization-runs/{run_id}       |
 
+Set `service_weekday` to the study's weekday from `monday` through `sunday`.
+Each selected shift must support it. The prediction catalogue must refer to the
+same shifts. Both study variants save the selected day, the intersected
+`compatible_weekdays`, and the verification status under
+`service_weekday_provenance` in `input_params`. When an older client omits the
+day, the API infers it from a verified singleton intersection. A verified
+intersection with several days is stored with a null selected day. A new study requires a verifiable common weekday. Incomplete
+calendars and disjoint operating days return HTTP 422. Historical studies
+can still be opened with their original inputs.
+
 Create:
 ```bash
 curl -X POST http://127.0.0.1:8002/api/v1/simulation/optimization-runs/ \
   -H 'Authorization: Bearer $TOKEN' -H 'Content-Type: application/json' \
   -d '{
+    "name": "Monday feasibility study",
     "mode": "battery_only",
     "shift_ids": ["<shift_uuid>"],
+    "service_weekday": "monday",
     "prediction_run_ids": ["<prediction_run_uuid>"],
     "charging_stations": [
       {

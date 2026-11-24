@@ -95,6 +95,7 @@ from app.services.runtime_release import (
     RuntimeReleaseConfigurationError,
     resolve_prediction_selection,
 )
+from app.services.shift_weekdays import resolve_study_weekdays, weekdays_for_shifts
 from app.services.vecto_auxiliary import build_vecto_auxiliary_binding
 from app.utils.trip_statistics import (
     combine_elevation_profiles,
@@ -772,10 +773,6 @@ async def create_optimization_run(
     from app.services.gtfs_datasets import capture_provenance, validate_analysis_provenance
     gtfs_provenance = await capture_provenance(db, request.shift_ids, current_user.company_id)
     validate_analysis_provenance(gtfs_provenance)
-    try:
-        await ensure_shift_profiles_ready(db, request.shift_ids)
-    except ElevationProfileNotReadyError as exc:
-        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
 
     if catalogue:
         from simulation.optimization_contract import select_references
@@ -785,9 +782,18 @@ async def create_optimization_run(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    service_weekdays = resolve_study_weekdays(
+        request.service_weekday, await weekdays_for_shifts(db, owned_shifts)
+    )
+    try:
+        await ensure_shift_profiles_ready(db, request.shift_ids)
+    except ElevationProfileNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=exc.as_detail()) from exc
+
     # `name` is a first-class column on optimization_runs; keep it out of
     # input_params (which is reserved for solver/technical inputs).
     input_params = request.model_dump(mode="json", exclude={"name"})
+    input_params.update(service_weekdays)
     from simulation.battery_policy import operating_assumptions
     input_params["operating_assumptions"] = operating_assumptions(input_params)
     input_params["gtfs_provenance"] = gtfs_provenance

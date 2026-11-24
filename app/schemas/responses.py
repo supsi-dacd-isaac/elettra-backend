@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.database import GtfsTripsRead
 from app.schemas.gtfs_dataset import GtfsDatasetRead
+from app.schemas.service_weekday import ServiceWeekday
 
 
 class PredictionSubmitResponse(BaseModel):
@@ -345,6 +346,13 @@ class ShiftListItemRead(BaseModel):
     name: str
     bus_id: Optional[UUID] = None
     trip_count: int = 0
+    pending_elevation_profiles: int = 0
+    planner_version: int | None = None
+    service_weekday: ServiceWeekday | None = None
+    compatible_weekdays: list[ServiceWeekday] | None = Field(
+        default=None,
+        description="Recurring weekdays in calendar order. Null means insufficient data; an empty list means no common day.",
+    )
     model_config = ConfigDict(from_attributes=True)
 
 

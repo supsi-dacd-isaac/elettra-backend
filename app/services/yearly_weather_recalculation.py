@@ -36,6 +36,7 @@ from app.services.diesel_heating import (
     resolve_diesel_heating_quantity,
 )
 from app.services.runtime_release import LEGACY_AUXILIARY_ESTIMATOR
+from app.services.trip_occupancy import TRIP_OCCUPANCY_KEY
 
 
 DEFAULT_CLUSTER_START = "05:00"
@@ -820,7 +821,10 @@ async def recalculate_yearly_analysis(
             context = old_run.contextual_parameters or {}
             quantiles = [float(value) for value in context.get("quantiles", [0.05, 0.5, 0.95])]
             packs = context.get("num_battery_packs")
-            new_context = {'auxiliary_policy_id': run_policy(old_run)}
+            new_context = {
+                'auxiliary_policy_id': run_policy(old_run),
+                TRIP_OCCUPANCY_KEY: deepcopy(context.get(TRIP_OCCUPANCY_KEY)),
+            }
             if run_policy(old_run) == ANNUAL_POLICY:
                 inputs = dict(policy_id=ANNUAL_POLICY, schedule=schedules[str(old_run.shift_id)],
                               weather_snapshot_sha256=sha, cluster_dates=calendar[scenario['temperature']])

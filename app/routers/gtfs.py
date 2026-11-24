@@ -1332,6 +1332,15 @@ async def create_aux_trip(
     db: AsyncSession = Depends(get_async_session),
     current_user: Users = Depends(require_analyst),
 ):
+    trip, job = await add_auxiliary_trip(req, db, current_user)
+    await db.commit()
+    await db.refresh(trip)
+    await db.refresh(job)
+    return AuxTripCreateResponse(trip=trip, elevation_job=job)
+
+
+async def add_auxiliary_trip(req: AuxTripCreate, db: AsyncSession, current_user: Users):
+    """Stage a routed trip and its elevation job in the caller's transaction."""
     prefix = req.status.value if hasattr(req.status, "value") else str(req.status)
     if prefix == "gtfs":
         raise HTTPException(status_code=400, detail="Auxiliary trip status cannot be 'gtfs'")
@@ -1436,50 +1445,45 @@ async def create_aux_trip(
         arrival_time=req.arrival_time,
     )
     db.add(trip)
-    try:
-        await db.flush()
-        stop_times = [
-            GtfsStopsTimes(
-                trip_id=trip.id,
-                stop_id=dep_stop.id,
-                arrival_time=req.departure_time,
-                departure_time=req.departure_time,
-                stop_sequence=1,
-            ),
-            GtfsStopsTimes(
-                trip_id=trip.id,
-                stop_id=arr_stop.id,
-                arrival_time=req.arrival_time,
-                departure_time=req.arrival_time,
-                stop_sequence=2,
-            ),
-        ]
-        job = ElevationProfileJobs(
+    await db.flush()
+    stop_times = [
+        GtfsStopsTimes(
             trip_id=trip.id,
-            payload={
-                "schema_version": 1,
-                AUXILIARY_TRIP_OWNER_KEY: str(current_user.id),
-                "shape_id": shape_id,
-                "source": {
-                    "kind": "polyline",
-                    "encoded": geometry,
-                    "precision": 5,
-                },
-                "routing": {
-                    "engine": "osrm",
-                    "distance_m": route.get("distance"),
-                    "duration_s": route.get("duration"),
-                },
+            stop_id=dep_stop.id,
+            arrival_time=req.departure_time,
+            departure_time=req.departure_time,
+            stop_sequence=1,
+            shape_dist_traveled=0.0,
+        ),
+        GtfsStopsTimes(
+            trip_id=trip.id,
+            stop_id=arr_stop.id,
+            arrival_time=req.arrival_time,
+            departure_time=req.arrival_time,
+            stop_sequence=2,
+            shape_dist_traveled=route.get("distance"),
+        ),
+    ]
+    job = ElevationProfileJobs(
+        trip_id=trip.id,
+        payload={
+            "schema_version": 1,
+            AUXILIARY_TRIP_OWNER_KEY: str(current_user.id),
+            "shape_id": shape_id,
+            "source": {
+                "kind": "polyline",
+                "encoded": geometry,
+                "precision": 5,
             },
-            status="pending",
-            output_object_name=object_name,
-        )
-        db.add_all([*stop_times, job])
-        await db.commit()
-        await db.refresh(trip)
-        await db.refresh(job)
-    except Exception:
-        await db.rollback()
-        raise
-
-    return AuxTripCreateResponse(trip=trip, elevation_job=job)
+            "routing": {
+                "engine": "osrm",
+                "distance_m": route.get("distance"),
+                "duration_s": route.get("duration"),
+            },
+        },
+        status="pending",
+        output_object_name=object_name,
+    )
+    db.add_all([*stop_times, job])
+    await db.flush()
+    return trip, job
