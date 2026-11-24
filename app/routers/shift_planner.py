@@ -1,5 +1,6 @@
 """Sequential vehicle blocks. Published GTFS times stay immutable."""
 import hashlib
+from collections import defaultdict
 from dataclasses import astuple
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -26,7 +27,7 @@ SELECT t.id, t.route_id, coalesce(r.route_short_name,r.route_long_name,r.route_i
        coalesce(nullif(f.departure_time,''), f.arrival_time) AS departure_time,
        coalesce(nullif(l.arrival_time,''), l.departure_time) AS arrival_time,
        nullif(f.arrival_time,'') AS first_arrival, nullif(l.departure_time,'') AS last_departure,
-       r.gtfs_year, r.gtfs_file_date
+       r.gtfs_year, r.gtfs_file_date, t.trip_short_name {extra_columns}
 FROM gtfs_trips t JOIN gtfs_routes r ON r.id=t.route_id
 JOIN gtfs_calendar c ON c.id=t.service_id
 JOIN LATERAL (SELECT stop_id,departure_time,arrival_time FROM gtfs_stops_times
@@ -34,13 +35,53 @@ JOIN LATERAL (SELECT stop_id,departure_time,arrival_time FROM gtfs_stops_times
 JOIN LATERAL (SELECT stop_id,departure_time,arrival_time FROM gtfs_stops_times
               WHERE trip_id=t.id ORDER BY stop_sequence DESC LIMIT 1) l ON true
 JOIN gtfs_stops fs ON fs.id=f.stop_id JOIN gtfs_stops ls ON ls.id=l.stop_id
+{extra_join}
 WHERE r.agency_id=:agency AND t.status='gtfs'
 """
+
+# The public catalogue groups calendar records. Reads and writes of a saved
+# programme always resolve the exact trip IDs selected by that programme.
+_PATTERN_COLUMNS = """, c.id AS calendar_id, calls.stop_count,
+    CASE WHEN nullif(trim(t.trip_short_name), '') IS NOT NULL AND nullif(t.shape_id, '') IS NOT NULL
+         THEN ROW(t.route_id, t.trip_short_name, t.direction_id, t.shape_id, t.trip_headsign,
+                  t.block_id, t.wheelchair_accessible, t.bikes_allowed, calls.schedule)::text
+    END AS pattern"""
+_PATTERN_JOIN = """
+JOIN LATERAL (
+    SELECT count(*) AS stop_count,
+           encode(sha256(convert_to(array_agg(ROW(s.stop_id, s.arrival_time, s.departure_time,
+               s.pickup_type, s.drop_off_type, s.continuous_pickup, s.continuous_drop_off,
+               s.stop_headsign, s.timepoint, s.shape_dist_traveled) ORDER BY s.stop_sequence)::text,
+               'UTF8')), 'hex') AS schedule
+    FROM gtfs_stops_times s WHERE s.trip_id=t.id
+) calls ON true"""
+
+
+def group_calendar_variants(records):
+    groups = defaultdict(list)
+    for trip in records:
+        # A missing public run number or path cannot establish equivalence.
+        key = trip.pop("pattern") or trip["id"]
+        groups[key].append(trip)
+    candidates = []
+    for members in groups.values():
+        calendars = {trip.pop("calendar_id") for trip in members}
+        if len(calendars) == len(members):
+            first, *alternatives = members
+            first["equivalent_trip_ids"] = [trip["id"] for trip in alternatives]
+            candidates.append(first)
+        else:
+            # Trips sharing a calendar can actually run alongside each other.
+            candidates.extend({**trip, "equivalent_trip_ids": []} for trip in members)
+    return sorted(candidates, key=lambda trip: (trip["departure_time"] is None, trip["departure_time"], trip["id"]))
 
 
 async def catalogue(db, agency, weekday, *, route=None, trips=None, edition=None):
     # weekday is a validated Literal. All data and identifiers from clients are bound.
-    query = _CATALOG + " AND (to_jsonb(c) ->> CAST(:weekday AS text)) = '1'"
+    listing = route is not None and trips is None
+    query = _CATALOG.format(extra_columns=_PATTERN_COLUMNS if listing else "",
+                            extra_join=_PATTERN_JOIN if listing else "")
+    query += " AND (to_jsonb(c) ->> CAST(:weekday AS text)) = '1'"
     params = {"agency": agency, "weekday": weekday}
     if route is not None:
         query += " AND r.id=:route"
@@ -52,7 +93,8 @@ async def catalogue(db, agency, weekday, *, route=None, trips=None, edition=None
         query += " AND r.gtfs_year=:year AND r.gtfs_file_date=:stamp"
         params.update(year=edition.gtfs_year, stamp=edition.gtfs_file_date)
     rows = await db.execute(text(query + " ORDER BY departure_time,t.id"), params)
-    return [dict(row) for row in rows.mappings()]
+    records = [dict(row) for row in rows.mappings()]
+    return group_calendar_variants(records) if listing else records
 
 
 @router.get("/catalog")

@@ -87,6 +87,59 @@ async def seed_programme(db):
 
 
 @pytest.mark.asyncio
+async def test_catalogue_groups_only_equivalent_day_variants_and_preserves_saved_ids():
+    async with engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            async with AsyncSession(bind=connection, expire_on_commit=False) as db:
+                owner, route, body = await seed_programme(db)
+                first = await db.get(GtfsTrips, UUID(body["programme"]["steps"][0]["trip_id"]))
+                base_calendar = await db.get(GtfsCalendar, first.service_id)
+                endpoints = (await db.scalars(select(GtfsStopsTimes.stop_id).where(
+                    GtfsStopsTimes.trip_id == first.id).order_by(GtfsStopsTimes.stop_sequence))).all()
+                middle = GtfsStops(id=uuid4(), stop_id=str(uuid4()), stop_name="Middle", stop_lat=46, stop_lon=9)
+                db.add(middle)
+
+                def calendar(monday):
+                    value = GtfsCalendar(id=uuid4(), service_id=str(uuid4()), monday=monday, tuesday=1,
+                                         wednesday=0, thursday=0, friday=0, saturday=0, sunday=0,
+                                         start_date=base_calendar.start_date, end_date=base_calendar.end_date)
+                    db.add(value)
+                    return value
+
+                alternate = calendar(1)
+                tuesday = calendar(0)
+
+                def trip(calendar, number="1001", intermediate="08:15:30", shape="line-1"):
+                    record = GtfsTrips(id=uuid4(), trip_id=str(uuid4()), service_id=calendar.id,
+                                       gtfs_service_id=calendar.service_id, status="gtfs", route_id=route,
+                                       trip_short_name=number, direction_id=0, shape_id=shape)
+                    db.add(record)
+                    for seq, (stop, clock) in enumerate(zip([endpoints[0], middle.id, endpoints[1]],
+                                                            ["08:10:00", intermediate, "08:25:00"]), 1):
+                        db.add(GtfsStopsTimes(trip_id=record.id, stop_id=stop, stop_sequence=seq,
+                                              arrival_time=clock, departure_time=clock))
+                    return record.id
+
+                a, b = trip(base_calendar), trip(alternate)
+                different_time = trip(alternate, intermediate="08:15:31")
+                different_shape = trip(alternate, shape="line-2")
+                simultaneous = {trip(base_calendar, "1002"), trip(base_calendar, "1002")}
+                inactive = trip(tuesday)
+                await db.flush()
+                rows = await shift_planner.catalogue(db, owner.company_id, "monday", route=route)
+                primary, alias = sorted([a, b])
+                grouped = next(row for row in rows if row["id"] == primary)
+                assert grouped["equivalent_trip_ids"] == [alias] and grouped["stop_count"] == 3
+                assert {row["id"] for row in rows} == {first.id, primary, different_time, different_shape, *simultaneous}
+                assert inactive not in grouped["equivalent_trip_ids"]
+                historical = await shift_planner.catalogue(db, owner.company_id, "monday", trips=[alias])
+                assert [item["id"] for item in historical] == [alias]
+        finally:
+            await transaction.rollback()
+
+
+@pytest.mark.asyncio
 async def test_atomic_save_retry_edit_and_duplicate(monkeypatch):
     app = FastAPI()
     app.include_router(shift_planner.router, prefix="/planner")
