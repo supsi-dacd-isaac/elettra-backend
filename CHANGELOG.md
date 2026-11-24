@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.9.0] - 2026-11-24
+
+- Add sequential vehicle-block planning and weekday-aware feasibility. Preserve service trips, empty transfers and intermediate depot stays in the saved programme.
+- Calculate typical-day energy prediction intervals using independent trip samples across the fleet, with the same sampling method as feasibility.
+- Apply `db/migrations/011_shift_programme.sql` to databases upgrading from 1.8.0. Pair with frontend 1.4.0.
+
 ## [1.9.0-rc.2] - 2026-11-24
 
 - Use the feasibility sampler for annual energy uncertainty. Sample each trip occurrence independently across all vehicle blocks at a given temperature and store the daily interval for each block and the fleet.
