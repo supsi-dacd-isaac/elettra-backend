@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.9.0-rc.2] - 2026-11-24
+
+- Use the feasibility sampler for annual energy uncertainty. Sample each trip occurrence independently across all vehicle blocks at a given temperature and store the daily interval for each block and the fleet.
+- Reconstruct intervals for existing analyses when their original prediction distributions are available. Pair with frontend 1.4.0-rc.2.
 ## [1.9.0-rc.1] - 2026-11-24
 
 - Add a weekday-based vehicle block planner for scheduled trips, empty transfers and depot stays. Save the ordered programme and its movements together and validate the return to the starting depot.
