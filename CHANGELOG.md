@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.8.0] - 2026-11-24
+
+- Price bus bodies by physical length, provide LFP and NMC pack defaults and preserve battery chemistry in annual assessments.
+- Calculate project-horizon TCO for annual comparisons, including replacements and residual values. Support read-only cost previews and the optional asset-lifetime method.
+- Pair with frontend 1.3.0. This release uses elettra-core 2.3.0 and requires no database migration.
+
 ## [1.8.0-rc.1] - 2026-11-23
 
 - Price electric bus bodies by physical length and expose LFP/NMC pack mass and price defaults. Preserve chemistry for annual assessments and historical results.
